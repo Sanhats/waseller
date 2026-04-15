@@ -9,11 +9,13 @@
   "scripts": {
     "build:packages": "npm run build --workspace @waseller/shared && npm run build --workspace @waseller/queue && npm run build --workspace @waseller/db && npm run build --workspace @waseller/api-core",
     "build:api": "npm run build:packages && npm run build --workspace @waseller/backend",
+    "build:workers": "npm run build --workspace @waseller/shared && npm run build --workspace @waseller/queue && npm run build --workspace @waseller/db && npm run build --workspace @waseller/workers",
     "build": "npm run build:packages && npm run build --workspace @waseller/dashboard",
     "build:all": "npm run build:packages && npm run build --workspace @waseller/backend && npm run build --workspace @waseller/dashboard",
     "export:railway": "node scripts/export-railway-repos.mjs",
     "start": "node apps/backend/dist/apps/backend/src/main.js",
     "start:api": "node apps/backend/dist/apps/backend/src/main.js",
+    "start:workers": "node apps/workers/dist/apps/workers/src/index.js",
     "dev": "npm run dev --workspace @waseller/backend",
     "lint": "npm run lint --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
