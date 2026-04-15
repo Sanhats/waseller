@@ -53,40 +53,6 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_started
-      whatsapp:
-        condition: service_started
-
-  workers:
-    image: node:22
-    working_dir: /app
-    volumes:
-      - ..:/app
-    command: sh -c "npm run build --workspace @waseller/shared && npm run build --workspace @waseller/queue && npm run dev --workspace @waseller/workers"
-    env_file:
-      - ./env/.env.local
-    depends_on:
-      postgres:
-        condition: service_healthy
-      db-init:
-        condition: service_completed_successfully
-      redis:
-        condition: service_started
-      whatsapp:
-        condition: service_started
-
-  whatsapp:
-    image: node:22
-    working_dir: /app
-    volumes:
-      - ..:/app
-      - wa_auth_data:/tmp/wa-auth
-    command: sh -c "npm run build --workspace @waseller/shared && npm run build --workspace @waseller/queue && npm run dev --workspace @waseller/whatsapp"
-    env_file:
-      - ./env/.env.local
-    ports:
-      - "3100:3100"
-    depends_on:
-      - redis
 
   dashboard:
     image: node:22
@@ -102,5 +68,4 @@ services:
       - api
 
 volumes:
-  wa_auth_data:
   postgres_data:

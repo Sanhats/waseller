@@ -2,7 +2,6 @@ import { readFileSync, existsSync } from "node:fs";
 
 const requiredFiles = [
   "apps/backend/src/main.ts",
-  "apps/workers/src/index.ts",
   "apps/dashboard/src/app/leads/page.tsx",
   "packages/db/prisma/schema.prisma",
   "infra/docker-compose.yml"

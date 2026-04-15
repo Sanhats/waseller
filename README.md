@@ -5,13 +5,13 @@ Plataforma SaaS multi-tenant para automatización de ventas por WhatsApp.
 ## Estructura
 
 - `apps/backend`: API NestJS y receiver de mensajes.
-- `apps/whatsapp`: session manager por tenant para WhatsApp.
-- `apps/workers`: workers BullMQ (processor, lead, sender, stock-sync).
 - `apps/dashboard`: dashboard comercial en Next.js.
 - `packages/db`: Prisma schema y cliente.
 - `packages/queue`: definición de colas y conexión Redis.
 - `packages/shared`: tipos y lógica compartida.
 - `infra`: docker-compose y variables de entorno.
+
+**Workers (BullMQ) y servicio WhatsApp (Baileys)** se despliegan en Railway desde repos propios. Las carpetas `waseller-railway-workers` y `waseller-railway-whatsapp` se generan en el **directorio padre** de este monorepo con `npm run export:railway` (requiere que existan `apps/workers` y `apps/whatsapp`; si ya no están en el árbol de trabajo, recuperalas con `git restore apps/workers apps/whatsapp` desde un commit que las incluya). Después: `git init`, push a GitHub/GitLab y un servicio Railway por repo (`build`: `npm run build`, `start`: `npm start`).
 
 ## Arranque local con Supabase
 
@@ -49,8 +49,9 @@ Credencial demo semilla:
 
 - `redis`: colas BullMQ y control de rate limit.
 - `api`: backend NestJS.
-- `workers`: pipeline de procesamiento de mensajes/leads.
 - `dashboard`: frontend Next.js.
+
+Workers y WhatsApp no se levantan con este compose; usá los repos exportados o tus servicios en Railway con las mismas variables que antes (`REDIS_URL`, `DATABASE_URL`, etc.).
 
 PostgreSQL puede ser el servicio `postgres` del compose (ver `infra/env/.env.example`) o Supabase u otro host según `DATABASE_URL`.
 
@@ -60,7 +61,7 @@ Workers publican métricas JSON periódicas en logs:
 
 - `queue_metrics` con campos `enqueued`, `processing`, `completed`, `failed`, `retryScheduled`.
 - Revisar:
-  - `docker logs -f infra-workers-1`
+  - Logs del servicio **workers** en Railway (o tu runtime).
   - `docker logs -f infra-api-1`
 
 ### Incidentes comunes
@@ -70,12 +71,12 @@ Workers publican métricas JSON periódicas en logs:
    - Reloguear por `/login`.
 
 2. **Mensajes no salen**
-   - Revisar sesión WhatsApp en `http://localhost:3100/sessions` (`connected`).
-   - Revisar `infra-workers-1` por errores `WhatsApp send failed`.
+   - Revisar sesión WhatsApp en la URL pública del servicio Baileys (p. ej. `/sessions`) y que esté `connected`.
+   - Revisar logs del worker de envío por errores `WhatsApp send failed`.
 
 3. **Errores de columnas faltantes**
    - Reejecutar `infra/sql/supabase-init.sql`.
-   - Reiniciar `api` y `workers` con `docker compose ... --force-recreate`.
+   - Reiniciar `api` con `docker compose ... --force-recreate` y el servicio workers en Railway si aplica.
 
 4. **Pool timeout Prisma (P2024)**
    - Bajar concurrencia (`SENDER_CONCURRENCY`, `PROCESSOR_CONCURRENCY`) o subir límites en DB pooler.
@@ -134,4 +135,4 @@ Valores iniciales recomendados en `infra/env/.env.example` o tu `.env`:
    - Activar `LLM_ALLOW_SENSITIVE_ACTIONS=true` solo cuando los KPIs sean estables.
 
 4. **Kill-switch inmediato**
-   - Ante desvío, setear `LLM_KILL_SWITCH=true` y reiniciar `workers`.
+   - Ante desvío, setear `LLM_KILL_SWITCH=true` y reiniciar el servicio workers en Railway.
