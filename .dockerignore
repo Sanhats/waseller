@@ -1,0 +1,14 @@
+node_modules
+.git
+**/.git
+.next
+**/dist
+coverage
+*.log
+.env
+.env.*
+!.env.example
+pnpm-lock.yaml
+yarn.lock
+_railway-export-test
+*.parquet
