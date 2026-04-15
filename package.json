@@ -9,6 +9,10 @@
   "scripts": {
     "build:packages": "npm run build --workspace @waseller/shared && npm run build --workspace @waseller/queue && npm run build --workspace @waseller/db",
     "build": "npm run build:packages && npm run build --workspace @waseller/backend && npm run build --workspace @waseller/dashboard && npm run build --workspace @waseller/whatsapp && npm run build --workspace @waseller/workers",
+    "start": "node apps/backend/dist/main.js",
+    "start:api": "node apps/backend/dist/main.js",
+    "start:workers": "node apps/workers/dist/index.js",
+    "start:whatsapp": "node apps/whatsapp/dist/index.js",
     "dev": "npm run dev --workspace @waseller/backend",
     "lint": "npm run lint --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
@@ -19,6 +23,9 @@
     "db:migrate": "npm run prisma:migrate --workspace @waseller/db",
     "db:migrate:deploy": "npm run prisma:migrate:deploy --workspace @waseller/db",
     "db:push": "npm run prisma:push --workspace @waseller/db"
+  },
+  "engines": {
+    "node": ">=22"
   },
   "devDependencies": {
     "qrcode-terminal": "^0.12.0"
