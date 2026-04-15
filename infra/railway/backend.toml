@@ -1,0 +1,9 @@
+# Copiar o fusionar en el servicio "API" del proyecto Railway (mismo repo).
+# Build / start se ejecutan desde la raíz del monorepo.
+
+[build]
+builder = "nixpacks"
+buildCommand = "npm ci && npm run build:packages && npm run build --workspace @waseller/backend"
+
+[deploy]
+startCommand = "node apps/backend/dist/main.js"

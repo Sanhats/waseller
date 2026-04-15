@@ -1,0 +1,32 @@
+{
+  "name": "@waseller/backend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "ts-node-dev --respawn --transpile-only -r tsconfig-paths/register src/main.ts",
+    "start": "node dist/main.js",
+    "seed:test-lead": "npx --package=tsx tsx scripts/seed-test-lead.ts",
+    "seed:demo-scenarios": "npx --package=tsx tsx scripts/seed-demo-scenarios.ts"
+  },
+  "dependencies": {
+    "@nestjs/common": "latest",
+    "@nestjs/core": "latest",
+    "@nestjs/platform-express": "latest",
+    "@waseller/db": "0.1.0",
+    "@waseller/queue": "0.1.0",
+    "@waseller/shared": "0.1.0",
+    "express": "latest",
+    "pino": "latest",
+    "pino-http": "latest",
+    "reflect-metadata": "latest",
+    "rxjs": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "@types/express": "latest",
+    "ts-node-dev": "latest",
+    "tsconfig-paths": "latest",
+    "typescript": "latest"
+  }
+}

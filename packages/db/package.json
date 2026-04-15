@@ -1,0 +1,22 @@
+{
+  "name": "@waseller/db",
+  "version": "0.1.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prisma:generate": "prisma generate --schema prisma/schema.prisma",
+    "prisma:push": "node scripts/run-with-local-env.mjs db push --schema prisma/schema.prisma",
+    "prisma:migrate": "node scripts/run-with-local-env.mjs migrate dev --schema prisma/schema.prisma",
+    "prisma:migrate:deploy": "node scripts/run-with-local-env.mjs migrate deploy --schema prisma/schema.prisma",
+    "db:migrate": "node scripts/run-with-local-env.mjs migrate dev --schema prisma/schema.prisma",
+    "db:push": "node scripts/run-with-local-env.mjs db push --schema prisma/schema.prisma"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.16.3"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "prisma": "^6.16.3"
+  }
+}

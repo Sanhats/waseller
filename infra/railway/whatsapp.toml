@@ -1,0 +1,10 @@
+# Servicio WhatsApp (Baileys). Montar volumen en Railway y definir WA_AUTH_DIR al mismo path.
+# Ejemplo: volumen en /data/wa-auth → env WA_AUTH_DIR=/data/wa-auth
+# Una sola réplica.
+
+[build]
+builder = "nixpacks"
+buildCommand = "npm ci && npm run build:packages && npm run build --workspace @waseller/whatsapp"
+
+[deploy]
+startCommand = "node apps/whatsapp/dist/index.js"

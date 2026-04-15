@@ -1,0 +1,8 @@
+# Servicio separado: workers (BullMQ). Mismo repo, otra instancia en Railway.
+
+[build]
+builder = "nixpacks"
+buildCommand = "npm ci && npm run build:packages && npm run build --workspace @waseller/workers"
+
+[deploy]
+startCommand = "node apps/workers/dist/index.js"

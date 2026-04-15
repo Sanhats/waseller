@@ -1,0 +1,106 @@
+services:
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      # Coincide con URLs típicas `postgresql://postgres:...@postgres:5432/waseller`
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: waseller
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d waseller"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  db-init:
+    image: node:22
+    working_dir: /app
+    volumes:
+      - ..:/app
+    command:
+      - sh
+      - -c
+      - 'npm run prisma:generate --workspace @waseller/db && if [ "$$PRISMA_DB_PUSH" = "true" ]; then npm run prisma:push --workspace @waseller/db; fi && npm run build --workspace @waseller/db'
+    env_file:
+      - ./env/.env.local
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    image: node:22
+    working_dir: /app
+    volumes:
+      - ..:/app
+    command: sh -c "npm run build --workspace @waseller/shared && npm run build --workspace @waseller/queue && npm run dev --workspace @waseller/backend"
+    env_file:
+      - ./env/.env.local
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+      whatsapp:
+        condition: service_started
+
+  workers:
+    image: node:22
+    working_dir: /app
+    volumes:
+      - ..:/app
+    command: sh -c "npm run build --workspace @waseller/shared && npm run build --workspace @waseller/queue && npm run dev --workspace @waseller/workers"
+    env_file:
+      - ./env/.env.local
+    depends_on:
+      postgres:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+      whatsapp:
+        condition: service_started
+
+  whatsapp:
+    image: node:22
+    working_dir: /app
+    volumes:
+      - ..:/app
+      - wa_auth_data:/tmp/wa-auth
+    command: sh -c "npm run build --workspace @waseller/shared && npm run build --workspace @waseller/queue && npm run dev --workspace @waseller/whatsapp"
+    env_file:
+      - ./env/.env.local
+    ports:
+      - "3100:3100"
+    depends_on:
+      - redis
+
+  dashboard:
+    image: node:22
+    working_dir: /app
+    volumes:
+      - ..:/app
+    command: sh -c "npm run dev --workspace @waseller/dashboard"
+    env_file:
+      - ./env/.env.local
+    ports:
+      - "3001:3000"
+    depends_on:
+      - api
+
+volumes:
+  wa_auth_data:
+  postgres_data:

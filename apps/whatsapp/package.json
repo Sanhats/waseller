@@ -1,0 +1,25 @@
+{
+  "name": "@waseller/whatsapp",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "ts-node-dev --respawn --transpile-only -r tsconfig-paths/register src/index.ts"
+  },
+  "dependencies": {
+    "@waseller/queue": "0.1.0",
+    "@waseller/shared": "0.1.0",
+    "baileys": "latest",
+    "express": "latest",
+    "pino": "latest",
+    "qrcode": "latest"
+  },
+  "devDependencies": {
+    "@types/express": "latest",
+    "@types/node": "latest",
+    "@types/qrcode": "latest",
+    "ts-node-dev": "latest",
+    "tsconfig-paths": "latest",
+    "typescript": "latest"
+  }
+}

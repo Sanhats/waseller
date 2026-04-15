@@ -1,0 +1,502 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum LeadStatus {
+  frio
+  consulta
+  interesado
+  caliente
+  listo_para_cobrar
+  vendido
+  cerrado
+
+  @@map("lead_status")
+}
+
+enum MessageDirection {
+  incoming
+  outgoing
+
+  @@map("message_direction")
+}
+
+enum UserRole {
+  admin
+  vendedor
+  viewer
+
+  @@map("user_role")
+}
+
+enum StockMovementType {
+  sync
+  reserve
+  release
+  commit
+  manual_adjust
+
+  @@map("stock_movement_type")
+}
+
+enum ScoreEventSource {
+  rule
+  llm
+  manual
+  import
+
+  @@map("score_event_source")
+}
+
+enum FeedbackTargetType {
+  message
+  llm_trace
+  lead
+  conversation
+  bot_response_event
+
+  @@map("feedback_target_type")
+}
+
+enum EvalSplit {
+  train
+  val
+  test
+  holdout
+
+  @@map("eval_split")
+}
+
+enum PaymentProvider {
+  mercadopago
+
+  @@map("payment_provider")
+}
+
+enum PaymentIntegrationStatus {
+  disconnected
+  connected
+  expired
+  error
+
+  @@map("payment_integration_status")
+}
+
+enum PaymentAttemptStatus {
+  draft
+  link_generated
+  pending
+  approved
+  rejected
+  cancelled
+  expired
+  error
+
+  @@map("payment_attempt_status")
+}
+
+model Tenant {
+  id               String         @id @default(uuid()) @db.Uuid
+  name             String
+  whatsappNumber   String         @map("whatsapp_number")
+  plan             String         @default("starter")
+  senderRateMs     Int            @default(500) @map("sender_rate_ms")
+  senderPauseEvery Int            @default(20) @map("sender_pause_every")
+  senderPauseMs    Int            @default(2500) @map("sender_pause_ms")
+  llmAssistEnabled Boolean        @default(false) @map("llm_assist_enabled")
+  llmConfidenceThreshold Float    @default(0.72) @map("llm_confidence_threshold")
+  llmGuardrailsStrict Boolean     @default(true) @map("llm_guardrails_strict")
+  llmRolloutPercent Int           @default(0) @map("llm_rollout_percent")
+  llmModelName     String         @default("self-hosted-default") @map("llm_model_name")
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
+  products         Product[]
+  productVariants  ProductVariant[]
+  leads            Lead[]
+  conversations    Conversation[]
+  messages         Message[]
+  users            AppUser[]
+  stockMovements   StockMovement[]
+  botPlaybooks     BotPlaybook[]
+  botResponseEvents BotResponseEvent[]
+  conversationMemory ConversationMemory[]
+  llmTraces        LlmTrace[]
+  leadScoreEvents  LeadScoreEvent[]
+  humanFeedback    HumanFeedback[]
+  evalDatasetItems EvalDatasetItem[]
+  paymentIntegrations TenantPaymentIntegration[]
+  paymentAttempts  PaymentAttempt[]
+  tenantKnowledge  TenantKnowledge?
+
+  @@map("tenants")
+}
+
+/** Contexto de negocio por tenant (ops / RAG). Tabla usada también con SQL raw. */
+model TenantKnowledge {
+  tenantId         String   @id @map("tenant_id") @db.Uuid
+  businessCategory String   @default("general") @map("business_category")
+  businessLabels   String[] @default([]) @map("business_labels")
+  profile          Json     @default("{}")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+  tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("tenant_knowledge")
+}
+
+model BotPlaybook {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String @db.Uuid   @map("tenant_id")
+  intent    String
+  variant   String
+  template  String
+  weight    Int      @default(50)
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, intent, variant])
+  @@index([tenantId, intent, isActive])
+  @@map("bot_playbooks")
+}
+
+model BotResponseEvent {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String @db.Uuid   @map("tenant_id")
+  leadId    String? @db.Uuid  @map("lead_id")
+  phone     String
+  intent    String
+  variant   String
+  message   String
+  createdAt DateTime @default(now()) @map("created_at")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, intent, variant, createdAt])
+  @@index([tenantId, leadId, createdAt])
+  @@map("bot_response_events")
+}
+
+model AppUser {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String @db.Uuid   @map("tenant_id")
+  email        String
+  passwordHash String   @map("password_hash")
+  role         UserRole @default(viewer)
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  humanFeedback HumanFeedback[]
+
+  @@unique([email])
+  @@index([tenantId, role, isActive])
+  @@map("app_users")
+}
+
+model Product {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String @db.Uuid   @map("tenant_id")
+  name      String
+  price     Decimal  @db.Decimal(10, 2)
+  imageUrl      String?  @map("image_url")
+  tags      String[]
+  /// Algunas BD legacy tienen stock a nivel producto; el stock operativo está en `product_variants`.
+  stock         Int?     @default(0) @map("stock")
+  reservedStock Int?     @default(0) @map("reserved_stock")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  variants  ProductVariant[]
+  stockMovements StockMovement[]
+
+  @@unique([tenantId, name])
+  @@map("products")
+}
+
+model ProductVariant {
+  id            String   @id @default(uuid()) @db.Uuid
+  tenantId      String @db.Uuid   @map("tenant_id")
+  productId     String @db.Uuid   @map("product_id")
+  sku           String
+  attributes    Json
+  price         Decimal? @db.Decimal(10, 2)
+  stock         Int      @default(0)
+  reservedStock Int      @default(0) @map("reserved_stock")
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product       Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  stockMovements StockMovement[]
+
+  @@unique([tenantId, sku])
+  @@index([tenantId, productId, isActive])
+  @@index([tenantId, updatedAt])
+  @@map("product_variants")
+}
+
+model Lead {
+  id          String       @id @default(uuid()) @db.Uuid
+  tenantId    String @db.Uuid       @map("tenant_id")
+  phone       String
+  customerName String?      @map("customer_name")
+  product     String?
+  productVariantId String? @db.Uuid @map("product_variant_id")
+  productVariantAttributes Json? @map("product_variant_attributes")
+  status      LeadStatus   @default(frio)
+  score       Int          @default(0)
+  hasStockReservation Boolean @default(false) @map("has_stock_reservation")
+  reservationExpiresAt DateTime? @map("reservation_expires_at")
+  profilePictureUrl   String?      @map("profile_picture_url")
+  lastMessage String?      @map("last_message")
+  /** Si está seteado, el lead no se lista en Clientes ni Conversaciones (borrado suave de bandeja). */
+  inboxHiddenAt DateTime?  @map("inbox_hidden_at")
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversation Conversation?
+  memory      ConversationMemory[]
+  llmTraces   LlmTrace[]
+  scoreEvents LeadScoreEvent[]
+  paymentAttempts PaymentAttempt[]
+
+  @@index([tenantId, status, score])
+  @@index([tenantId, phone])
+  @@map("leads")
+}
+
+model StockMovement {
+  id            String            @id @default(uuid()) @db.Uuid
+  tenantId      String @db.Uuid            @map("tenant_id")
+  productId     String? @db.Uuid           @map("product_id")
+  variantId     String? @db.Uuid           @map("variant_id")
+  movementType  StockMovementType @map("movement_type")
+  deltaStock    Int               @default(0) @map("delta_stock")
+  deltaReserved Int               @default(0) @map("delta_reserved")
+  reason        String?
+  source        String?
+  leadId        String? @db.Uuid           @map("lead_id")
+  phone         String?
+  createdAt     DateTime          @default(now()) @map("created_at")
+  tenant        Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product       Product?          @relation(fields: [productId], references: [id], onDelete: SetNull)
+  variant       ProductVariant?   @relation(fields: [variantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, variantId, createdAt])
+  @@index([tenantId, productId, createdAt])
+  @@index([tenantId, movementType, createdAt])
+  @@map("stock_movements")
+}
+
+model Conversation {
+  id          String   @id @default(uuid()) @db.Uuid
+  tenantId    String @db.Uuid   @map("tenant_id")
+  phone       String
+  leadId      String?  @unique @map("lead_id")
+  lastMessage String?  @map("last_message")
+  state       String   @default("open")
+  archivedAt  DateTime? @map("archived_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  lead        Lead?    @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  memory      ConversationMemory[]
+  llmTraces   LlmTrace[]
+  paymentAttempts PaymentAttempt[]
+
+  @@index([tenantId, phone])
+  @@map("conversations")
+}
+
+model Message {
+  id        String           @id @default(uuid()) @db.Uuid
+  tenantId  String @db.Uuid           @map("tenant_id")
+  phone     String
+  message   String
+  direction MessageDirection
+  externalMessageId String? @map("external_message_id")
+  correlationId String? @map("correlation_id")
+  dedupeKey String? @map("dedupe_key")
+  createdAt DateTime         @default(now()) @map("created_at")
+  tenant    Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  llmTraces LlmTrace[]
+
+  @@index([tenantId, phone, createdAt])
+  @@index([tenantId, dedupeKey])
+  @@map("messages")
+}
+
+model ConversationMemory {
+  id            String   @id @default(uuid()) @db.Uuid
+  tenantId      String @db.Uuid   @map("tenant_id")
+  leadId        String   @unique @map("lead_id")
+  conversationId String? @unique @map("conversation_id")
+  schemaVersion Int      @default(1) @map("schema_version")
+  facts         Json
+  source        String?
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  lead          Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  conversation  Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, leadId])
+  @@index([tenantId, updatedAt])
+  @@map("conversation_memory")
+}
+
+model LlmTrace {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String @db.Uuid   @map("tenant_id")
+  leadId          String? @db.Uuid  @map("lead_id")
+  conversationId  String? @db.Uuid  @map("conversation_id")
+  messageId       String? @db.Uuid  @map("message_id")
+  botResponseEventId String? @db.Uuid @map("bot_response_event_id")
+  correlationId   String?  @map("correlation_id")
+  dedupeKey       String?  @map("dedupe_key")
+  traceKind       String   @map("trace_kind")
+  provider        String?
+  model           String?
+  request         Json
+  response        Json
+  promptTokens    Int?     @map("prompt_tokens")
+  completionTokens Int?    @map("completion_tokens")
+  latencyMs       Int?     @map("latency_ms")
+  handoffRequired Boolean  @default(false) @map("handoff_required")
+  error           String?
+  createdAt       DateTime @default(now()) @map("created_at")
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  lead            Lead?    @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  conversation    Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  message         Message? @relation(fields: [messageId], references: [id], onDelete: SetNull)
+  scoreEvents     LeadScoreEvent[]
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, leadId, createdAt])
+  @@index([conversationId, createdAt])
+  @@map("llm_traces")
+}
+
+model LeadScoreEvent {
+  id            String           @id @default(uuid()) @db.Uuid
+  tenantId      String @db.Uuid           @map("tenant_id")
+  leadId        String @db.Uuid           @map("lead_id")
+  previousScore Int              @map("previous_score")
+  newScore      Int              @map("new_score")
+  delta         Int
+  reason        String?
+  source        ScoreEventSource @default(rule)
+  metadata      Json?
+  relatedTraceId String? @db.Uuid         @map("related_trace_id")
+  createdAt     DateTime         @default(now()) @map("created_at")
+  tenant        Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  lead          Lead             @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  relatedTrace  LlmTrace?        @relation(fields: [relatedTraceId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, leadId, createdAt])
+  @@map("lead_score_events")
+}
+
+model HumanFeedback {
+  id          String             @id @default(uuid()) @db.Uuid
+  tenantId    String @db.Uuid             @map("tenant_id")
+  targetType  FeedbackTargetType @map("target_type")
+  targetId    String @db.Uuid             @map("target_id")
+  rating      Int?
+  label       String?
+  comment     String?
+  appUserId   String? @db.Uuid            @map("app_user_id")
+  createdAt   DateTime           @default(now()) @map("created_at")
+  tenant      Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  appUser     AppUser?           @relation(fields: [appUserId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, targetType, targetId])
+  @@index([tenantId, createdAt])
+  @@map("human_feedback")
+}
+
+model EvalDatasetItem {
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String? @db.Uuid  @map("tenant_id")
+  name       String
+  slug       String?
+  input      Json
+  reference  Json
+  tags       String[] @default([])
+  split      EvalSplit @default(test)
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+  tenant     Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, split, isActive])
+  @@map("eval_dataset_items")
+}
+
+model TenantPaymentIntegration {
+  id                    String                   @id @default(uuid()) @db.Uuid
+  tenantId              String @db.Uuid                   @map("tenant_id")
+  provider              PaymentProvider
+  status                PaymentIntegrationStatus @default(disconnected)
+  externalAccountId     String?                  @map("external_account_id")
+  externalAccountLabel  String?                  @map("external_account_label")
+  accessTokenEncrypted  String?                  @map("access_token_encrypted")
+  refreshTokenEncrypted String?                  @map("refresh_token_encrypted")
+  publicKey             String?                  @map("public_key")
+  tokenType             String?                  @map("token_type")
+  scope                 String?
+  expiresAt             DateTime?                @map("expires_at")
+  connectedAt           DateTime?                @map("connected_at")
+  lastError             String?                  @map("last_error")
+  metadata              Json?
+  createdAt             DateTime                 @default(now()) @map("created_at")
+  updatedAt             DateTime                 @updatedAt @map("updated_at")
+  tenant                Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  paymentAttempts       PaymentAttempt[]
+
+  @@unique([tenantId, provider])
+  @@index([provider, externalAccountId])
+  @@index([tenantId, status])
+  @@map("tenant_payment_integrations")
+}
+
+model PaymentAttempt {
+  id                   String               @id @default(uuid()) @db.Uuid
+  tenantId             String @db.Uuid               @map("tenant_id")
+  integrationId        String? @db.Uuid              @map("integration_id")
+  leadId               String? @db.Uuid              @map("lead_id")
+  conversationId       String? @db.Uuid              @map("conversation_id")
+  productVariantId     String? @db.Uuid              @map("product_variant_id")
+  provider             PaymentProvider
+  status               PaymentAttemptStatus @default(draft)
+  amount               Decimal              @db.Decimal(10, 2)
+  currency             String               @default("ARS")
+  title                String
+  externalReference    String               @map("external_reference")
+  externalPreferenceId String?              @map("external_preference_id")
+  externalPaymentId    String?              @map("external_payment_id")
+  checkoutUrl          String?              @map("checkout_url")
+  sandboxCheckoutUrl   String?              @map("sandbox_checkout_url")
+  paymentLinkSentAt    DateTime?            @map("payment_link_sent_at")
+  lastWebhookAt        DateTime?            @map("last_webhook_at")
+  paidAt               DateTime?            @map("paid_at")
+  expiresAt            DateTime?            @map("expires_at")
+  metadata             Json?
+  createdAt            DateTime             @default(now()) @map("created_at")
+  updatedAt            DateTime             @updatedAt @map("updated_at")
+  tenant               Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  integration          TenantPaymentIntegration? @relation(fields: [integrationId], references: [id], onDelete: SetNull)
+  lead                 Lead?                @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  conversation         Conversation?        @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+
+  @@unique([provider, externalReference])
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, leadId, createdAt])
+  @@index([provider, externalPreferenceId])
+  @@index([provider, externalPaymentId])
+  @@map("payment_attempts")
+}

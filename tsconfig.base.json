@@ -1,0 +1,36 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "Node16",
+    "moduleResolution": "node16",
+    "strict": true,
+    "esModuleInterop": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "types": [
+      "node"
+    ],
+    "paths": {
+      "@waseller/shared": [
+        "./packages/shared/src/index.ts"
+      ],
+      "@waseller/shared/*": [
+        "./packages/shared/src/*"
+      ],
+      "@waseller/queue": [
+        "./packages/queue/src/index.ts"
+      ],
+      "@waseller/queue/*": [
+        "./packages/queue/src/*"
+      ],
+      "@waseller/db": [
+        "./packages/db/src/index.ts"
+      ],
+      "@waseller/db/*": [
+        "./packages/db/src/*"
+      ]
+    }
+  }
+}

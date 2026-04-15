@@ -1,0 +1,26 @@
+{
+  "name": "waseller",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build:packages": "npm run build --workspace @waseller/shared && npm run build --workspace @waseller/queue && npm run build --workspace @waseller/db",
+    "build": "npm run build:packages && npm run build --workspace @waseller/backend && npm run build --workspace @waseller/dashboard && npm run build --workspace @waseller/whatsapp && npm run build --workspace @waseller/workers",
+    "dev": "npm run dev --workspace @waseller/backend",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "smoke": "node scripts/smoke-check.mjs",
+    "load:test": "node scripts/load-check.mjs",
+    "seed:test-lead": "npm run seed:test-lead --workspace @waseller/backend",
+    "seed:demo-scenarios": "npm run seed:demo-scenarios --workspace @waseller/backend",
+    "db:migrate": "npm run prisma:migrate --workspace @waseller/db",
+    "db:migrate:deploy": "npm run prisma:migrate:deploy --workspace @waseller/db",
+    "db:push": "npm run prisma:push --workspace @waseller/db"
+  },
+  "devDependencies": {
+    "qrcode-terminal": "^0.12.0"
+  }
+}
