@@ -1,11 +1,16 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "ignoreDeprecations": "6.0",
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"],
       "@waseller/shared": ["../../packages/shared/src/index.ts"],
-      "@waseller/shared/*": ["../../packages/shared/src/*"]
+      "@waseller/shared/*": ["../../packages/shared/src/*"],
+      "@waseller/db": ["../../packages/db/src/index.ts"],
+      "@waseller/db/*": ["../../packages/db/src/*"],
+      "@waseller/api-core": ["../../packages/api-core/src/index.ts"],
+      "@waseller/api-core/*": ["../../packages/api-core/src/*"]
     },
     "jsx": "preserve",
     "module": "ESNext",

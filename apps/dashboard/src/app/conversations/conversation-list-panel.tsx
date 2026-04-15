@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ConversationSidebarListSkeleton } from "@/components/page-skeletons";
 import { Input, Spinner } from "@/components/ui";
 import { cn } from "@/lib/cn";
+import { getClientApiBase } from "@/lib/api-base";
 
 type Lead = {
   id: string;
@@ -32,8 +33,6 @@ function labelLeadStatus(status: string | null | undefined): string {
   return LEAD_STATUS_LABEL_ES[status] ?? status;
 }
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3000/api";
 const FALLBACK_TENANT = process.env.NEXT_PUBLIC_TENANT_ID ?? "";
 
 const authContext = (): { token: string; tenantId: string } | null => {
@@ -63,7 +62,7 @@ export function ConversationListPanel() {
 
     const load = async () => {
       try {
-        const response = await fetch(`${API_BASE}/leads?includeClosed=true`, {
+        const response = await fetch(`${getClientApiBase()}/leads?includeClosed=true`, {
           headers: {
             Authorization: `Bearer ${auth.token}`,
             "x-tenant-id": auth.tenantId,

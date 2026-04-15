@@ -30,6 +30,12 @@
       ],
       "@waseller/db/*": [
         "./packages/db/src/*"
+      ],
+      "@waseller/api-core": [
+        "./packages/api-core/src/index.ts"
+      ],
+      "@waseller/api-core/*": [
+        "./packages/api-core/src/*"
       ]
     }
   }

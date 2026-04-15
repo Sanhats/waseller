@@ -25,8 +25,8 @@ const createClient = (): PrismaClientLike => {
   return new pkg.PrismaClient({ log: ["warn", "error"] });
 };
 
-export const prisma = global.__wasellerPrisma__ ?? createClient();
-
-if (process.env.NODE_ENV !== "production") {
-  global.__wasellerPrisma__ = prisma;
+// Reutilizar el cliente en caliente (Next serverless, HMR en dev, un solo proceso en Railway).
+if (!global.__wasellerPrisma__) {
+  global.__wasellerPrisma__ = createClient();
 }
+export const prisma = global.__wasellerPrisma__;

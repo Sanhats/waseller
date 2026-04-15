@@ -1,5 +1,6 @@
 "use client";
 
+import { getClientApiBase } from "@/lib/api-base";
 import { useEffect, useMemo, useState } from "react";
 import {
   CONVERSATION_STAGE_LABELS_ES,
@@ -37,8 +38,6 @@ type PaymentScope = "all" | "pending" | "not_pending";
 type ConversationStateFilter = "all" | string;
 type ConversationStageFilter = "all" | string;
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3000/api";
 const FALLBACK_TENANT = process.env.NEXT_PUBLIC_TENANT_ID ?? "";
 const orderedStatuses = [
   "listo_para_cobrar",
@@ -147,7 +146,7 @@ export default function LeadsPage() {
       try {
         const includeClosed = scope !== "active";
         const response = await fetch(
-          `${API_BASE}/leads${includeClosed ? "?includeClosed=true" : ""}`,
+          `${getClientApiBase()}/leads${includeClosed ? "?includeClosed=true" : ""}`,
           {
             headers: {
               "x-tenant-id": auth.tenantId,

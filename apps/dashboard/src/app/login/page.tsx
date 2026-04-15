@@ -4,8 +4,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/cn";
-
-const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3000/api";
+import { getClientApiBase } from "@/lib/api-base";
 
 export default function LoginPage() {
   const [mode, setMode] = useState<"login" | "register">("login");
@@ -38,7 +37,7 @@ export default function LoginPage() {
     }
     setLoading(true);
     try {
-      const response = await fetch(`${apiBase}/auth/login`, {
+      const response = await fetch(`${getClientApiBase()}/auth/login`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -87,7 +86,7 @@ export default function LoginPage() {
 
     setLoading(true);
     try {
-      const response = await fetch(`${apiBase}/auth/register-tenant`, {
+      const response = await fetch(`${getClientApiBase()}/auth/register-tenant`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"

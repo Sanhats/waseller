@@ -1,5 +1,6 @@
 "use client";
 
+import { getClientApiBase } from "@/lib/api-base";
 import { useEffect, useRef, useState } from "react";
 
 interface LeadActionsProps {
@@ -7,7 +8,6 @@ interface LeadActionsProps {
   phone: string;
 }
 
-const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3000/api";
 const fallbackTenantId = process.env.NEXT_PUBLIC_TENANT_ID ?? "";
 
 export function LeadActions({ leadId, phone }: LeadActionsProps) {
@@ -51,7 +51,7 @@ export function LeadActions({ leadId, phone }: LeadActionsProps) {
   const call = async (path: string, method: "PATCH" | "POST", body?: Record<string, string>) => {
     setLoading(true);
     try {
-      const response = await fetch(`${apiBase}${path}`, {
+      const response = await fetch(`${getClientApiBase()}${path}`, {
         method,
         headers: {
           "Content-Type": "application/json",

@@ -9,10 +9,8 @@ import {
   StockSectionTitle,
 } from "@/components/stock-ui";
 import { Spinner } from "@/components/ui";
+import { getClientApiBase } from "@/lib/api-base";
 import { buildGeneratedSku } from "@/lib/stock-sku";
-
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3000/api";
 
 export type StockProductVariantRow = {
   variantId: string;
@@ -218,7 +216,7 @@ export function StockEditProductModal({
     setSaving(true);
     setApiError("");
     try {
-      const productRes = await fetch(`${API_BASE}/products/${productId}`, {
+      const productRes = await fetch(`${getClientApiBase()}/products/${productId}`, {
         method: "PATCH",
         headers,
         body: JSON.stringify({
@@ -249,7 +247,7 @@ export function StockEditProductModal({
 
       for (const line of lines.filter((l) => !l.isNew && l.variantId)) {
         const vr = await fetch(
-          `${API_BASE}/products/variants/${line.variantId}`,
+          `${getClientApiBase()}/products/variants/${line.variantId}`,
           {
             method: "PATCH",
             headers,
@@ -264,7 +262,7 @@ export function StockEditProductModal({
       }
 
       for (const line of lines.filter((l) => l.isNew)) {
-        const vr = await fetch(`${API_BASE}/products/${productId}/variants`, {
+        const vr = await fetch(`${getClientApiBase()}/products/${productId}/variants`, {
           method: "POST",
           headers,
           body: JSON.stringify(persistBody(line)),

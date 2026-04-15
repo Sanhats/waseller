@@ -19,6 +19,7 @@ import {
 } from "@/components/stock-ui";
 import { StockTableSkeleton } from "@/components/page-skeletons";
 import { Spinner } from "@/components/ui";
+import { getClientApiBase } from "@/lib/api-base";
 import { buildGeneratedSku } from "@/lib/stock-sku";
 
 type VariantRow = StockProductVariantRow;
@@ -31,8 +32,6 @@ type DraftVariant = {
   attributes: Record<string, string>;
 };
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3000/api";
 
 const authContext = (): { token: string; tenantId: string } | null => {
   if (typeof window === "undefined") return null;
@@ -86,14 +85,14 @@ export default function StockPage() {
     setLoading(true);
     try {
       const [productsRes, knowledgeRes] = await Promise.all([
-        fetch(`${API_BASE}/products`, {
+        fetch(`${getClientApiBase()}/products`, {
           headers: {
             Authorization: `Bearer ${auth.token}`,
             "x-tenant-id": auth.tenantId,
           },
           cache: "no-store",
         }),
-        fetch(`${API_BASE}/ops/tenant-knowledge`, {
+        fetch(`${getClientApiBase()}/ops/tenant-knowledge`, {
           headers: {
             Authorization: `Bearer ${auth.token}`,
             "x-tenant-id": auth.tenantId,
@@ -129,7 +128,7 @@ export default function StockPage() {
     const auth = authContext();
     if (!auth) return;
     const response = await fetch(
-      `${API_BASE}/products/variants/${variantId}/adjust`,
+      `${getClientApiBase()}/products/variants/${variantId}/adjust`,
       {
         method: "PATCH",
         headers: {
@@ -226,7 +225,7 @@ export default function StockPage() {
     }
     setCreating(true);
     try {
-      const response = await fetch(`${API_BASE}/products`, {
+      const response = await fetch(`${getClientApiBase()}/products`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${auth.token}`,

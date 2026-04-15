@@ -19,6 +19,7 @@ import {
 } from "@/components/page-skeletons";
 import { Badge, Button, Input, Spinner } from "@/components/ui";
 import { cn } from "@/lib/cn";
+import { getClientApiBase } from "@/lib/api-base";
 
 type ConversationMessage = {
   id: string;
@@ -80,8 +81,6 @@ type PaymentLinkReview = {
   outboundMessagePreview: string | null;
 };
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3000/api";
 const FALLBACK_TENANT = process.env.NEXT_PUBLIC_TENANT_ID ?? "";
 
 const authContext = (): { token: string; tenantId: string } | null => {
@@ -146,14 +145,14 @@ export default function ConversationPage({
     try {
       const [messagesRes, leadsRes, stateRes, paymentLinksRes] =
         await Promise.all([
-          fetch(`${API_BASE}/conversations/${encodeURIComponent(phone)}`, {
+          fetch(`${getClientApiBase()}/conversations/${encodeURIComponent(phone)}`, {
             headers: {
               Authorization: `Bearer ${auth.token}`,
               "x-tenant-id": auth.tenantId,
             },
             cache: "no-store",
           }),
-          fetch(`${API_BASE}/leads?includeClosed=true`, {
+          fetch(`${getClientApiBase()}/leads?includeClosed=true`, {
             headers: {
               Authorization: `Bearer ${auth.token}`,
               "x-tenant-id": auth.tenantId,
@@ -161,7 +160,7 @@ export default function ConversationPage({
             cache: "no-store",
           }),
           fetch(
-            `${API_BASE}/conversations/${encodeURIComponent(phone)}/state`,
+            `${getClientApiBase()}/conversations/${encodeURIComponent(phone)}/state`,
             {
               headers: {
                 Authorization: `Bearer ${auth.token}`,
@@ -171,7 +170,7 @@ export default function ConversationPage({
             },
           ),
           fetch(
-            `${API_BASE}/conversations/${encodeURIComponent(phone)}/payment-links`,
+            `${getClientApiBase()}/conversations/${encodeURIComponent(phone)}/payment-links`,
             {
               headers: {
                 Authorization: `Bearer ${auth.token}`,
@@ -223,7 +222,7 @@ export default function ConversationPage({
     setSending(true);
     try {
       const response = await fetch(
-        `${API_BASE}/conversations/${encodeURIComponent(phone)}/reply`,
+        `${getClientApiBase()}/conversations/${encodeURIComponent(phone)}/reply`,
         {
           method: "POST",
           headers: {
@@ -256,7 +255,7 @@ export default function ConversationPage({
     try {
       const endpoint = botPaused ? "reopen" : "resolve";
       const response = await fetch(
-        `${API_BASE}/conversations/${encodeURIComponent(phone)}/${endpoint}`,
+        `${getClientApiBase()}/conversations/${encodeURIComponent(phone)}/${endpoint}`,
         {
           method: "POST",
           headers: {
@@ -294,7 +293,7 @@ export default function ConversationPage({
     setArchiving(true);
     try {
       const response = await fetch(
-        `${API_BASE}/conversations/${encodeURIComponent(phone)}/archive`,
+        `${getClientApiBase()}/conversations/${encodeURIComponent(phone)}/archive`,
         {
           method: "POST",
           headers: {
@@ -323,7 +322,7 @@ export default function ConversationPage({
     setUnarchiving(true);
     try {
       const response = await fetch(
-        `${API_BASE}/conversations/${encodeURIComponent(phone)}/unarchive`,
+        `${getClientApiBase()}/conversations/${encodeURIComponent(phone)}/unarchive`,
         {
           method: "POST",
           headers: {
@@ -358,7 +357,7 @@ export default function ConversationPage({
     setClosingLead(true);
     try {
       const response = await fetch(
-        `${API_BASE}/conversations/${encodeURIComponent(phone)}/close-lead`,
+        `${getClientApiBase()}/conversations/${encodeURIComponent(phone)}/close-lead`,
         {
           method: "POST",
           headers: {
@@ -413,7 +412,7 @@ export default function ConversationPage({
     setPreparingPaymentDraft(true);
     try {
       const response = await fetch(
-        `${API_BASE}/conversations/${encodeURIComponent(phone)}/payment-links/prepare`,
+        `${getClientApiBase()}/conversations/${encodeURIComponent(phone)}/payment-links/prepare`,
         {
           method: "POST",
           headers: {
@@ -447,7 +446,7 @@ export default function ConversationPage({
     setSendingPaymentAttemptId(attemptId);
     try {
       const response = await fetch(
-        `${API_BASE}/conversations/${encodeURIComponent(phone)}/payment-links/${attemptId}/send`,
+        `${getClientApiBase()}/conversations/${encodeURIComponent(phone)}/payment-links/${attemptId}/send`,
         {
           method: "POST",
           headers: {

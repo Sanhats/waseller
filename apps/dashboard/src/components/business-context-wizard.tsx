@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { AppSidebar } from "@/components/app-sidebar";
 import { Button, Spinner, Tooltip } from "@/components/ui";
 import { cn } from "@/lib/cn";
+import { getClientApiBase } from "@/lib/api-base";
 
 type TenantPresetOption = {
   id: "general" | "indumentaria_calzado" | "electronica" | "hogar_deco" | "belleza_salud";
@@ -53,7 +54,6 @@ type MercadoPagoStatus = {
   lastError: string | null;
 };
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3000/api";
 
 const ALLOWED_PAYMENT_IDS = ["link_pago", "efectivo_retiro"] as const;
 type AllowedPaymentId = (typeof ALLOWED_PAYMENT_IDS)[number];
@@ -219,21 +219,21 @@ export function BusinessContextWizard({
     const load = async () => {
       try {
         const [knowledgeRes, presetsRes, mercadoPagoRes] = await Promise.all([
-          fetch(`${API_BASE}/ops/tenant-knowledge`, {
+          fetch(`${getClientApiBase()}/ops/tenant-knowledge`, {
             headers: {
               "x-tenant-id": auth.tenantId,
               Authorization: `Bearer ${auth.token}`
             },
             cache: "no-store"
           }),
-          fetch(`${API_BASE}/ops/tenant-knowledge/presets`, {
+          fetch(`${getClientApiBase()}/ops/tenant-knowledge/presets`, {
             headers: {
               "x-tenant-id": auth.tenantId,
               Authorization: `Bearer ${auth.token}`
             },
             cache: "no-store"
           }),
-          fetch(`${API_BASE}/integrations/mercadopago/status`, {
+          fetch(`${getClientApiBase()}/integrations/mercadopago/status`, {
             headers: {
               "x-tenant-id": auth.tenantId,
               Authorization: `Bearer ${auth.token}`
@@ -269,7 +269,7 @@ export function BusinessContextWizard({
       const auth = getAuth();
       if (!auth) return;
       try {
-        const response = await fetch(`${API_BASE}/integrations/mercadopago/status`, {
+        const response = await fetch(`${getClientApiBase()}/integrations/mercadopago/status`, {
           headers: {
             "x-tenant-id": auth.tenantId,
             Authorization: `Bearer ${auth.token}`
@@ -295,7 +295,7 @@ export function BusinessContextWizard({
     setSaving(true);
     setMessage("");
     try {
-      const response = await fetch(`${API_BASE}/ops/tenant-knowledge`, {
+      const response = await fetch(`${getClientApiBase()}/ops/tenant-knowledge`, {
         method: "PUT",
         headers: {
           "x-tenant-id": auth.tenantId,
@@ -328,7 +328,7 @@ export function BusinessContextWizard({
     if (!auth) return;
     setConnectingMercadoPago(true);
     try {
-      const response = await fetch(`${API_BASE}/integrations/mercadopago/connect-url`, {
+      const response = await fetch(`${getClientApiBase()}/integrations/mercadopago/connect-url`, {
         headers: {
           "x-tenant-id": auth.tenantId,
           Authorization: `Bearer ${auth.token}`
@@ -352,7 +352,7 @@ export function BusinessContextWizard({
     if (!auth) return;
     setDisconnectingMercadoPago(true);
     try {
-      const response = await fetch(`${API_BASE}/integrations/mercadopago/disconnect`, {
+      const response = await fetch(`${getClientApiBase()}/integrations/mercadopago/disconnect`, {
         method: "POST",
         headers: {
           "x-tenant-id": auth.tenantId,
@@ -360,7 +360,7 @@ export function BusinessContextWizard({
         }
       });
       if (!response.ok) throw new Error(await response.text());
-      const statusResponse = await fetch(`${API_BASE}/integrations/mercadopago/status`, {
+      const statusResponse = await fetch(`${getClientApiBase()}/integrations/mercadopago/status`, {
         headers: {
           "x-tenant-id": auth.tenantId,
           Authorization: `Bearer ${auth.token}`

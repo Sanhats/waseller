@@ -7,6 +7,7 @@ import { BusinessContextWizard } from "@/components/business-context-wizard";
 import { BusinessOnboardingSkeleton } from "@/components/page-skeletons";
 import { Badge, Button, Spinner } from "@/components/ui";
 import { cn } from "@/lib/cn";
+import { getClientApiBase } from "@/lib/api-base";
 
 type OnboardingStep = {
   key: string;
@@ -49,8 +50,6 @@ type OnboardingStatus = {
   steps: OnboardingStep[];
 };
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3000/api";
 const FALLBACK_TENANT = process.env.NEXT_PUBLIC_TENANT_ID ?? "";
 
 const authContext = (): { token: string; tenantId: string } | null => {
@@ -109,7 +108,7 @@ export function BusinessOnboarding() {
 
   const loadQr = async (token: string, tenantId: string) => {
     try {
-      const response = await fetch(`${API_BASE}/onboarding/whatsapp/qr.png`, {
+      const response = await fetch(`${getClientApiBase()}/onboarding/whatsapp/qr.png`, {
         headers: { Authorization: `Bearer ${token}`, "x-tenant-id": tenantId },
         cache: "no-store",
       });
@@ -144,7 +143,7 @@ export function BusinessOnboarding() {
 
     const load = async () => {
       try {
-        const response = await fetch(`${API_BASE}/onboarding/status`, {
+        const response = await fetch(`${getClientApiBase()}/onboarding/status`, {
           headers: {
             Authorization: `Bearer ${auth.token}`,
             "x-tenant-id": auth.tenantId,
@@ -184,7 +183,7 @@ export function BusinessOnboarding() {
     const onMessage = () => {
       const auth = authContext();
       if (!auth) return;
-      void fetch(`${API_BASE}/onboarding/status`, {
+      void fetch(`${getClientApiBase()}/onboarding/status`, {
         headers: {
           Authorization: `Bearer ${auth.token}`,
           "x-tenant-id": auth.tenantId,
@@ -267,7 +266,7 @@ export function BusinessOnboarding() {
         }
         whatsappNumber = input.trim();
       }
-      const response = await fetch(`${API_BASE}/onboarding/whatsapp/connect`, {
+      const response = await fetch(`${getClientApiBase()}/onboarding/whatsapp/connect`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${auth.token}`,
@@ -277,7 +276,7 @@ export function BusinessOnboarding() {
         body: JSON.stringify(whatsappNumber ? { whatsappNumber } : {}),
       });
       if (!response.ok) throw new Error(await response.text());
-      const refresh = await fetch(`${API_BASE}/onboarding/status`, {
+      const refresh = await fetch(`${getClientApiBase()}/onboarding/status`, {
         headers: {
           Authorization: `Bearer ${auth.token}`,
           "x-tenant-id": auth.tenantId,
@@ -312,7 +311,7 @@ export function BusinessOnboarding() {
     setConnectingMercadoPago(true);
     try {
       const response = await fetch(
-        `${API_BASE}/integrations/mercadopago/connect-url`,
+        `${getClientApiBase()}/integrations/mercadopago/connect-url`,
         {
           headers: {
             Authorization: `Bearer ${auth.token}`,

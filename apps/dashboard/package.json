@@ -8,6 +8,10 @@
     "start": "next start"
   },
   "dependencies": {
+    "@nestjs/common": "latest",
+    "@waseller/api-core": "0.1.0",
+    "@waseller/db": "0.1.0",
+    "@waseller/queue": "0.1.0",
     "@waseller/shared": "0.1.0",
     "clsx": "^2.1.1",
     "lucide-react": "^1.7.0",

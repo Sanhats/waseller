@@ -10,6 +10,7 @@
     "seed:demo-scenarios": "npx --package=tsx tsx scripts/seed-demo-scenarios.ts"
   },
   "dependencies": {
+    "@waseller/api-core": "0.1.0",
     "@nestjs/common": "latest",
     "@nestjs/core": "latest",
     "@nestjs/platform-express": "latest",

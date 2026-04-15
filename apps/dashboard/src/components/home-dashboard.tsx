@@ -5,9 +5,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { StockProductThumb } from "@/components/stock-ui";
 import { Skeleton, Spinner } from "@/components/ui";
 import { cn } from "@/lib/cn";
+import { getClientApiBase } from "@/lib/api-base";
 
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:3000/api";
 const FALLBACK_TENANT = process.env.NEXT_PUBLIC_TENANT_ID ?? "";
 
 type ConversationRowState = "nuevo" | "activo" | "esperando";
@@ -163,7 +162,7 @@ export function HomeDashboard() {
     else setRefreshing(true);
     setError("");
     try {
-      const res = await fetch(`${API_BASE}/dashboard/summary`, {
+      const res = await fetch(`${getClientApiBase()}/dashboard/summary`, {
         headers,
         cache: "no-store",
       });
