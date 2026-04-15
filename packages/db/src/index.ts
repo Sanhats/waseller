@@ -5,6 +5,23 @@ declare global {
   var __wasellerPrisma__: PrismaClientLike | undefined;
 }
 
+/** En Vercel (serverless), limita conexiones por instancia y alinea con pool transaction de Supabase. */
+function adaptDatabaseUrlForServerless(url: string): string {
+  if (process.env.VERCEL !== "1") return url;
+  try {
+    const u = new URL(url);
+    if (!u.searchParams.has("connection_limit")) {
+      u.searchParams.set("connection_limit", "1");
+    }
+    if (u.port === "6543" && !u.searchParams.has("pgbouncer")) {
+      u.searchParams.set("pgbouncer", "true");
+    }
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
 const createClient = (): PrismaClientLike => {
   // Prioriza cliente generado local del workspace db para evitar conflictos de hoisting.
   let pkg: { PrismaClient?: new (...args: unknown[]) => PrismaClientLike };
@@ -22,7 +39,16 @@ const createClient = (): PrismaClientLike => {
   if (!pkg.PrismaClient) {
     throw new Error("PrismaClient no disponible. Ejecuta la generación de cliente Prisma.");
   }
-  return new pkg.PrismaClient({ log: ["warn", "error"] });
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl?.trim()) {
+    throw new Error("DATABASE_URL no definida.");
+  }
+  return new pkg.PrismaClient({
+    log: ["warn", "error"],
+    datasources: {
+      db: { url: adaptDatabaseUrlForServerless(databaseUrl.trim()) },
+    },
+  });
 };
 
 // Reutilizar el cliente en caliente (Next serverless, HMR en dev, un solo proceso en Railway).
