@@ -1,0 +1,14 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "provider": "node",
+  "steps": {
+    "build": {
+      "inputs": ["..."],
+      "commands": ["npm run build:workers"]
+    }
+  },
+  "deploy": {
+    "startCommand": "npm run start:workers",
+    "inputs": ["..."]
+  }
+}

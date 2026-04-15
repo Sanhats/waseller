@@ -2,7 +2,9 @@ node_modules
 .env
 .env.*
 !.env.example
-dist
+# Solo dist en la raíz del repo (no ignorar apps/*/dist ni packages/*/dist:
+# Railpack/Railway pueden omitir rutas ignoradas al armar la imagen de runtime.)
+/dist
 .next
 coverage
 *.log
