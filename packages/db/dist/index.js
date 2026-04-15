@@ -1,17 +1,24 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.prisma = void 0;
-/** En Vercel (serverless), limita conexiones por instancia y alinea con pool transaction de Supabase. */
-function adaptDatabaseUrlForServerless(url) {
-    if (process.env.VERCEL !== "1")
-        return url;
+/**
+ * Pooler Supabase en puerto 6543 = modo transacción (PgBouncer). Sin `pgbouncer=true`,
+ * Prisma usa prepared statements y Postgres devuelve 26000 "prepared statement sN does not exist"
+ * al cambiar de conexión en el pool.
+ *
+ * @see https://www.prisma.io/docs/orm/prisma-client/setup-and-configuration/databases-connections/pgbouncer
+ */
+function adaptDatabaseUrlForPooledPostgres(url) {
     try {
         const u = new URL(url);
-        if (!u.searchParams.has("connection_limit")) {
-            u.searchParams.set("connection_limit", "1");
-        }
-        if (u.port === "6543" && !u.searchParams.has("pgbouncer")) {
+        const host = u.hostname.toLowerCase();
+        const isSupabaseTransactionPool = host.includes("pooler.supabase.com") && u.port === "6543";
+        const isNeonPooler = host.includes("neon.tech") && host.includes("pooler");
+        if ((isSupabaseTransactionPool || isNeonPooler) && !u.searchParams.has("pgbouncer")) {
             u.searchParams.set("pgbouncer", "true");
+        }
+        if (process.env.VERCEL === "1" && !u.searchParams.has("connection_limit")) {
+            u.searchParams.set("connection_limit", "1");
         }
         return u.toString();
     }
@@ -40,7 +47,7 @@ const createClient = () => {
     return new pkg.PrismaClient({
         log: ["warn", "error"],
         datasources: {
-            db: { url: adaptDatabaseUrlForServerless(databaseUrl.trim()) },
+            db: { url: adaptDatabaseUrlForPooledPostgres(databaseUrl.trim()) },
         },
     });
 };
