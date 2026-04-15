@@ -6,7 +6,7 @@
 | Postgres | **Supabase** | `DATABASE_URL` con **pooler** (connection pooling / `pooler.supabase.com`) para Prisma en serverless. |
 | Redis (BullMQ) | **Upstash** | Colas compartidas entre Vercel (enqueue) y workers (consumo). Usá la URL TLS que indique Upstash (`rediss://…`). |
 | Workers (procesamiento colas, LLM, sender, etc.) | **Railway** | **Recomendado:** builder **Dockerfile**, ruta `infra/railway/Dockerfile.workers` (evita que Railpack omita `dist/` en la imagen final). Alternativa Railpack: `RAILPACK_BUILD_CMD=npm run build:workers`, `RAILPACK_START_CMD=npm run start:workers`, o `RAILPACK_CONFIG_FILE=infra/railway/railpack.workers.json`. Repo exportado: `npm run export:railway`. |
-| WhatsApp (Baileys) | **Railway** | Repo `waseller-railway-whatsapp`: mismo patrón; volumen o storage para `WA_AUTH_DIR` si persistís sesión. |
+| WhatsApp (Baileys) | **Railway** | **Recomendado:** segundo servicio con Dockerfile `infra/railway/Dockerfile.whatsapp`. Escucha `PORT` (Railway) o `WHATSAPP_PORT`. Volumen o storage para `WA_AUTH_DIR` si persistís sesión. |
 
 Build raíz para Vercel: `npm run build` (packages + dashboard). Workers y WhatsApp: cada repo exportado tiene su propio `package.json` con `build` y `start`; desplegás **dos servicios** en Railway apuntando a cada repo.
 

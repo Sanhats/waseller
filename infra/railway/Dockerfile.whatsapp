@@ -1,0 +1,19 @@
+# Servicio Baileys + Express (mismo monorepo en /app).
+# Railway: builder = Dockerfile, Dockerfile path = infra/railway/Dockerfile.whatsapp
+FROM node:22-bookworm-slim
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends git ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY . .
+
+RUN sh -c 'if [ -f package-lock.json ]; then npm ci; else npm install; fi' \
+  && npm run build:whatsapp \
+  && npm prune --omit=dev
+
+ENV NODE_ENV=production
+
+CMD ["node", "apps/whatsapp/dist/apps/whatsapp/src/index.js"]

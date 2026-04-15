@@ -97,7 +97,7 @@ app.post("/send", async (req, res) => {
   }
 });
 
-const port = Number(process.env.WHATSAPP_PORT ?? 3100);
+const port = Number(process.env.PORT ?? process.env.WHATSAPP_PORT ?? 3100);
 app.listen(port, () => {
   // eslint-disable-next-line no-console
   console.log(`WhatsApp service listening on ${port}`);
