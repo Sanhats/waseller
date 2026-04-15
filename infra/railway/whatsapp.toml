@@ -1,6 +1,7 @@
-# Servicio WhatsApp (Baileys). Montar volumen en Railway y definir WA_AUTH_DIR al mismo path.
-# Ejemplo: volumen en /data/wa-auth → env WA_AUTH_DIR=/data/wa-auth
-# Una sola réplica.
+# Servicio WhatsApp (Baileys). Volumen + WA_AUTH_DIR; una réplica.
+#
+#   RAILPACK_CONFIG_FILE=infra/railpack/whatsapp.json
+# Vaciá Custom Build Command si tenés start:whatsapp u otro start ahí.
 
 [build]
 builder = "nixpacks"

@@ -1,5 +1,6 @@
-# Copiar o fusionar en el servicio "API" del proyecto Railway (mismo repo).
-# Build / start se ejecutan desde la raíz del monorepo.
+# Servicio API (Nest). Opcional pero recomendado:
+#   RAILPACK_CONFIG_FILE=infra/railpack/api.json
+# Vaciá Custom Build Command en el panel si choca con Railpack.
 
 [build]
 builder = "nixpacks"

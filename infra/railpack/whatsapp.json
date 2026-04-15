@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "provider": "node",
+  "steps": {
+    "build": {
+      "inputs": [{ "step": "install" }],
+      "commands": ["npm run build:whatsapp"]
+    }
+  },
+  "deploy": {
+    "startCommand": "npm run start:whatsapp"
+  }
+}

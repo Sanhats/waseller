@@ -1,9 +1,14 @@
-# Servicio separado: workers (BullMQ). Mismo repo, otra instancia en Railway.
+# Servicio Workers (BullMQ), mismo repo.
+#
+# En Railway → Variables del servicio:
+#   RAILPACK_CONFIG_FILE=infra/railpack/workers.json
+#
+# En Settings → Build: vaciá "Custom Build Command" (no pongas npm run start:workers ahí).
+#
+# El JSON fuerza: build = npm run build:workers, start = npm run start:workers.
 
 [build]
 builder = "nixpacks"
-# En Railway: Build Command = esto (compila). Nunca uses start:workers acá.
-buildCommand = "npm ci && npm run build:workers"
 
 [deploy]
 startCommand = "npm run start:workers"
