@@ -3,7 +3,7 @@
 
 [build]
 builder = "nixpacks"
-buildCommand = "npm ci && npm run build:packages && npm run build --workspace @waseller/backend"
+buildCommand = "npm ci && npm run build:api"
 
 [deploy]
 startCommand = "npm start"

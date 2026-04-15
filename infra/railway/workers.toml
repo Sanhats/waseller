@@ -2,7 +2,8 @@
 
 [build]
 builder = "nixpacks"
-buildCommand = "npm ci && npm run build:packages && npm run build --workspace @waseller/workers"
+# En Railway: Build Command = esto (compila). Nunca uses start:workers acá.
+buildCommand = "npm ci && npm run build:workers"
 
 [deploy]
 startCommand = "npm run start:workers"

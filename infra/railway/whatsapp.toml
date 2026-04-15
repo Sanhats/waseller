@@ -4,7 +4,7 @@
 
 [build]
 builder = "nixpacks"
-buildCommand = "npm ci && npm run build:packages && npm run build --workspace @waseller/whatsapp"
+buildCommand = "npm ci && npm run build:whatsapp"
 
 [deploy]
 startCommand = "npm run start:whatsapp"

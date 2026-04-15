@@ -8,6 +8,9 @@
   ],
   "scripts": {
     "build:packages": "npm run build --workspace @waseller/shared && npm run build --workspace @waseller/queue && npm run build --workspace @waseller/db",
+    "build:api": "npm run build:packages && npm run build --workspace @waseller/backend",
+    "build:workers": "npm run build:packages && npm run build --workspace @waseller/workers",
+    "build:whatsapp": "npm run build:packages && npm run build --workspace @waseller/whatsapp",
     "build": "npm run build:packages && npm run build --workspace @waseller/backend && npm run build --workspace @waseller/dashboard && npm run build --workspace @waseller/whatsapp && npm run build --workspace @waseller/workers",
     "start": "node apps/backend/dist/main.js",
     "start:api": "node apps/backend/dist/main.js",
