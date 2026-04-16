@@ -138,6 +138,20 @@ export const redisConnection = new IORedis(redisUrl, redisClientOptions);
 
 bindTransientRedisSocketErrors(redisConnection, "redis (IORedis)");
 
+/**
+ * BullMQ Worker usa `connection.duplicate()` para la conexión bloqueante (BLPOP, etc.).
+ * Esos clientes IORedis son distintos del principal: sin `error` listener, Node vuelca ECONNRESET/EPIPE a stderr.
+ */
+function wrapRedisDuplicatesWithTransientErrorHandler(client: IORedis): void {
+  const baseDuplicate = client.duplicate.bind(client) as (...args: unknown[]) => IORedis;
+  (client as IORedis & { duplicate: typeof baseDuplicate }).duplicate = (...args: unknown[]) => {
+    const dup = baseDuplicate(...args);
+    bindTransientRedisSocketErrors(dup, "redis (BullMQ duplicate)");
+    return dup;
+  };
+}
+wrapRedisDuplicatesWithTransientErrorHandler(redisConnection);
+
 const defaultJobOptions: JobsOptions = {
   attempts: 5,
   removeOnComplete: 1000,
