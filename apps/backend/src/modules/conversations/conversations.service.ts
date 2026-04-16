@@ -610,7 +610,7 @@ export class ConversationsService {
     const lead = await prisma.lead.findFirst({
       where: { tenantId, phone: resolvedPhone },
       orderBy: { updatedAt: "desc" },
-      select: { id: true }
+      select: { id: true, score: true }
     });
     if (!lead) throw new Error("Lead no encontrado para esta conversación.");
     const rows = (await (prisma as any).$queryRaw`
@@ -681,6 +681,14 @@ export class ConversationsService {
         updated_at = now()
       where id::text = ${attempt.id}
     `;
+
+    await prisma.lead.update({
+      where: { id: lead.id },
+      data: {
+        status: "listo_para_cobrar",
+        score: Math.max(120, lead.score ?? 0)
+      }
+    });
 
     return { queued: true, attemptId: attempt.id };
   }

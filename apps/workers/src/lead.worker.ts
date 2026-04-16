@@ -655,6 +655,13 @@ export const leadWorker = new Worker<LeadProcessingJobV1>(
             variantAttributes: variantAttributeMap
           }
         });
+        await prisma.lead.update({
+          where: { id: leadId },
+          data: {
+            status: "listo_para_cobrar",
+            score: Math.max(120, lead.score ?? 0)
+          }
+        });
         message = await templateService.render(tenantId, "payment_link_ready_for_review", {
           product_name: variant.productName
         });

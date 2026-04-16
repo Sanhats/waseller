@@ -481,6 +481,10 @@ export const messageProcessorWorker = new Worker<IncomingMessageJobV1>(
             if (reserved) {
               status = "listo_para_cobrar";
               score = Math.max(score, 120);
+            } else if (effectiveIntent === "pedir_link_pago" || effectiveIntent === "elegir_medio_pago") {
+              // Pedido explícito de link/medio: etapa de cobro aunque la reserva no haya aplicado en este turno.
+              status = "listo_para_cobrar";
+              score = Math.max(score, 120);
             }
           }
         }
