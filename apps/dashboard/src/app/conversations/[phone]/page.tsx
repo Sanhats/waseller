@@ -152,13 +152,20 @@ export default function ConversationPage({
             },
             cache: "no-store",
           }),
-          fetch(`${getClientApiBase()}/leads?includeClosed=true`, {
-            headers: {
-              Authorization: `Bearer ${auth.token}`,
-              "x-tenant-id": auth.tenantId,
+          fetch(
+            `${getClientApiBase()}/leads?${new URLSearchParams({
+              includeClosed: "true",
+              includeArchived: "true",
+              includeOrphanConversations: "true"
+            }).toString()}`,
+            {
+              headers: {
+                Authorization: `Bearer ${auth.token}`,
+                "x-tenant-id": auth.tenantId,
+              },
+              cache: "no-store",
             },
-            cache: "no-store",
-          }),
+          ),
           fetch(
             `${getClientApiBase()}/conversations/${encodeURIComponent(phone)}/state`,
             {

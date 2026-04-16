@@ -1,12 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { prisma } from "../../../../../packages/db/src";
-import { LeadStatus } from "../../../../../packages/shared/src";
-
-function digitsOnly(phone: string): string {
-  return String(phone ?? "")
-    .trim()
-    .replace(/\D/g, "");
-}
+import { digitsOnlyPhone, LeadStatus } from "../../../../../packages/shared/src";
 
 @Injectable()
 export class LeadsService {
@@ -14,9 +8,10 @@ export class LeadsService {
     tenantId: string,
     includeClosed = false,
     includeArchived = false,
-    includeHiddenFromInbox = false
+    includeHiddenFromInbox = false,
+    includeOrphanConversations = false
   ): Promise<unknown[]> {
-    const [leads, conversations, memories] = await Promise.all([
+    const [leads, conversations, memories, allTenantLeadPhones] = await Promise.all([
       prisma.lead.findMany({
         where: {
           tenantId,
@@ -27,20 +22,47 @@ export class LeadsService {
       prisma.conversation.findMany({
         where: { tenantId },
         orderBy: { updatedAt: "desc" },
-        select: { phone: true, state: true, archivedAt: true }
+        select: {
+          id: true,
+          phone: true,
+          state: true,
+          archivedAt: true,
+          lastMessage: true,
+          updatedAt: true
+        }
       }),
       prisma.conversationMemory.findMany({
         where: { tenantId },
         select: { leadId: true, facts: true }
-      })
+      }),
+      includeOrphanConversations
+        ? prisma.lead.findMany({
+            where: { tenantId },
+            select: { phone: true }
+          })
+        : Promise.resolve([] as Array<{ phone: string }>)
     ]);
 
+    /** Estado de conversación indexado por teléfono tal cual y por solo-dígitos (evita desalineación lead↔conversación). */
     const conversationStateByPhone = new Map<string, string>();
-    for (const convo of conversations) {
-      if (!conversationStateByPhone.has(convo.phone)) {
-        conversationStateByPhone.set(convo.phone, convo.state);
+    const registerConvoStateKeys = (phone: string, state: string) => {
+      const raw = String(phone ?? "").trim();
+      if (raw && !conversationStateByPhone.has(raw)) {
+        conversationStateByPhone.set(raw, state);
       }
+      const d = digitsOnlyPhone(raw);
+      if (d.length >= 8 && !conversationStateByPhone.has(d)) {
+        conversationStateByPhone.set(d, state);
+      }
+    };
+    for (const convo of conversations) {
+      registerConvoStateKeys(convo.phone, convo.state);
     }
+
+    const conversationStateForLeadPhone = (leadPhone: string): string | undefined => {
+      const s = String(leadPhone ?? "").trim();
+      return conversationStateByPhone.get(s) ?? conversationStateByPhone.get(digitsOnlyPhone(s));
+    };
 
     const conversationStageByLeadId = new Map<string, string>();
     for (const row of memories) {
@@ -55,25 +77,23 @@ export class LeadsService {
       .map((c: { phone: string }) => c.phone);
 
     const leadIsArchived = (leadPhone: string): boolean => {
-      const ld = digitsOnly(leadPhone);
+      const ld = digitsOnlyPhone(leadPhone);
       if (!ld) return false;
-      return archivedPhones.some((p: string) => digitsOnly(p) === ld);
+      return archivedPhones.some((p: string) => digitsOnlyPhone(p) === ld);
     };
 
-    return leads
+    const mappedLeads = leads
       .filter((lead: { phone?: string }) => {
-        const digits = String(lead.phone ?? "")
-          .trim()
-          .replace(/\D/g, "");
+        const digits = digitsOnlyPhone(String(lead.phone ?? ""));
         const validPhone = digits.length >= 8 && digits.length <= 18;
-        const isClosed = conversationStateByPhone.get(String(lead.phone ?? "")) === "lead_closed";
+        const isClosed = conversationStateForLeadPhone(String(lead.phone ?? "")) === "lead_closed";
         const visibleByScope = includeClosed ? true : !isClosed;
         const hideArchived = !includeArchived && leadIsArchived(String(lead.phone ?? ""));
         return validPhone && visibleByScope && !hideArchived;
       })
       .map((lead: { id: string; phone?: string }) => {
-        const isClosed = conversationStateByPhone.get(String(lead.phone ?? "")) === "lead_closed";
-        const conversationState = conversationStateByPhone.get(String(lead.phone ?? "")) ?? "open";
+        const isClosed = conversationStateForLeadPhone(String(lead.phone ?? "")) === "lead_closed";
+        const conversationState = conversationStateForLeadPhone(String(lead.phone ?? "")) ?? "open";
         const conversationStage = conversationStageByLeadId.get(lead.id) ?? null;
         return {
           ...lead,
@@ -82,7 +102,58 @@ export class LeadsService {
           conversationStage
         };
       });
-   }
+
+    if (!includeOrphanConversations) {
+      return mappedLeads;
+    }
+
+    const leadPhonesNormAll = new Set<string>();
+    for (const row of allTenantLeadPhones) {
+      const d = digitsOnlyPhone(row.phone);
+      if (d.length >= 8) leadPhonesNormAll.add(d);
+    }
+
+    const seenNorm = new Set(
+      mappedLeads.map((row: { phone?: string }) => digitsOnlyPhone(String((row as { phone?: string }).phone ?? "")))
+    );
+
+    const orphans: unknown[] = [];
+    for (const c of conversations) {
+      const d = digitsOnlyPhone(c.phone);
+      if (d.length < 8 || d.length > 18) continue;
+      if (leadPhonesNormAll.has(d)) continue;
+      if (seenNorm.has(d)) continue;
+      const archived = c.archivedAt != null;
+      if (!includeArchived && archived) continue;
+      const closed = c.state === "lead_closed";
+      if (!includeClosed && closed) continue;
+      seenNorm.add(d);
+      orphans.push({
+        id: `orphan:${c.id}`,
+        tenantId,
+        phone: c.phone,
+        customerName: null,
+        product: null,
+        productVariantId: null,
+        productVariantAttributes: null,
+        status: "frio",
+        score: 0,
+        hasStockReservation: false,
+        reservationExpiresAt: null,
+        profilePictureUrl: null,
+        inboxHiddenAt: null,
+        lastMessage: c.lastMessage,
+        createdAt: c.updatedAt,
+        updatedAt: c.updatedAt,
+        leadClosed: closed,
+        conversationState: c.state ?? "open",
+        conversationStage: null,
+        conversationOnly: true
+      });
+    }
+
+    return [...mappedLeads, ...orphans];
+  }
 
   /**
    * Oculta el lead de Clientes y Conversaciones (bandeja). No borra mensajes ni el lead.

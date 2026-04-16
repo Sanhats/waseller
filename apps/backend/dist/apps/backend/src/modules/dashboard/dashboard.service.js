@@ -126,7 +126,7 @@ let DashboardService = class DashboardService {
         const now = new Date();
         const highlightsSince = new Date(now.getTime() - PRODUCT_HIGHLIGHT_RANGE_DAYS * 86400000);
         const [rawLeads, onboarding, productHighlights] = await Promise.all([
-            this.leadsService.listByTenant(tenantId, true, false, false),
+            this.leadsService.listByTenant(tenantId, true, false, false, true),
             this.onboardingService.getStatus(tenantId),
             loadProductHighlights(tenantId, highlightsSince).catch(() => ({
                 topSold: [],

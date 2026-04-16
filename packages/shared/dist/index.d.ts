@@ -6,3 +6,4 @@ export * from "./tenant-business-profile";
 export * from "./mercado-pago";
 export * from "./conversation-labels";
 export * from "./whatsapp-service-url";
+export * from "./phone-variants";

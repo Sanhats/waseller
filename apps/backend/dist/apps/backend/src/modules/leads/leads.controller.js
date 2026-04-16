@@ -21,9 +21,9 @@ let LeadsController = class LeadsController {
     constructor(leadsService) {
         this.leadsService = leadsService;
     }
-    async list(req, includeClosed, includeArchived, includeHiddenFromInbox) {
+    async list(req, includeClosed, includeArchived, includeHiddenFromInbox, includeOrphanConversations) {
         (0, require_role_1.requireRole)(req.auth?.role, ["admin", "vendedor", "viewer"]);
-        return this.leadsService.listByTenant(req.tenantId, includeClosed === "true" || includeClosed === "1", includeArchived === "true" || includeArchived === "1", includeHiddenFromInbox === "true" || includeHiddenFromInbox === "1");
+        return this.leadsService.listByTenant(req.tenantId, includeClosed === "true" || includeClosed === "1", includeArchived === "true" || includeArchived === "1", includeHiddenFromInbox === "true" || includeHiddenFromInbox === "1", includeOrphanConversations === "true" || includeOrphanConversations === "1");
     }
     async hideFromInbox(req, leadId) {
         (0, require_role_1.requireRole)(req.auth?.role, ["admin", "vendedor"]);
@@ -63,8 +63,9 @@ __decorate([
     __param(1, (0, common_1.Query)("includeClosed")),
     __param(2, (0, common_1.Query)("includeArchived")),
     __param(3, (0, common_1.Query)("includeHiddenFromInbox")),
+    __param(4, (0, common_1.Query)("includeOrphanConversations")),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object, String, String, String]),
+    __metadata("design:paramtypes", [Object, String, String, String, String]),
     __metadata("design:returntype", Promise)
 ], LeadsController.prototype, "list", null);
 __decorate([

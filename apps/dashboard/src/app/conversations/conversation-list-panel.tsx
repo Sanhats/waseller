@@ -7,6 +7,7 @@ import { ConversationSidebarListSkeleton } from "@/components/page-skeletons";
 import { Input, Spinner } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { getClientApiBase } from "@/lib/api-base";
+import { digitsOnlyPhone } from "@waseller/shared";
 
 type Lead = {
   id: string;
@@ -58,11 +59,19 @@ export function ConversationListPanel() {
 
   useEffect(() => {
     const auth = authContext();
-    if (!auth) return;
+    if (!auth) {
+      setLoading(false);
+      return;
+    }
 
     const load = async () => {
       try {
-        const response = await fetch(`${getClientApiBase()}/leads?includeClosed=true`, {
+        const qs = new URLSearchParams({
+          includeClosed: "true",
+          includeArchived: "true",
+          includeOrphanConversations: "true"
+        });
+        const response = await fetch(`${getClientApiBase()}/leads?${qs.toString()}`, {
           headers: {
             Authorization: `Bearer ${auth.token}`,
             "x-tenant-id": auth.tenantId,
@@ -150,7 +159,8 @@ export function ConversationListPanel() {
             const displayName = lead.customerName?.trim() || lead.phone;
             const href = `/conversations/${encodeURIComponent(lead.phone)}`;
             const isSelected =
-              selectedPhone !== null && lead.phone === selectedPhone;
+              selectedPhone !== null &&
+              digitsOnlyPhone(lead.phone) === digitsOnlyPhone(selectedPhone);
             return (
               <Link
                 key={lead.id}

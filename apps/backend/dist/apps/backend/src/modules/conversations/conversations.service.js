@@ -15,26 +15,26 @@ const src_1 = require("../../../../../packages/db/src");
 const src_2 = require("../../../../../packages/queue/src");
 const src_3 = require("../../../../../packages/shared/src");
 const mercado_pago_service_1 = require("../mercado-pago/mercado-pago.service");
+const src_4 = require("../../../../../packages/shared/src");
 const DEFAULT_PAYMENT_LINK_GENERATED_TEMPLATE = "Perfecto, te comparto el link de pago de {product_name}: {payment_url} Cuando se acredite te confirmamos por este medio.";
-const normalizePhoneDigits = (value) => String(value ?? "").trim().replace(/[^\d]/g, "");
-/** Variantes de dígitos para emparejar lead guardado como `54…` vs formato nacional (p. ej. AR móvil). */
-const buildPhoneDigitVariants = (digits) => {
-    const d = String(digits ?? "").trim();
-    if (!d)
-        return [];
-    const variants = new Set([d]);
-    if (d.startsWith("54") && d.length >= 11) {
-        variants.add(d.slice(2));
-    }
-    if (!d.startsWith("54") && d.length >= 8) {
-        variants.add(`54${d}`);
-    }
-    return [...variants];
-};
 let ConversationsService = class ConversationsService {
     mercadoPagoService;
     constructor(mercadoPagoService) {
         this.mercadoPagoService = mercadoPagoService;
+    }
+    /** Variantes de `phone` para alinear URL / lead / fila `conversations` (mismo dígito, distinto prefijo). */
+    async matchConversationPhoneVariants(tenantId, phoneParam) {
+        const raw = decodeURIComponent(phoneParam).trim();
+        const resolved = (await this.resolvePhoneForLead(tenantId, raw)) ?? raw;
+        const phoneCandidates = new Set([resolved, raw]);
+        for (const v of (0, src_4.buildPhoneDigitVariants)((0, src_4.digitsOnlyPhone)(raw))) {
+            phoneCandidates.add(v);
+        }
+        for (const v of (0, src_4.buildPhoneDigitVariants)((0, src_4.digitsOnlyPhone)(resolved))) {
+            phoneCandidates.add(v);
+        }
+        const phones = [...phoneCandidates].filter((p) => (0, src_4.digitsOnlyPhone)(p).length >= 8);
+        return [...new Set(phones.length > 0 ? phones : [resolved])];
     }
     coerceUnitPrice(value) {
         if (value === null || value === undefined)
@@ -76,10 +76,10 @@ let ConversationsService = class ConversationsService {
         const trimmed = phone.trim();
         if (!trimmed)
             return null;
-        const digits = normalizePhoneDigits(trimmed);
+        const digits = (0, src_4.digitsOnlyPhone)(trimmed);
         if (digits.length < 8)
             return null;
-        const stringVariants = new Set([trimmed, digits, ...buildPhoneDigitVariants(digits)]);
+        const stringVariants = new Set([trimmed, digits, ...(0, src_4.buildPhoneDigitVariants)(digits)]);
         for (const v of stringVariants) {
             const found = await src_1.prisma.lead.findFirst({
                 where: { tenantId, phone: v },
@@ -88,7 +88,7 @@ let ConversationsService = class ConversationsService {
             if (found)
                 return found.phone;
         }
-        for (const variantDigits of buildPhoneDigitVariants(digits)) {
+        for (const variantDigits of (0, src_4.buildPhoneDigitVariants)(digits)) {
             const rows = (await src_1.prisma.$queryRaw `
         select phone
         from public.leads
@@ -119,10 +119,9 @@ let ConversationsService = class ConversationsService {
         });
     }
     async listMessages(tenantId, phone) {
-        const raw = decodeURIComponent(phone).trim();
-        const resolved = (await this.resolvePhoneForLead(tenantId, raw)) ?? raw;
+        const uniquePhones = await this.matchConversationPhoneVariants(tenantId, phone);
         return src_1.prisma.message.findMany({
-            where: { tenantId, phone: resolved },
+            where: { tenantId, phone: { in: uniquePhones } },
             orderBy: { createdAt: "asc" },
             select: {
                 id: true,
@@ -134,10 +133,9 @@ let ConversationsService = class ConversationsService {
         });
     }
     async getState(tenantId, phone) {
-        const raw = decodeURIComponent(phone).trim();
-        const resolved = (await this.resolvePhoneForLead(tenantId, raw)) ?? raw;
+        const variants = await this.matchConversationPhoneVariants(tenantId, phone);
         const conversation = await src_1.prisma.conversation.findFirst({
-            where: { tenantId, phone: resolved },
+            where: { tenantId, phone: { in: variants } },
             orderBy: { updatedAt: "desc" },
             select: { state: true, archivedAt: true }
         });

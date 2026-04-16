@@ -8,29 +8,29 @@ import {
 } from "../../../../../packages/queue/src";
 import { OUTGOING_ATTEMPTS, OUTGOING_PRIORITY } from "../../../../../packages/shared/src";
 import { MercadoPagoService } from "../mercado-pago/mercado-pago.service";
+import { buildPhoneDigitVariants, digitsOnlyPhone } from "../../../../../packages/shared/src";
 
 const DEFAULT_PAYMENT_LINK_GENERATED_TEMPLATE =
   "Perfecto, te comparto el link de pago de {product_name}: {payment_url} Cuando se acredite te confirmamos por este medio.";
 
-const normalizePhoneDigits = (value: string): string => String(value ?? "").trim().replace(/[^\d]/g, "");
-
-/** Variantes de dígitos para emparejar lead guardado como `54…` vs formato nacional (p. ej. AR móvil). */
-const buildPhoneDigitVariants = (digits: string): string[] => {
-  const d = String(digits ?? "").trim();
-  if (!d) return [];
-  const variants = new Set<string>([d]);
-  if (d.startsWith("54") && d.length >= 11) {
-    variants.add(d.slice(2));
-  }
-  if (!d.startsWith("54") && d.length >= 8) {
-    variants.add(`54${d}`);
-  }
-  return [...variants];
-};
-
 @Injectable()
 export class ConversationsService {
   constructor(private readonly mercadoPagoService: MercadoPagoService) {}
+
+  /** Variantes de `phone` para alinear URL / lead / fila `conversations` (mismo dígito, distinto prefijo). */
+  private async matchConversationPhoneVariants(tenantId: string, phoneParam: string): Promise<string[]> {
+    const raw = decodeURIComponent(phoneParam).trim();
+    const resolved = (await this.resolvePhoneForLead(tenantId, raw)) ?? raw;
+    const phoneCandidates = new Set<string>([resolved, raw]);
+    for (const v of buildPhoneDigitVariants(digitsOnlyPhone(raw))) {
+      phoneCandidates.add(v);
+    }
+    for (const v of buildPhoneDigitVariants(digitsOnlyPhone(resolved))) {
+      phoneCandidates.add(v);
+    }
+    const phones = [...phoneCandidates].filter((p) => digitsOnlyPhone(p).length >= 8);
+    return [...new Set(phones.length > 0 ? phones : [resolved])];
+  }
 
   private coerceUnitPrice(value: unknown): number {
     if (value === null || value === undefined) return NaN;
@@ -71,7 +71,7 @@ export class ConversationsService {
   private async resolvePhoneForLead(tenantId: string, phone: string): Promise<string | null> {
     const trimmed = phone.trim();
     if (!trimmed) return null;
-    const digits = normalizePhoneDigits(trimmed);
+    const digits = digitsOnlyPhone(trimmed);
     if (digits.length < 8) return null;
 
     const stringVariants = new Set<string>([trimmed, digits, ...buildPhoneDigitVariants(digits)]);
@@ -118,10 +118,9 @@ export class ConversationsService {
   }
 
   async listMessages(tenantId: string, phone: string): Promise<unknown[]> {
-    const raw = decodeURIComponent(phone).trim();
-    const resolved = (await this.resolvePhoneForLead(tenantId, raw)) ?? raw;
+    const uniquePhones = await this.matchConversationPhoneVariants(tenantId, phone);
     return prisma.message.findMany({
-      where: { tenantId, phone: resolved },
+      where: { tenantId, phone: { in: uniquePhones } },
       orderBy: { createdAt: "asc" },
       select: {
         id: true,
@@ -137,10 +136,9 @@ export class ConversationsService {
     tenantId: string,
     phone: string
   ): Promise<{ state: string; botPaused: boolean; leadClosed: boolean; archived: boolean }> {
-    const raw = decodeURIComponent(phone).trim();
-    const resolved = (await this.resolvePhoneForLead(tenantId, raw)) ?? raw;
+    const variants = await this.matchConversationPhoneVariants(tenantId, phone);
     const conversation = await prisma.conversation.findFirst({
-      where: { tenantId, phone: resolved },
+      where: { tenantId, phone: { in: variants } },
       orderBy: { updatedAt: "desc" },
       select: { state: true, archivedAt: true }
     });

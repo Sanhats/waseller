@@ -142,7 +142,9 @@ export async function dispatchApi(
         url.searchParams.get("includeClosed") === "true" || url.searchParams.get("includeClosed") === "1",
         url.searchParams.get("includeArchived") === "true" || url.searchParams.get("includeArchived") === "1",
         url.searchParams.get("includeHiddenFromInbox") === "true" ||
-          url.searchParams.get("includeHiddenFromInbox") === "1"
+          url.searchParams.get("includeHiddenFromInbox") === "1",
+        url.searchParams.get("includeOrphanConversations") === "true" ||
+          url.searchParams.get("includeOrphanConversations") === "1"
       );
       return NextResponse.json(data);
     }

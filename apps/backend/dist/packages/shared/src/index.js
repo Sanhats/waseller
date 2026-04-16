@@ -22,3 +22,4 @@ __exportStar(require("./tenant-business-profile"), exports);
 __exportStar(require("./mercado-pago"), exports);
 __exportStar(require("./conversation-labels"), exports);
 __exportStar(require("./whatsapp-service-url"), exports);
+__exportStar(require("./phone-variants"), exports);

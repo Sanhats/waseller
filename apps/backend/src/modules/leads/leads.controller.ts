@@ -13,14 +13,16 @@ export class LeadsController {
     @Req() req: Request & { tenantId: string; auth?: AuthTokenPayload },
     @Query("includeClosed") includeClosed?: string,
     @Query("includeArchived") includeArchived?: string,
-    @Query("includeHiddenFromInbox") includeHiddenFromInbox?: string
+    @Query("includeHiddenFromInbox") includeHiddenFromInbox?: string,
+    @Query("includeOrphanConversations") includeOrphanConversations?: string
   ): Promise<unknown[]> {
     requireRole(req.auth?.role, ["admin", "vendedor", "viewer"]);
     return this.leadsService.listByTenant(
       req.tenantId,
       includeClosed === "true" || includeClosed === "1",
       includeArchived === "true" || includeArchived === "1",
-      includeHiddenFromInbox === "true" || includeHiddenFromInbox === "1"
+      includeHiddenFromInbox === "true" || includeHiddenFromInbox === "1",
+      includeOrphanConversations === "true" || includeOrphanConversations === "1"
     );
   }
 
