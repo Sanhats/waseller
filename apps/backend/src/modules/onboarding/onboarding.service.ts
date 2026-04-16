@@ -1,5 +1,6 @@
 import { BadGatewayException, BadRequestException, ConflictException, Injectable } from "@nestjs/common";
 import { prisma } from "../../../../../packages/db/src";
+import { getWhatsappServiceBaseUrl } from "@waseller/shared";
 import { MercadoPagoService } from "../mercado-pago/mercado-pago.service";
 import { OpsService } from "../ops/ops.service";
 
@@ -53,8 +54,7 @@ export class OnboardingService {
     private readonly opsService: OpsService
   ) {}
 
-  private whatsappServiceUrl =
-    process.env.WHATSAPP_SERVICE_URL ?? process.env.WHATSAPP_API_URL ?? "http://whatsapp:3100";
+  private whatsappServiceUrl = getWhatsappServiceBaseUrl() ?? "";
 
   private normalizeWhatsappNumber(value: string | null | undefined): string | null {
     const normalized = String(value ?? "").trim().replace(/[^\d]/g, "");
@@ -62,6 +62,7 @@ export class OnboardingService {
   }
 
   private async listSessions(): Promise<SessionSnapshot[]> {
+    if (!this.whatsappServiceUrl) return [];
     try {
       const response = await fetch(`${this.whatsappServiceUrl}/sessions`, { cache: "no-store" });
       if (!response.ok) return [];
@@ -135,6 +136,12 @@ export class OnboardingService {
       });
     }
 
+    if (!this.whatsappServiceUrl) {
+      throw new BadGatewayException(
+        "Falta WHATSAPP_SERVICE_URL (o WHATSAPP_API_URL): la URL pública del servicio WhatsApp. Configurala en el entorno del API."
+      );
+    }
+
     let response: Response;
     try {
       response = await fetch(`${this.whatsappServiceUrl}/sessions/connect`, {
@@ -162,6 +169,8 @@ export class OnboardingService {
     const state = await this.getWhatsappState(tenantId);
     if (!state.tenantWhatsappNumber) return null;
     if (!state.qrAvailable && state.sessionStatus !== "qr_required") return null;
+
+    if (!this.whatsappServiceUrl) return null;
 
     const params = new URLSearchParams({
       tenantId,

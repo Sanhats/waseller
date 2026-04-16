@@ -13,6 +13,7 @@ const queue_metrics_service_1 = require("./services/queue-metrics.service");
 const stock_reservation_service_1 = require("./services/stock-reservation.service");
 const tenant_knowledge_service_1 = require("./services/tenant-knowledge.service");
 const conversation_policy_service_1 = require("./services/conversation-policy.service");
+const src_3 = require("../../../packages/shared/src");
 const intentDetection = new intent_detection_service_1.IntentDetectionService();
 const productMatcher = new product_matcher_service_1.ProductMatcherService();
 const leadClassifier = new lead_classifier_service_1.LeadClassifierService();
@@ -395,11 +396,13 @@ exports.messageProcessorWorker = new bullmq_1.Worker(src_1.QueueNames.incomingMe
         }
         let profilePictureUrl;
         try {
-            const waUrl = process.env.WHATSAPP_API_URL ?? "http://whatsapp:3100";
-            const picRes = await fetch(`${waUrl}/contacts/${payload.phone}/profile-picture?tenantId=${tenantId}`);
-            if (picRes.ok) {
-                const picData = (await picRes.json());
-                profilePictureUrl = picData.url ?? undefined;
+            const waUrl = (0, src_3.getWhatsappServiceBaseUrl)();
+            if (waUrl) {
+                const picRes = await fetch(`${waUrl}/contacts/${payload.phone}/profile-picture?tenantId=${tenantId}`);
+                if (picRes.ok) {
+                    const picData = (await picRes.json());
+                    profilePictureUrl = picData.url ?? undefined;
+                }
             }
         }
         catch { }

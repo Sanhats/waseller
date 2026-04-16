@@ -21,3 +21,4 @@ __exportStar(require("./auth"), exports);
 __exportStar(require("./tenant-business-profile"), exports);
 __exportStar(require("./mercado-pago"), exports);
 __exportStar(require("./conversation-labels"), exports);
+__exportStar(require("./whatsapp-service-url"), exports);

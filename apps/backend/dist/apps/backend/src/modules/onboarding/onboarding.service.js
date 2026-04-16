@@ -12,6 +12,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.OnboardingService = void 0;
 const common_1 = require("@nestjs/common");
 const src_1 = require("../../../../../packages/db/src");
+const shared_1 = require("@waseller/shared");
 const mercado_pago_service_1 = require("../mercado-pago/mercado-pago.service");
 const ops_service_1 = require("../ops/ops.service");
 let OnboardingService = class OnboardingService {
@@ -21,12 +22,14 @@ let OnboardingService = class OnboardingService {
         this.mercadoPagoService = mercadoPagoService;
         this.opsService = opsService;
     }
-    whatsappServiceUrl = process.env.WHATSAPP_SERVICE_URL ?? process.env.WHATSAPP_API_URL ?? "http://whatsapp:3100";
+    whatsappServiceUrl = (0, shared_1.getWhatsappServiceBaseUrl)() ?? "";
     normalizeWhatsappNumber(value) {
         const normalized = String(value ?? "").trim().replace(/[^\d]/g, "");
         return /^\d{8,18}$/.test(normalized) ? normalized : null;
     }
     async listSessions() {
+        if (!this.whatsappServiceUrl)
+            return [];
         try {
             const response = await fetch(`${this.whatsappServiceUrl}/sessions`, { cache: "no-store" });
             if (!response.ok)
@@ -89,6 +92,9 @@ let OnboardingService = class OnboardingService {
                 data: { whatsappNumber: tenantWhatsappNumber }
             });
         }
+        if (!this.whatsappServiceUrl) {
+            throw new common_1.BadGatewayException("Falta WHATSAPP_SERVICE_URL (o WHATSAPP_API_URL): la URL pública del servicio WhatsApp. Configurala en el entorno del API.");
+        }
         let response;
         try {
             response = await fetch(`${this.whatsappServiceUrl}/sessions/connect`, {
@@ -114,6 +120,8 @@ let OnboardingService = class OnboardingService {
         if (!state.tenantWhatsappNumber)
             return null;
         if (!state.qrAvailable && state.sessionStatus !== "qr_required")
+            return null;
+        if (!this.whatsappServiceUrl)
             return null;
         const params = new URLSearchParams({
             tenantId,

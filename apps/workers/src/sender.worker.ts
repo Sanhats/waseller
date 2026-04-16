@@ -1,7 +1,7 @@
 import { Job, Worker } from "bullmq";
 import { OutgoingJobV1, outgoingQueue, QueueNames, redisConnection } from "../../../packages/queue/src";
 import { prisma } from "../../../packages/db/src";
-import { SMART_RETRY_DELAYS_MS } from "../../../packages/shared/src";
+import { requireWhatsappServiceBaseUrl, SMART_RETRY_DELAYS_MS } from "../../../packages/shared/src";
 import { QueueMetricsService } from "./services/queue-metrics.service";
 import { GlobalThrottleService } from "./services/global-throttle.service";
 import { AdaptiveBatcherService } from "./services/adaptive-batcher.service";
@@ -181,7 +181,7 @@ export const senderWorker = new Worker<OutgoingJobV1>(
       const jitter = Math.floor(Math.random() * (RATE_JITTER_MS + 1));
       await sleep(waitForRateLimit + jitter);
 
-      const whatsappServiceUrl = process.env.WHATSAPP_SERVICE_URL ?? "http://whatsapp:3100";
+      const whatsappServiceUrl = requireWhatsappServiceBaseUrl();
       const response = await fetch(`${whatsappServiceUrl}/send`, {
         method: "POST",
         headers: {

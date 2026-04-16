@@ -144,7 +144,7 @@ exports.senderWorker = new bullmq_1.Worker(src_1.QueueNames.outgoingMessages, as
         const waitForRateLimit = Math.max(rateBase - elapsedSinceLastSend, 0);
         const jitter = Math.floor(Math.random() * (RATE_JITTER_MS + 1));
         await sleep(waitForRateLimit + jitter);
-        const whatsappServiceUrl = process.env.WHATSAPP_SERVICE_URL ?? "http://whatsapp:3100";
+        const whatsappServiceUrl = (0, src_3.requireWhatsappServiceBaseUrl)();
         const response = await fetch(`${whatsappServiceUrl}/send`, {
             method: "POST",
             headers: {

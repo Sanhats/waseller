@@ -92,7 +92,7 @@ let ConversationsService = class ConversationsService {
             const rows = (await src_1.prisma.$queryRaw `
         select phone
         from public.leads
-        where tenant_id = ${tenantId}::uuid
+        where tenant_id::text = ${tenantId}
           and regexp_replace(phone, '[^0-9]', '', 'g') = ${variantDigits}
         limit 1
       `);
@@ -369,8 +369,8 @@ let ConversationsService = class ConversationsService {
         created_at as "createdAt",
         updated_at as "updatedAt"
       from public.payment_attempts
-      where tenant_id = ${tenantId}::uuid
-        and lead_id = ${lead.id}::uuid
+      where tenant_id::text = ${tenantId}
+        and lead_id::text = ${lead.id}
       order by created_at desc
       limit 10
     `);
@@ -438,8 +438,8 @@ let ConversationsService = class ConversationsService {
         const existingOpenAttempt = (await src_1.prisma.$queryRaw `
       select id, checkout_url as "checkoutUrl", sandbox_checkout_url as "sandboxCheckoutUrl"
       from public.payment_attempts
-      where tenant_id = ${tenantId}::uuid
-        and lead_id = ${lead.id}::uuid
+      where tenant_id::text = ${tenantId}
+        and lead_id::text = ${lead.id}
         and payment_link_sent_at is null
         and status in ('draft'::payment_attempt_status, 'pending'::payment_attempt_status)
         and (
@@ -462,8 +462,8 @@ let ConversationsService = class ConversationsService {
         v.attributes
       from public.product_variants v
       inner join public.products p on p.id = v.product_id
-      where v.tenant_id = ${tenantId}::uuid
-        and v.id = ${lead.productVariantId}::uuid
+      where v.tenant_id::text = ${tenantId}
+        and v.id::text = ${lead.productVariantId}
       limit 1
     `);
         const vr = variantRows[0];
@@ -524,9 +524,9 @@ let ConversationsService = class ConversationsService {
         sandbox_checkout_url as "sandboxCheckoutUrl",
         metadata
       from public.payment_attempts
-      where tenant_id = ${tenantId}::uuid
-        and lead_id = ${lead.id}::uuid
-        and id = ${attemptId}::uuid
+      where tenant_id::text = ${tenantId}
+        and lead_id::text = ${lead.id}
+        and id::text = ${attemptId}
       limit 1
     `);
         const attempt = rows[0];
@@ -568,7 +568,7 @@ let ConversationsService = class ConversationsService {
         status = 'link_generated'::payment_attempt_status,
         payment_link_sent_at = coalesce(payment_link_sent_at, now()),
         updated_at = now()
-      where id = ${attempt.id}::uuid
+      where id::text = ${attempt.id}
     `;
         return { queued: true, attemptId: attempt.id };
     }

@@ -279,7 +279,14 @@ let OpsService = class OpsService {
             for (const item of normalized) {
                 await src_2.prisma.$executeRaw `
           insert into public.bot_playbooks (tenant_id, intent, variant, template, weight, is_active)
-          values (${tenantId}, ${item.intent}, ${item.variant}, ${item.template}, ${item.weight}, ${item.isActive})
+          values (
+            cast(${tenantId} as uuid),
+            ${item.intent},
+            ${item.variant},
+            ${item.template},
+            ${item.weight},
+            ${item.isActive}
+          )
           on conflict (tenant_id, intent, variant)
           do update set
             template = excluded.template,
@@ -348,7 +355,7 @@ let OpsService = class OpsService {
             for (const item of normalized) {
                 await src_2.prisma.$executeRaw `
           insert into public.bot_response_templates (tenant_id, key, template, is_active)
-          values (${tenantId}, ${item.key}, ${item.template}, ${item.isActive})
+          values (cast(${tenantId} as uuid), ${item.key}, ${item.template}, ${item.isActive})
           on conflict (tenant_id, key)
           do update set
             template = excluded.template,
@@ -372,7 +379,7 @@ let OpsService = class OpsService {
             const rows = (await src_2.prisma.$queryRaw `
         select profile, business_category as "businessCategory", business_labels as "businessLabels"
         from public.tenant_knowledge
-        where tenant_id = ${tenantId}::uuid
+        where tenant_id::text = ${tenantId}
         limit 1
       `);
             const profile = rows[0]?.profile;

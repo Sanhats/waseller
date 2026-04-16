@@ -662,11 +662,11 @@ let MercadoPagoService = MercadoPagoService_1 = class MercadoPagoService {
         updated_at
       )
       values (
-        ${input.tenantId}::uuid,
-        ${integrationRow.id}::uuid,
-        ${input.leadId}::uuid,
+        cast(${input.tenantId} as uuid),
+        cast(${integrationRow.id} as uuid),
+        cast(${input.leadId} as uuid),
         null,
-        ${input.productVariantId}::uuid,
+        cast(${input.productVariantId} as uuid),
         'mercadopago'::payment_provider,
         'draft'::payment_attempt_status,
         ${Number(input.amount)},

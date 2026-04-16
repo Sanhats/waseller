@@ -29,6 +29,7 @@ import {
   resolveExpectedCustomerAction,
   resolveStageFromContext
 } from "./services/conversation-policy.service";
+import { getWhatsappServiceBaseUrl } from "../../../packages/shared/src";
 
 const intentDetection = new IntentDetectionService();
 const productMatcher = new ProductMatcherService();
@@ -487,11 +488,13 @@ export const messageProcessorWorker = new Worker<IncomingMessageJobV1>(
 
       let profilePictureUrl: string | undefined;
       try {
-        const waUrl = process.env.WHATSAPP_API_URL ?? "http://whatsapp:3100";
-        const picRes = await fetch(`${waUrl}/contacts/${payload.phone}/profile-picture?tenantId=${tenantId}`);
-        if (picRes.ok) {
-          const picData = (await picRes.json()) as { url: string | null };
-          profilePictureUrl = picData.url ?? undefined;
+        const waUrl = getWhatsappServiceBaseUrl();
+        if (waUrl) {
+          const picRes = await fetch(`${waUrl}/contacts/${payload.phone}/profile-picture?tenantId=${tenantId}`);
+          if (picRes.ok) {
+            const picData = (await picRes.json()) as { url: string | null };
+            profilePictureUrl = picData.url ?? undefined;
+          }
         }
       } catch {}
 
