@@ -759,34 +759,35 @@ exports.leadWorker = new bullmq_1.Worker(src_1.QueueNames.leadProcessing, async 
         decision: job.data.llmDecision
     });
     try {
-        const inserted = (await src_2.prisma.$queryRaw `
-        insert into public.bot_response_events (tenant_id, lead_id, phone, intent, variant, message)
-        values (
-          cast(${tenantId} as uuid),
-          cast(${leadId} as uuid),
-          ${phone},
-          ${playbookIntent},
-          ${selectedVariant},
-          ${message}
-        )
-        returning id
-      `);
-        const botResponseEventId = inserted[0]?.id;
+        const createdEvent = await src_2.prisma.botResponseEvent.create({
+            data: {
+                tenantId,
+                leadId,
+                phone,
+                intent: playbookIntent,
+                variant: selectedVariant,
+                message
+            },
+            select: { id: true }
+        });
+        const botResponseEventId = createdEvent.id;
         if (botResponseEventId && job.data.correlationId) {
-            await src_2.prisma.$executeRaw `
-          update public.llm_traces
-          set bot_response_event_id = cast(${botResponseEventId} as uuid)
-          where id = (
-            select id
-            from public.llm_traces
-            where tenant_id::text = ${tenantId}
-              and lead_id::text = ${leadId}
-              and correlation_id::text = ${job.data.correlationId}
-              and bot_response_event_id is null
-            order by created_at desc
-            limit 1
-          )
-        `;
+            const trace = await src_2.prisma.llmTrace.findFirst({
+                where: {
+                    tenantId,
+                    leadId,
+                    correlationId: job.data.correlationId,
+                    botResponseEventId: null
+                },
+                orderBy: { createdAt: "desc" },
+                select: { id: true }
+            });
+            if (trace) {
+                await src_2.prisma.llmTrace.update({
+                    where: { id: trace.id },
+                    data: { botResponseEventId }
+                });
+            }
         }
     }
     catch {

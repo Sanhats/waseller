@@ -886,34 +886,35 @@ export const leadWorker = new Worker<LeadProcessingJobV1>(
     });
 
     try {
-      const inserted = (await (prisma as any).$queryRaw`
-        insert into public.bot_response_events (tenant_id, lead_id, phone, intent, variant, message)
-        values (
-          cast(${tenantId} as uuid),
-          cast(${leadId} as uuid),
-          ${phone},
-          ${playbookIntent},
-          ${selectedVariant},
-          ${message}
-        )
-        returning id
-      `) as Array<{ id: string }>;
-      const botResponseEventId = inserted[0]?.id;
+      const createdEvent = await prisma.botResponseEvent.create({
+        data: {
+          tenantId,
+          leadId,
+          phone,
+          intent: playbookIntent,
+          variant: selectedVariant,
+          message
+        },
+        select: { id: true }
+      });
+      const botResponseEventId = createdEvent.id;
       if (botResponseEventId && job.data.correlationId) {
-        await (prisma as any).$executeRaw`
-          update public.llm_traces
-          set bot_response_event_id = cast(${botResponseEventId} as uuid)
-          where id = (
-            select id
-            from public.llm_traces
-            where tenant_id::text = ${tenantId}
-              and lead_id::text = ${leadId}
-              and correlation_id::text = ${job.data.correlationId}
-              and bot_response_event_id is null
-            order by created_at desc
-            limit 1
-          )
-        `;
+        const trace = await prisma.llmTrace.findFirst({
+          where: {
+            tenantId,
+            leadId,
+            correlationId: job.data.correlationId,
+            botResponseEventId: null
+          },
+          orderBy: { createdAt: "desc" },
+          select: { id: true }
+        });
+        if (trace) {
+          await prisma.llmTrace.update({
+            where: { id: trace.id },
+            data: { botResponseEventId }
+          });
+        }
       }
     } catch {
       // Si la tabla todavía no existe no frenamos el envío.
