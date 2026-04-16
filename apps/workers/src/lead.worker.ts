@@ -888,14 +888,21 @@ export const leadWorker = new Worker<LeadProcessingJobV1>(
     try {
       const inserted = (await (prisma as any).$queryRaw`
         insert into public.bot_response_events (tenant_id, lead_id, phone, intent, variant, message)
-        values (${tenantId}, ${leadId}, ${phone}, ${playbookIntent}, ${selectedVariant}, ${message})
+        values (
+          cast(${tenantId} as uuid),
+          cast(${leadId} as uuid),
+          ${phone},
+          ${playbookIntent},
+          ${selectedVariant},
+          ${message}
+        )
         returning id
       `) as Array<{ id: string }>;
       const botResponseEventId = inserted[0]?.id;
       if (botResponseEventId && job.data.correlationId) {
         await (prisma as any).$executeRaw`
           update public.llm_traces
-          set bot_response_event_id = ${botResponseEventId}
+          set bot_response_event_id = cast(${botResponseEventId} as uuid)
           where id = (
             select id
             from public.llm_traces

@@ -49,8 +49,8 @@ exports.stockSyncWorker = new bullmq_1.Worker(src_1.QueueNames.stockSync, async 
             is_active
           )
           values (
-            ${tenantId},
-            ${product.id},
+            cast(${tenantId} as uuid),
+            cast(${product.id} as uuid),
             ${sku},
             ${JSON.stringify(attrs)}::jsonb,
             ${p.price ?? null},

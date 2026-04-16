@@ -73,6 +73,7 @@ function sanitizeRedisUrlInput(value) {
     }
     return trimmed;
 }
+let warnedUpstashTlsMismatch = false;
 /** Upstash solo expone Redis con TLS; `redis://` sin TLS suele cortar la conexión (ECONNRESET). */
 function ensureTlsForUpstash(url) {
     try {
@@ -81,7 +82,11 @@ function ensureTlsForUpstash(url) {
             return url;
         if (u.protocol === "redis:") {
             u.protocol = "rediss:";
-            console.warn("[waseller/queue] Host *.upstash.io con redis://: se usa rediss:// (TLS). Revisá REDIS_URL en el panel de Upstash.");
+            if (!warnedUpstashTlsMismatch) {
+                warnedUpstashTlsMismatch = true;
+                console.warn("[waseller/queue] Host *.upstash.io con redis://: se usa rediss:// (TLS). " +
+                    "Definí REDIS_URL con rediss:// en Railway (Upstash) para evitar este aviso y conexiones inestables.");
+            }
             return u.toString();
         }
     }

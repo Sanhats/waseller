@@ -761,14 +761,21 @@ exports.leadWorker = new bullmq_1.Worker(src_1.QueueNames.leadProcessing, async 
     try {
         const inserted = (await src_2.prisma.$queryRaw `
         insert into public.bot_response_events (tenant_id, lead_id, phone, intent, variant, message)
-        values (${tenantId}, ${leadId}, ${phone}, ${playbookIntent}, ${selectedVariant}, ${message})
+        values (
+          cast(${tenantId} as uuid),
+          cast(${leadId} as uuid),
+          ${phone},
+          ${playbookIntent},
+          ${selectedVariant},
+          ${message}
+        )
         returning id
       `);
         const botResponseEventId = inserted[0]?.id;
         if (botResponseEventId && job.data.correlationId) {
             await src_2.prisma.$executeRaw `
           update public.llm_traces
-          set bot_response_event_id = ${botResponseEventId}
+          set bot_response_event_id = cast(${botResponseEventId} as uuid)
           where id = (
             select id
             from public.llm_traces
