@@ -2,6 +2,26 @@ import { prisma } from "../../../../packages/db/src";
 
 type TemplateMap = Record<string, string>;
 
+let botResponseTemplatesTableExists: boolean | null = null;
+
+async function resolveBotResponseTemplatesTableExists(): Promise<boolean> {
+  if (botResponseTemplatesTableExists !== null) return botResponseTemplatesTableExists;
+  try {
+    const rows = (await prisma.$queryRaw<Array<{ exists: boolean }>>`
+      select exists (
+        select 1
+        from information_schema.tables
+        where table_schema = 'public'
+          and table_name = 'bot_response_templates'
+      ) as "exists"
+    `) as Array<{ exists: boolean }>;
+    botResponseTemplatesTableExists = Boolean(rows[0]?.exists);
+  } catch {
+    botResponseTemplatesTableExists = false;
+  }
+  return botResponseTemplatesTableExists;
+}
+
 const CACHE_TTL_MS = Number(process.env.BOT_TEMPLATE_CACHE_MS ?? 60_000);
 
 const DEFAULT_TEMPLATES: TemplateMap = {
@@ -81,11 +101,16 @@ export class BotTemplateService {
     const cached = this.cache.get(tenantId);
     if (cached && cached.expiresAt > now) return cached.templates;
 
+    if (!(await resolveBotResponseTemplatesTableExists())) {
+      const fallback = { ...DEFAULT_TEMPLATES };
+      this.cache.set(tenantId, { expiresAt: now + CACHE_TTL_MS, templates: fallback });
+      return fallback;
+    }
     try {
       const rows = (await (prisma as any).$queryRaw`
         select key, template
         from public.bot_response_templates
-        where tenant_id::text = ${tenantId}
+        where tenant_id = ${tenantId}::uuid
           and is_active = true
       `) as Array<{ key: string; template: string }>;
       const merged: TemplateMap = { ...DEFAULT_TEMPLATES };

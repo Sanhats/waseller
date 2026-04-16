@@ -2,6 +2,26 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.BotTemplateService = void 0;
 const src_1 = require("../../../../packages/db/src");
+let botResponseTemplatesTableExists = null;
+async function resolveBotResponseTemplatesTableExists() {
+    if (botResponseTemplatesTableExists !== null)
+        return botResponseTemplatesTableExists;
+    try {
+        const rows = (await src_1.prisma.$queryRaw `
+      select exists (
+        select 1
+        from information_schema.tables
+        where table_schema = 'public'
+          and table_name = 'bot_response_templates'
+      ) as "exists"
+    `);
+        botResponseTemplatesTableExists = Boolean(rows[0]?.exists);
+    }
+    catch {
+        botResponseTemplatesTableExists = false;
+    }
+    return botResponseTemplatesTableExists;
+}
 const CACHE_TTL_MS = Number(process.env.BOT_TEMPLATE_CACHE_MS ?? 60_000);
 const DEFAULT_TEMPLATES = {
     payment_report_received: "Gracias por avisar. Registramos el pago reportado de {product_name}. Un asesor lo valida y te confirmamos por este medio en breve.",
@@ -48,11 +68,16 @@ class BotTemplateService {
         const cached = this.cache.get(tenantId);
         if (cached && cached.expiresAt > now)
             return cached.templates;
+        if (!(await resolveBotResponseTemplatesTableExists())) {
+            const fallback = { ...DEFAULT_TEMPLATES };
+            this.cache.set(tenantId, { expiresAt: now + CACHE_TTL_MS, templates: fallback });
+            return fallback;
+        }
         try {
             const rows = (await src_1.prisma.$queryRaw `
         select key, template
         from public.bot_response_templates
-        where tenant_id::text = ${tenantId}
+        where tenant_id = ${tenantId}::uuid
           and is_active = true
       `);
             const merged = { ...DEFAULT_TEMPLATES };

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { Decimal } from "@prisma/client/runtime/library";
 import { prisma } from "../../../../packages/db/src";
 import { decryptIntegrationSecret, encryptIntegrationSecret } from "../../../../packages/shared/src";
 
@@ -237,50 +238,27 @@ export class MercadoPagoPaymentService {
       throw new Error(await preferenceResponse.text());
     }
     const preference = (await preferenceResponse.json()) as CreatePreferenceResponse;
-    const attemptRows = (await (prisma as any).$queryRaw`
-      insert into public.payment_attempts (
-        tenant_id,
-        integration_id,
-        lead_id,
-        conversation_id,
-        product_variant_id,
-        provider,
-        status,
-        amount,
-        currency,
-        title,
-        external_reference,
-        external_preference_id,
-        checkout_url,
-        sandbox_checkout_url,
-        payment_link_sent_at,
-        metadata,
-        created_at,
-        updated_at
-      )
-      values (
-        cast(${input.tenantId} as uuid),
-        cast(${integration.id} as uuid),
-        cast(${input.leadId} as uuid),
-        cast(${input.conversationId ?? null} as uuid),
-        cast(${input.productVariantId} as uuid),
-        'mercadopago'::payment_provider,
-        'draft'::payment_attempt_status,
-        ${Number(input.amount)},
-        'ARS',
-        ${input.title},
-        ${externalReference},
-        ${preference.id ?? null},
-        ${preference.init_point ?? null},
-        ${preference.sandbox_init_point ?? null},
-        null,
-        ${JSON.stringify(input.metadata ?? {})}::jsonb,
-        now(),
-        now()
-      )
-      returning id
-    `) as Array<{ id: string }>;
-    const paymentAttemptId = attemptRows[0]?.id ?? randomUUID();
+    const createdAttempt = await prisma.paymentAttempt.create({
+      data: {
+        tenantId: input.tenantId,
+        integrationId: integration.id,
+        leadId: input.leadId,
+        conversationId: input.conversationId ?? undefined,
+        productVariantId: input.productVariantId,
+        provider: "mercadopago",
+        status: "draft",
+        amount: new Decimal(Number(input.amount)),
+        currency: "ARS",
+        title: input.title,
+        externalReference,
+        externalPreferenceId: preference.id ?? null,
+        checkoutUrl: preference.init_point ?? null,
+        sandboxCheckoutUrl: preference.sandbox_init_point ?? null,
+        metadata: (input.metadata ?? {}) as object
+      },
+      select: { id: true }
+    });
+    const paymentAttemptId = createdAttempt.id;
     return {
       checkoutUrl: preference.init_point ?? preference.sandbox_init_point ?? "",
       paymentAttemptId

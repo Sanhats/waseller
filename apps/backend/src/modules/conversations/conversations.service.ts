@@ -10,6 +10,27 @@ import { OUTGOING_ATTEMPTS, OUTGOING_PRIORITY } from "../../../../../packages/sh
 import { MercadoPagoService } from "../mercado-pago/mercado-pago.service";
 import { buildPhoneDigitVariants, digitsOnlyPhone } from "../../../../../packages/shared/src";
 
+/** Cache por proceso: evita `prisma:error` 42P01 si la tabla opcional no existe (BD sin migrar). */
+let botResponseTemplatesTableExists: boolean | null = null;
+
+async function resolveBotResponseTemplatesTableExists(): Promise<boolean> {
+  if (botResponseTemplatesTableExists !== null) return botResponseTemplatesTableExists;
+  try {
+    const rows = (await prisma.$queryRaw<Array<{ exists: boolean }>>`
+      select exists (
+        select 1
+        from information_schema.tables
+        where table_schema = 'public'
+          and table_name = 'bot_response_templates'
+      ) as "exists"
+    `) as Array<{ exists: boolean }>;
+    botResponseTemplatesTableExists = Boolean(rows[0]?.exists);
+  } catch {
+    botResponseTemplatesTableExists = false;
+  }
+  return botResponseTemplatesTableExists;
+}
+
 const DEFAULT_PAYMENT_LINK_GENERATED_TEMPLATE =
   "Perfecto, te comparto el link de pago de {product_name}: {payment_url} Cuando se acredite te confirmamos por este medio.";
 
@@ -50,19 +71,21 @@ export class ConversationsService {
     paymentUrl: string
   ): Promise<string> {
     let template = DEFAULT_PAYMENT_LINK_GENERATED_TEMPLATE;
-    try {
-      const overrideRows = (await (prisma as any).$queryRaw`
-        select template
-        from public.bot_response_templates
-        where tenant_id::text = ${tenantId}
-          and lower(trim(key)) = 'payment_link_generated'
-          and is_active = true
-        limit 1
-      `) as Array<{ template: string }>;
-      const custom = String(overrideRows[0]?.template ?? "").trim();
-      if (custom) template = custom;
-    } catch {
-      // sin tabla o error de lectura: default del producto
+    if (await resolveBotResponseTemplatesTableExists()) {
+      try {
+        const overrideRows = (await (prisma as any).$queryRaw`
+          select template
+          from public.bot_response_templates
+          where tenant_id = ${tenantId}::uuid
+            and lower(trim(key)) = 'payment_link_generated'
+            and is_active = true
+          limit 1
+        `) as Array<{ template: string }>;
+        const custom = String(overrideRows[0]?.template ?? "").trim();
+        if (custom) template = custom;
+      } catch {
+        // lectura fallida: default del producto
+      }
     }
     return template.replaceAll("{product_name}", productName).replaceAll("{payment_url}", paymentUrl);
   }
@@ -87,7 +110,7 @@ export class ConversationsService {
       const rows = (await prisma.$queryRaw`
         select phone
         from public.leads
-        where tenant_id::text = ${tenantId}
+        where tenant_id = ${tenantId}::uuid
           and regexp_replace(phone, '[^0-9]', '', 'g') = ${variantDigits}
         limit 1
       `) as Array<{ phone: string }>;
