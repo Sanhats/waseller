@@ -491,7 +491,7 @@ export class OpsService {
       const rows = (await (prisma as any).$queryRaw`
         select profile, business_category as "businessCategory", business_labels as "businessLabels"
         from public.tenant_knowledge
-        where tenant_id = ${tenantId}::uuid
+        where tenant_id::text = ${tenantId}
         limit 1
       `) as Array<{ profile: unknown; businessCategory: string; businessLabels: string[] }>;
       const profile = rows[0]?.profile;

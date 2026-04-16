@@ -1,5 +1,13 @@
 import { Queue } from "bullmq";
 import IORedis from "ioredis";
+export type RedisErrorEmitter = {
+    on(event: "error", listener: (err: unknown) => void): unknown;
+};
+/**
+ * BullMQ reenvía errores de Redis al `Queue`/`Worker`. Sin ningún listener, Node trata `error` como no manejado y spamea stderr.
+ * Los resets TCP a Upstash/Railway suelen ser transitorios.
+ */
+export declare function bindTransientRedisSocketErrors(emitter: RedisErrorEmitter, label: string): void;
 export declare const QueueNames: {
     readonly incomingMessages: "incoming_messages";
     readonly llmOrchestration: "llm_orchestration";

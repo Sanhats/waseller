@@ -259,11 +259,11 @@ export class MercadoPagoPaymentService {
         updated_at
       )
       values (
-        ${input.tenantId}::uuid,
-        ${integration.id}::uuid,
-        ${input.leadId}::uuid,
-        ${input.conversationId ?? null}::uuid,
-        ${input.productVariantId}::uuid,
+        cast(${input.tenantId} as uuid),
+        cast(${integration.id} as uuid),
+        cast(${input.leadId} as uuid),
+        cast(${input.conversationId ?? null} as uuid),
+        cast(${input.productVariantId} as uuid),
         'mercadopago'::payment_provider,
         'draft'::payment_attempt_status,
         ${Number(input.amount)},
