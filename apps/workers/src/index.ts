@@ -1,10 +1,22 @@
-import { stockSyncQueue } from "../../../packages/queue/src";
+import { bindTransientRedisSocketErrors, stockSyncQueue } from "../../../packages/queue/src";
 import { messageProcessorWorker } from "./message-processor.worker";
 import { conversationOrchestratorWorker } from "./conversation-orchestrator.worker";
 import { leadWorker } from "./lead.worker";
 import { senderWorker } from "./sender.worker";
 import { stockSyncWorker } from "./stock-sync.worker";
 import { reservationExpiryWorker } from "./reservation-expiry.worker";
+
+const bullWorkersForErrorHandling = [
+  messageProcessorWorker,
+  conversationOrchestratorWorker,
+  leadWorker,
+  senderWorker,
+  stockSyncWorker,
+  reservationExpiryWorker
+];
+for (const w of bullWorkersForErrorHandling) {
+  bindTransientRedisSocketErrors(w, `BullMQ Worker:${w.name}`);
+}
 
 const stockSyncIntervalMs = Number(process.env.STOCK_SYNC_INTERVAL_MS ?? 300000);
 

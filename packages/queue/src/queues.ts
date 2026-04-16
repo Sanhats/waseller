@@ -1,6 +1,26 @@
 import { existsSync } from "node:fs";
 import { JobsOptions, Queue } from "bullmq";
 import IORedis from "ioredis";
+import type { RedisOptions } from "ioredis";
+
+/** Cierres de TCP por idle, redeploy o balanceador; ioredis/BullMQ reconectan. */
+function isTransientRedisSocketError(err: unknown): boolean {
+  const code = err && typeof err === "object" && "code" in err ? (err as NodeJS.ErrnoException).code : undefined;
+  return code === "ECONNRESET" || code === "EPIPE" || code === "ETIMEDOUT";
+}
+
+export type RedisErrorEmitter = { on(event: "error", listener: (err: unknown) => void): unknown };
+
+/**
+ * BullMQ reenvía errores de Redis al `Queue`/`Worker`. Sin ningún listener, Node trata `error` como no manejado y spamea stderr.
+ * Los resets TCP a Upstash/Railway suelen ser transitorios.
+ */
+export function bindTransientRedisSocketErrors(emitter: RedisErrorEmitter, label: string): void {
+  emitter.on("error", (err: unknown) => {
+    if (isTransientRedisSocketError(err)) return;
+    console.error(`[waseller/queue] ${label}`, err);
+  });
+}
 
 function redactRedisUrlForLog(url: string): string {
   try {
@@ -17,7 +37,13 @@ function redactRedisUrlForLog(url: string): string {
  * Solo debe usarse la URL `redis(s)://...`.
  */
 function sanitizeRedisUrlInput(value: string): string {
-  const trimmed = value.trim();
+  let trimmed = value.trim();
+  if (
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"))
+  ) {
+    trimmed = trimmed.slice(1, -1).trim();
+  }
   if (!trimmed) return "";
   if (trimmed.startsWith("redis://") || trimmed.startsWith("rediss://")) {
     return trimmed;
@@ -32,6 +58,24 @@ function sanitizeRedisUrlInput(value: string): string {
     return extracted[1];
   }
   return trimmed;
+}
+
+/** Upstash solo expone Redis con TLS; `redis://` sin TLS suele cortar la conexión (ECONNRESET). */
+function ensureTlsForUpstash(url: string): string {
+  try {
+    const u = new URL(url);
+    if (!u.hostname.endsWith(".upstash.io")) return url;
+    if (u.protocol === "redis:") {
+      u.protocol = "rediss:";
+      console.warn(
+        "[waseller/queue] Host *.upstash.io con redis://: se usa rediss:// (TLS). Revisá REDIS_URL en el panel de Upstash."
+      );
+      return u.toString();
+    }
+  } catch {
+    return url;
+  }
+  return url;
 }
 
 /**
@@ -56,17 +100,18 @@ function resolveRedisUrl(): string {
     process.env.RUNNING_IN_DOCKER === "1" ||
     process.env.RUNNING_IN_DOCKER === "true" ||
     existsSync("/.dockerenv");
-  if (inContainer) return raw;
+  const finalized = ensureTlsForUpstash(raw);
+  if (inContainer) return finalized;
   try {
-    const u = new URL(raw);
+    const u = new URL(finalized);
     if (u.hostname === "redis") {
       u.hostname = "127.0.0.1";
-      return u.toString();
+      return ensureTlsForUpstash(u.toString());
     }
   } catch {
     /* ignore */
   }
-  return raw;
+  return finalized;
 }
 
 export const QueueNames = {
@@ -79,7 +124,19 @@ export const QueueNames = {
 } as const;
 
 const redisUrl = resolveRedisUrl();
-export const redisConnection = new IORedis(redisUrl, { maxRetriesPerRequest: null });
+
+/** Upstash / cloud: READY check de ioredis puede fallar o churn; BullMQ exige maxRetriesPerRequest: null. */
+const redisClientOptions: RedisOptions = {
+  maxRetriesPerRequest: null,
+  enableReadyCheck: false,
+  /** Reduce cierres por inactividad en Redis gestionado (p. ej. Upstash). */
+  keepAlive: 30000,
+  ...(redisUrl.startsWith("rediss://") ? { tls: {} } : {})
+};
+
+export const redisConnection = new IORedis(redisUrl, redisClientOptions);
+
+bindTransientRedisSocketErrors(redisConnection, "redis (IORedis)");
 
 const defaultJobOptions: JobsOptions = {
   attempts: 5,
@@ -120,3 +177,15 @@ export const stockReservationExpiryQueue = new Queue(QueueNames.stockReservation
   connection: redisConnection,
   defaultJobOptions
 });
+
+const bullQueuesForErrorHandling: Queue[] = [
+  incomingQueue,
+  leadProcessingQueue,
+  llmOrchestrationQueue,
+  outgoingQueue,
+  stockSyncQueue,
+  stockReservationExpiryQueue
+];
+for (const q of bullQueuesForErrorHandling) {
+  bindTransientRedisSocketErrors(q, `BullMQ Queue:${q.name}`);
+}
