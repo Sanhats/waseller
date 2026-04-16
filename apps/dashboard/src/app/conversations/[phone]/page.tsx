@@ -20,6 +20,7 @@ import {
 import { Badge, Button, Input, Spinner } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { getClientApiBase } from "@/lib/api-base";
+import { digitsOnlyPhone } from "@waseller/shared";
 
 type ConversationMessage = {
   id: string;
@@ -191,12 +192,17 @@ export default function ConversationPage({
       if (!messagesRes.ok) throw new Error(await messagesRes.text());
       if (!leadsRes.ok) throw new Error(await leadsRes.text());
       if (!stateRes.ok) throw new Error(await stateRes.text());
-      if (!paymentLinksRes.ok) throw new Error(await paymentLinksRes.text());
 
       setMessages((await messagesRes.json()) as ConversationMessage[]);
       setLeads((await leadsRes.json()) as Lead[]);
       const stateData = (await stateRes.json()) as ConversationState;
-      setPaymentLinks((await paymentLinksRes.json()) as PaymentLinkReview[]);
+      if (paymentLinksRes.ok) {
+        setPaymentLinks((await paymentLinksRes.json()) as PaymentLinkReview[]);
+      } else {
+        const detail = await paymentLinksRes.text();
+        console.warn("payment-links no disponible", paymentLinksRes.status, detail);
+        setPaymentLinks([]);
+      }
       setBotPaused(stateData.botPaused);
       setLeadClosed(stateData.leadClosed);
       setArchived(Boolean(stateData.archived));
@@ -386,7 +392,8 @@ export default function ConversationPage({
     }
   };
 
-  const currentLead = leads.find((l) => l.phone === phone);
+  const phoneDigits = digitsOnlyPhone(phone);
+  const currentLead = leads.find((l) => digitsOnlyPhone(l.phone) === phoneDigits);
   const displayName =
     currentLead?.customerName?.trim() || currentLead?.phone || phone;
 

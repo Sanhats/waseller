@@ -409,25 +409,7 @@ export class ConversationsService {
       select: { id: true }
     });
     if (!lead) return [];
-    const rows = (await (prisma as any).$queryRaw`
-      select
-        id,
-        status::text as status,
-        title,
-        amount,
-        currency,
-        checkout_url as "checkoutUrl",
-        sandbox_checkout_url as "sandboxCheckoutUrl",
-        payment_link_sent_at as "paymentLinkSentAt",
-        metadata,
-        created_at as "createdAt",
-        updated_at as "updatedAt"
-      from public.payment_attempts
-      where tenant_id::text = ${tenantId}
-        and lead_id::text = ${lead.id}
-      order by created_at desc
-      limit 10
-    `) as Array<{
+    type PaymentAttemptRow = {
       id: string;
       status: string;
       title: string;
@@ -439,7 +421,31 @@ export class ConversationsService {
       metadata?: unknown;
       createdAt: Date | string;
       updatedAt: Date | string;
-    }>;
+    };
+    let rows: PaymentAttemptRow[] = [];
+    try {
+      rows = (await (prisma as any).$queryRaw`
+        select
+          id,
+          status::text as status,
+          title,
+          amount,
+          currency,
+          checkout_url as "checkoutUrl",
+          sandbox_checkout_url as "sandboxCheckoutUrl",
+          payment_link_sent_at as "paymentLinkSentAt",
+          metadata,
+          created_at as "createdAt",
+          updated_at as "updatedAt"
+        from public.payment_attempts
+        where tenant_id::text = ${tenantId}
+          and lead_id::text = ${lead.id}
+        order by created_at desc
+        limit 10
+      `) as PaymentAttemptRow[];
+    } catch {
+      rows = [];
+    }
     const mapped = rows.map((row) => {
       const metadata =
         typeof row.metadata === "object" && row.metadata !== null ? (row.metadata as Record<string, unknown>) : {};
