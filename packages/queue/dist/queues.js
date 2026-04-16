@@ -7,12 +7,51 @@ exports.stockReservationExpiryQueue = exports.stockSyncQueue = exports.outgoingQ
 const node_fs_1 = require("node:fs");
 const bullmq_1 = require("bullmq");
 const ioredis_1 = __importDefault(require("ioredis"));
+function redactRedisUrlForLog(url) {
+    try {
+        const u = new URL(url);
+        if (u.password)
+            u.password = "****";
+        return u.toString();
+    }
+    catch {
+        return "[url inválida]";
+    }
+}
+/**
+ * Si pegaron `redis-cli --tls -u rediss://...`, ioredis interpreta el string entero como path de socket (ENOENT).
+ * Solo debe usarse la URL `redis(s)://...`.
+ */
+function sanitizeRedisUrlInput(value) {
+    const trimmed = value.trim();
+    if (!trimmed)
+        return "";
+    if (trimmed.startsWith("redis://") || trimmed.startsWith("rediss://")) {
+        return trimmed;
+    }
+    const extracted = trimmed.match(/(rediss?:\/\/\S+)/);
+    if (extracted?.[1]) {
+        console.warn("[waseller/queue] REDIS_URL contenía texto extra (p. ej. `redis-cli --tls -u`). " +
+            "En Railway/Vercel guardá solo la URL. Usando: " +
+            redactRedisUrlForLog(extracted[1]));
+        return extracted[1];
+    }
+    return trimmed;
+}
 /**
  * `redis://redis:6379` es válido solo dentro de la red de Docker Compose.
  * En la máquina local el host `redis` no resuelve (ENOTFOUND); usamos 127.0.0.1 salvo que el proceso corra en contenedor.
  */
 function resolveRedisUrl() {
-    const raw = process.env.REDIS_URL?.trim() || "redis://127.0.0.1:6379";
+    const fromEnv = process.env.REDIS_URL?.trim();
+    const sanitized = fromEnv ? sanitizeRedisUrlInput(fromEnv) : "";
+    const raw = sanitized || "redis://127.0.0.1:6379";
+    if (!fromEnv &&
+        (process.env.RAILWAY_ENVIRONMENT || process.env.VERCEL === "1")) {
+        // Sin esto, BullMQ intenta 127.0.0.1:6379 y los mensajes WhatsApp no se encolan ni los workers procesan.
+        console.error("[waseller/queue] REDIS_URL no está definida: se usa redis://127.0.0.1:6379 y fallará en Railway/Vercel. " +
+            "Definí REDIS_URL (p. ej. Upstash: rediss://default:TOKEN@....upstash.io:6379) en el servicio workers y en el de WhatsApp.");
+    }
     const inContainer = process.env.RUNNING_IN_DOCKER === "1" ||
         process.env.RUNNING_IN_DOCKER === "true" ||
         (0, node_fs_1.existsSync)("/.dockerenv");
