@@ -22,6 +22,21 @@ export function bindTransientRedisSocketErrors(emitter: RedisErrorEmitter, label
   });
 }
 
+/** BullMQ y otros llaman `duplicate()` en la clase; parchear solo `redisConnection` no basta si el método viene del prototipo. */
+let ioredisDuplicatePatched = false;
+function patchIoredisDuplicateForTransientSocketErrors(): void {
+  if (ioredisDuplicatePatched) return;
+  ioredisDuplicatePatched = true;
+  type DuplicateFn = (this: IORedis, override?: RedisOptions) => IORedis;
+  const proto = IORedis.prototype as unknown as { duplicate: DuplicateFn };
+  const originalDuplicate = proto.duplicate;
+  proto.duplicate = function duplicateWithTransientErrorHandler(this: IORedis, override?: RedisOptions) {
+    const dup = originalDuplicate.call(this, override);
+    bindTransientRedisSocketErrors(dup, "redis (ioredis duplicate)");
+    return dup;
+  };
+}
+
 function redactRedisUrlForLog(url: string): string {
   try {
     const u = new URL(url);
@@ -125,6 +140,8 @@ export const QueueNames = {
 
 const redisUrl = resolveRedisUrl();
 
+patchIoredisDuplicateForTransientSocketErrors();
+
 /** Upstash / cloud: READY check de ioredis puede fallar o churn; BullMQ exige maxRetriesPerRequest: null. */
 const redisClientOptions: RedisOptions = {
   maxRetriesPerRequest: null,
@@ -137,20 +154,6 @@ const redisClientOptions: RedisOptions = {
 export const redisConnection = new IORedis(redisUrl, redisClientOptions);
 
 bindTransientRedisSocketErrors(redisConnection, "redis (IORedis)");
-
-/**
- * BullMQ Worker usa `connection.duplicate()` para la conexión bloqueante (BLPOP, etc.).
- * Esos clientes IORedis son distintos del principal: sin `error` listener, Node vuelca ECONNRESET/EPIPE a stderr.
- */
-function wrapRedisDuplicatesWithTransientErrorHandler(client: IORedis): void {
-  const baseDuplicate = client.duplicate.bind(client) as (...args: unknown[]) => IORedis;
-  (client as IORedis & { duplicate: typeof baseDuplicate }).duplicate = (...args: unknown[]) => {
-    const dup = baseDuplicate(...args);
-    bindTransientRedisSocketErrors(dup, "redis (BullMQ duplicate)");
-    return dup;
-  };
-}
-wrapRedisDuplicatesWithTransientErrorHandler(redisConnection);
 
 const defaultJobOptions: JobsOptions = {
   attempts: 5,
