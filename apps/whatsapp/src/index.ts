@@ -1,6 +1,6 @@
 import express from "express";
 import QRCode from "qrcode";
-import { BaileysSessionManager } from "./session-manager/baileys-session-manager";
+import { BaileysSessionManager, getResolvedWaAuthDir } from "./session-manager/baileys-session-manager";
 
 const app = express();
 app.use(express.json());
@@ -100,5 +100,5 @@ app.post("/send", async (req, res) => {
 const port = Number(process.env.PORT ?? process.env.WHATSAPP_PORT ?? 3100);
 app.listen(port, () => {
   // eslint-disable-next-line no-console
-  console.log(`WhatsApp service listening on ${port}`);
+  console.log(`WhatsApp service listening on ${port} (WA_AUTH_DIR=${getResolvedWaAuthDir()})`);
 });

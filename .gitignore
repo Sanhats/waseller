@@ -12,3 +12,4 @@ pnpm-lock.yaml
 yarn.lock
 package-lock.json
 _railway-export-test/
+wa-auth-data/

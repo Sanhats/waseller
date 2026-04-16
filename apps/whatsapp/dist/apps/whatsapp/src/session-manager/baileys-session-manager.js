@@ -4,6 +4,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.BaileysSessionManager = void 0;
+exports.getResolvedWaAuthDir = getResolvedWaAuthDir;
 const src_1 = require("../../../../packages/queue/src");
 const node_path_1 = __importDefault(require("node:path"));
 const node_fs_1 = __importDefault(require("node:fs"));
@@ -48,13 +49,33 @@ const decodeDataImageUrl = (value) => {
         return null;
     }
 };
+/**
+ * Directorio donde Baileys persiste credenciales (`useMultiFileAuthState`).
+ * - No usar `/tmp` en producción: suele borrarse o no sobrevivir al redeploy.
+ * - En Railway: path típico para montar un volumen persistente es `/data/...`.
+ * - El servicio WhatsApp debe tener una sola réplica o cada instancia tendrá su propio disco.
+ */
+function getResolvedWaAuthDir() {
+    const explicit = process.env.WA_AUTH_DIR?.trim();
+    if (explicit)
+        return explicit;
+    if (process.env.RAILWAY_ENVIRONMENT)
+        return "/data/wa-auth";
+    return node_path_1.default.join(process.cwd(), "wa-auth-data");
+}
 class BaileysSessionManager {
     sessions = new Map();
     logger = (0, pino_1.default)({ level: process.env.LOG_LEVEL ?? "info" });
     maxRetries = Number(process.env.WA_MAX_RETRIES ?? 10);
-    authRoot = process.env.WA_AUTH_DIR ?? "/tmp/wa-auth";
+    authRoot = getResolvedWaAuthDir();
     constructor() {
         node_fs_1.default.mkdirSync(this.authRoot, { recursive: true });
+        if (this.authRoot.startsWith("/tmp") || this.authRoot.includes("/var/tmp")) {
+            this.logger.warn({ authRoot: this.authRoot }, "WA_AUTH_DIR apunta a /tmp: las sesiones de WhatsApp pueden perderse al reiniciar el contenedor. Usá un directorio persistente y un volumen (p. ej. Railway: mount /data, WA_AUTH_DIR=/data/wa-auth).");
+        }
+        else if (process.env.RAILWAY_ENVIRONMENT) {
+            this.logger.info({ authRoot: this.authRoot }, "Railway: credenciales Baileys en disco (authRoot). Para conservar sesión tras deploy, montá un volumen cuyo mount cubra ese path (p. ej. mount /data y WA_AUTH_DIR=/data/wa-auth). Una sola réplica del servicio WhatsApp; si escalás, cada réplica tiene su propio disco.");
+        }
     }
     async connect(input) {
         const baileys = await getBaileys();
