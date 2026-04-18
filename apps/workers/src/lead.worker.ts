@@ -67,6 +67,13 @@ const normalizeText = (value: string): string =>
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
 
+const isLlmShadowDecision = (decision: LeadProcessingJobV1["llmDecision"] | undefined): boolean => {
+  if (!decision) return false;
+  if (decision.executionMode === "shadow") return true;
+  if (decision.policy?.shadowMode) return true;
+  return false;
+};
+
 const AXIS_LABELS: Record<string, { singular: string; plural: string }> = {
   talle: { singular: "talle", plural: "talles" },
   color: { singular: "color", plural: "colores" },
@@ -562,6 +569,7 @@ export const leadWorker = new Worker<LeadProcessingJobV1>(
     const axisOptions = collectAxisOptions(availableSiblingVariants, missingAxes);
     const visibleAxes = filterAxesWithOptions(axisOptions, missingAxes);
     const incomingText = normalizeText(job.data.incomingMessage ?? "");
+    const shadowLlm = isLlmShadowDecision(job.data.llmDecision);
     const wantsPaymentLink =
       incomingText.includes("link de pago") ||
       incomingText.includes("un link") ||
@@ -604,6 +612,7 @@ export const leadWorker = new Worker<LeadProcessingJobV1>(
         ? coerceUnitPrice(productContext.basePrice)
         : NaN;
     const hasSellablePrice = Number.isFinite(resolvedUnitPrice) && resolvedUnitPrice > 0;
+    const llmNextActionForPayment = shadowLlm ? undefined : job.data.llmDecision?.nextAction;
     const shouldGeneratePaymentLink =
       reservationInThisFlow &&
       Boolean(variant?.variantId) &&
@@ -612,16 +621,19 @@ export const leadWorker = new Worker<LeadProcessingJobV1>(
       (wantsPaymentLink ||
         job.data.intent === "pedir_link_pago" ||
         job.data.interpretation?.nextAction === "share_payment_link" ||
-        job.data.llmDecision?.nextAction === "share_payment_link");
+        llmNextActionForPayment === "share_payment_link");
+
+    const initialLlmDraft =
+      !shadowLlm && job.data.llmDecision?.draftReply ? job.data.llmDecision.draftReply : undefined;
 
     let message =
-      job.data.llmDecision?.draftReply ??
+      initialLlmDraft ??
       "Gracias por tu consulta. Te ayudo con disponibilidad y precio ahora.";
     let selectedVariant = "fallback";
     const playbookIntent = resolvePlaybookIntent(job.data);
 
-    if (job.data.llmDecision?.draftReply) {
-      message = job.data.llmDecision.draftReply;
+    if (initialLlmDraft && job.data.llmDecision) {
+      message = initialLlmDraft;
       selectedVariant = `llm-${job.data.llmDecision.source}`;
     } else if (!variant && !productContext) {
       message = await templateService.getTemplate(tenantId, "lead_no_product");
@@ -778,7 +790,9 @@ export const leadWorker = new Worker<LeadProcessingJobV1>(
 
     const llmConfidence = Number(job.data.llmDecision?.confidence ?? 0);
     const shouldKeepLlmReply =
-      Boolean(job.data.llmDecision?.draftReply) && llmConfidence >= PLAYBOOK_OVERRIDE_CONFIDENCE_MAX;
+      !shadowLlm &&
+      Boolean(job.data.llmDecision?.draftReply) &&
+      llmConfidence >= PLAYBOOK_OVERRIDE_CONFIDENCE_MAX;
     const shouldKeepDeterministicReply = selectedVariant === "exact-variant-close";
     if (
       variant &&

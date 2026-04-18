@@ -24,6 +24,7 @@ import {
   resolveExpectedCustomerAction,
   resolvePolicyAction
 } from "./services/conversation-policy.service";
+import { logShadowExternalCompareIfConfigured } from "./services/shadow-compare.service";
 
 const orchestratorMetrics = new QueueMetricsService(QueueNames.llmOrchestration);
 const llmService = new SelfHostedLlmService();
@@ -353,6 +354,28 @@ export const conversationOrchestratorWorker = new Worker<LlmOrchestrationJobV1>(
           handoffRequired: effectiveDecision.handoffRequired
         }
       });
+      if (shadowMode) {
+        const recentChronological = recentMessages
+          .slice()
+          .reverse()
+          .map((item: { direction: "incoming" | "outgoing"; message: string }) => ({
+            direction: item.direction,
+            message: item.message
+          }));
+        void logShadowExternalCompareIfConfigured({
+          tenantId,
+          leadId,
+          conversationId,
+          messageId,
+          correlationId,
+          dedupeKey,
+          phone,
+          incomingText,
+          interpretation: interpreted,
+          baselineDecision: effectiveDecision,
+          recentMessages: recentChronological
+        }).catch(() => undefined);
+      }
       await prisma.llmTrace.create({
         data: {
           tenantId,

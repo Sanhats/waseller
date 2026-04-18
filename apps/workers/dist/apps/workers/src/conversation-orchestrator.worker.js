@@ -13,6 +13,7 @@ const llm_verifier_service_1 = require("./services/llm-verifier.service");
 const tenant_knowledge_service_1 = require("./services/tenant-knowledge.service");
 const openai_interpreter_service_1 = require("./services/openai-interpreter.service");
 const conversation_policy_service_1 = require("./services/conversation-policy.service");
+const shadow_compare_service_1 = require("./services/shadow-compare.service");
 const orchestratorMetrics = new queue_metrics_service_1.QueueMetricsService(src_2.QueueNames.llmOrchestration);
 const llmService = new self_hosted_llm_service_1.SelfHostedLlmService();
 const interpreterService = new openai_interpreter_service_1.OpenAiInterpreterService();
@@ -295,6 +296,28 @@ exports.conversationOrchestratorWorker = new bullmq_1.Worker(src_2.QueueNames.ll
                 handoffRequired: effectiveDecision.handoffRequired
             }
         });
+        if (shadowMode) {
+            const recentChronological = recentMessages
+                .slice()
+                .reverse()
+                .map((item) => ({
+                direction: item.direction,
+                message: item.message
+            }));
+            void (0, shadow_compare_service_1.logShadowExternalCompareIfConfigured)({
+                tenantId,
+                leadId,
+                conversationId,
+                messageId,
+                correlationId,
+                dedupeKey,
+                phone,
+                incomingText,
+                interpretation: interpreted,
+                baselineDecision: effectiveDecision,
+                recentMessages: recentChronological
+            }).catch(() => undefined);
+        }
         await src_1.prisma.llmTrace.create({
             data: {
                 tenantId,
