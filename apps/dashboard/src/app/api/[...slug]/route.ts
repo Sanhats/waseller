@@ -8,6 +8,11 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ slug: strin
   return dispatchApi(req, "GET", slug ?? []);
 }
 
+export async function HEAD(req: NextRequest, ctx: { params: Promise<{ slug: string[] }> }) {
+  const { slug } = await ctx.params;
+  return dispatchApi(req, "HEAD", slug ?? []);
+}
+
 export async function POST(req: NextRequest, ctx: { params: Promise<{ slug: string[] }> }) {
   const { slug } = await ctx.params;
   return dispatchApi(req, "POST", slug ?? []);

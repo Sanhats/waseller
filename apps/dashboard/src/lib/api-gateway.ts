@@ -43,7 +43,7 @@ async function resolveAuth(
   if (path === "/integrations/mercadopago/callback" && method === "GET") {
     return { tenantId: "" };
   }
-  if (path === "/payments/mercadopago/webhook" && method === "POST") {
+  if (path === "/payments/mercadopago/webhook" && (method === "POST" || method === "GET" || method === "HEAD")) {
     return { tenantId: "" };
   }
   if (path === "/messages/incoming" && method === "POST") {
@@ -100,6 +100,12 @@ export async function dispatchApi(
         status: 200,
         headers: { "Content-Type": "text/html; charset=utf-8" }
       });
+    }
+
+    if (path === "/payments/mercadopago/webhook" && (method === "GET" || method === "HEAD")) {
+      /** Mercado Pago suele validar la URL con GET/HEAD; antes respondíamos 401 sin Bearer. */
+      if (method === "HEAD") return new NextResponse(null, { status: 200 });
+      return NextResponse.json({ ok: true });
     }
 
     if (path === "/payments/mercadopago/webhook" && method === "POST") {

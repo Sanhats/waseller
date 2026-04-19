@@ -27,7 +27,8 @@
     "seed:demo-scenarios": "npm run seed:demo-scenarios --workspace @waseller/backend",
     "db:migrate": "npm run prisma:migrate --workspace @waseller/db",
     "db:migrate:deploy": "npm run prisma:migrate:deploy --workspace @waseller/db",
-    "db:push": "npm run prisma:push --workspace @waseller/db"
+    "db:push": "npm run prisma:push --workspace @waseller/db",
+    "redis:check": "node scripts/redis-check.mjs"
   },
   "engines": {
     "node": ">=22"
