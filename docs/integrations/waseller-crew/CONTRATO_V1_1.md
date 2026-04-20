@@ -18,6 +18,8 @@ Todos **opcionales**. Tipos alineados a uso en workers / Prisma (strings UUID do
 | `messageId` | `string` | Opcional | UUID del registro `Message` asociado al turno. |
 | `conversationId` | `string \| null` | Opcional | UUID de conversación; `null` si no aplica. |
 | `recentMessages` | `array` | Opcional | Ventana corta de contexto; cada ítem: `{ "direction": "incoming" \| "outgoing", "message": "string" }`. **Tope recomendado enviado por Waseller:** 8 ítems (orden cronológico o explícito en doc del PR). |
+| `stockTable` | `array` | Opcional | Filas de inventario con las **mismas propiedades** que devuelve `GET /products` (variante por fila: `variantId`, `productId`, `name`, `sku`, `attributes`, `stock`, `reservedStock`, `availableStock`, `effectivePrice`, `imageUrl`, `isActive`, `tags`, `basePrice`, `variantPrice`). Waseller envía solo si hay al menos una fila; **tope 500** filas por request (mismo tope que valida el crew). |
+| `businessProfileSlug` | `string` | Opcional | Patrón seguro `[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}`. Waseller lo deriva del rubro `tenant_knowledge.business_category` cuando no es `general` y cumple el patrón (p. ej. `indumentaria_calzado`); el crew puede cargar `tenant_prompts/<slug>.txt` en su deploy. |
 
 **No** se cambia en v1.1: `schemaVersion`, `kind`, `tenantId`, `leadId`, `incomingText`, `interpretation`, `baselineDecision` (siguen como hoy).
 
@@ -111,6 +113,25 @@ Mismo núcleo que arriba **más** campos opcionales (ejemplo ilustrativo):
     { "direction": "outgoing", "message": "Hola, ¿en qué te ayudo?" },
     { "direction": "incoming", "message": "Hola, precio de la remera negra M?" }
   ],
+  "businessProfileSlug": "indumentaria_calzado",
+  "stockTable": [
+    {
+      "variantId": "…",
+      "productId": "…",
+      "name": "Remera básica",
+      "sku": "REM-BLK-M",
+      "attributes": { "talle": "M", "color": "negro" },
+      "stock": 4,
+      "reservedStock": 0,
+      "availableStock": 4,
+      "effectivePrice": 12990,
+      "imageUrl": null,
+      "isActive": true,
+      "tags": [],
+      "basePrice": 12990,
+      "variantPrice": null
+    }
+  ],
   "interpretation": { },
   "baselineDecision": { }
 }
@@ -124,7 +145,7 @@ Mismo núcleo que arriba **más** campos opcionales (ejemplo ilustrativo):
 
 | Lado | Tarea |
 |------|--------|
-| **Waseller** | Hecho: opcionales + Bearer en `logShadowExternalCompareIfConfigured`; orquestador pasa `phone` y `recentMessages`; `infra/env/.env.example` documenta `LLM_SHADOW_COMPARE_SECRET`. |
+| **Waseller** | Hecho: opcionales + Bearer en `logShadowExternalCompareIfConfigured`; orquestador pasa `phone`, `recentMessages` y `tenantBusinessCategory` (→ `businessProfileSlug` cuando aplica); el servicio adjunta `stockTable` si hay variantes en DB (≤500); `infra/env/.env.example` documenta `LLM_SHADOW_COMPARE_SECRET`. |
 | **waseller-crew** | Extender `ShadowCompareRequest` (Pydantic); README; fixture `request.v1_1.example.json`; middleware FastAPI para Bearer cuando `SHADOW_COMPARE_REQUIRE_AUTH` / `SHADOW_COMPARE_SECRET`. |
 | **Ops** | Mismo valor en `LLM_SHADOW_COMPARE_SECRET` (workers) y `SHADOW_COMPARE_SECRET` (crew); prod con `SHADOW_COMPARE_REQUIRE_AUTH=true`. |
 

@@ -373,7 +373,8 @@ export const conversationOrchestratorWorker = new Worker<LlmOrchestrationJobV1>(
           incomingText,
           interpretation: interpreted,
           baselineDecision: effectiveDecision,
-          recentMessages: recentChronological
+          recentMessages: recentChronological,
+          tenantBusinessCategory: tenantKnowledge.profile.businessCategory
         }).catch(() => undefined);
       }
       await prisma.llmTrace.create({

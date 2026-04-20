@@ -315,7 +315,8 @@ exports.conversationOrchestratorWorker = new bullmq_1.Worker(src_2.QueueNames.ll
                 incomingText,
                 interpretation: interpreted,
                 baselineDecision: effectiveDecision,
-                recentMessages: recentChronological
+                recentMessages: recentChronological,
+                tenantBusinessCategory: tenantKnowledge.profile.businessCategory
             }).catch(() => undefined);
         }
         await src_1.prisma.llmTrace.create({
