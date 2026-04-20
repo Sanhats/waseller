@@ -141,7 +141,7 @@ export type LlmDecisionV1 = {
     handoffRequired: boolean;
     qualityFlags: string[];
     source: "llm" | "fallback";
-    provider?: "self-hosted" | "openai" | "rules";
+    provider?: "self-hosted" | "openai" | "rules" | "waseller-crew";
     model?: string;
 };
 export declare const buildStableDedupeKey: (...parts: Array<string | undefined | null>) => string;

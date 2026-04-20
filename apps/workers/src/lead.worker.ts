@@ -23,6 +23,7 @@ import {
   resolveExpectedCustomerAction,
   resolveStageFromContext
 } from "./services/conversation-policy.service";
+import { replySimilarity } from "./services/conversation-recent-messages.service";
 
 type PlaybookIntent = "precio" | "stock" | "objecion" | "cierre";
 type Playbook = {
@@ -812,6 +813,36 @@ export const leadWorker = new Worker<LeadProcessingJobV1>(
           availableStock
         });
         selectedVariant = selectedPlaybook.variant;
+      }
+    }
+
+    const asksVariantFollowUp =
+      shadowLlm &&
+      variant &&
+      /\b(otro|otra|tambien|tambi[eé]n|en otro|m[aá]s|otro\s+color|otra\s+vari|pero\s|y\s+en|hay\s+en)\b/i.test(
+        job.data.incomingMessage ?? ""
+      );
+    if (asksVariantFollowUp) {
+      const lastBotMsg = await prisma.message.findFirst({
+        where: { tenantId, phone, direction: "outgoing" },
+        orderBy: { createdAt: "desc" },
+        select: { message: true }
+      });
+      const prevText = lastBotMsg?.message?.trim() ?? "";
+      const replyTooSimilar = prevText.length > 12 && replySimilarity(message, prevText) >= 0.68;
+      if (replyTooSimilar) {
+        const currentColorRaw = variantAttributeMap.color ?? variantAttributeMap["color"] ?? "";
+        const currentColor = String(currentColorRaw).trim();
+        const colorOpts = (axisOptions.color ?? []).filter(
+          (c) => normalizeText(String(c)) !== normalizeText(currentColor)
+        );
+        if (colorOpts.length > 0) {
+          message = `Vi tu consulta. Para ${variant.productName}, en stock aparecen estos colores además del que miramos: ${colorOpts.join(", ")}. ¿Cuál te interesa?`;
+          selectedVariant = "follow-up-colors";
+        } else {
+          message = `Vi tu consulta por otra variante. En el catálogo que registro solo figura lo que ya te pasé (${variantSummary || "esta variante"}) para ${variant.productName}.${exactVariantPriceText} Si buscás otra combinación, hoy no la tengo cargada; te aviso apenas ingrese.`;
+          selectedVariant = "follow-up-single-variant";
+        }
       }
     }
 

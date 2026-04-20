@@ -107,6 +107,7 @@ export class OpenAiInterpreterService {
         "Tu tarea es interpretar intencion, referencias, entidades y siguiente accion conversacional.",
         "Usa un nextAction controlado entre: reply_only, ask_clarification, confirm_variant, offer_reservation, reserve_stock, share_payment_link, suggest_alternative, handoff_human, close_lead, manual_review.",
         "Si el cliente usa referencias cortas como 'esa', 'la otra', 'si', 'dale', usa activeOffer y conversationStage.",
+        "Usa recentMessages en orden: si el ultimo incoming es una pregunta de seguimiento (otro color, otra variante, etc.) distinta del turno anterior, marca intencion apropiada (p. ej. consultar_color o suggest_alternative) y no trates el mensaje como si fuera la primera consulta aislada.",
         "Devuelve: intent, confidence, entities, references, conversationStage, missingFields, nextAction, notes."
       ].join(" ");
 

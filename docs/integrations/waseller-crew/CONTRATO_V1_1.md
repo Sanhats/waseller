@@ -7,6 +7,8 @@
 
 **Resumen operativo:** Waseller envía **body extendido + Bearer opcional**; URL del crew: `POST /shadow-compare` o **`POST /v1/shadow-compare`** (mismo contrato). El crew no impone un timeout HTTP más agresivo que el de la plataforma; el volumen de 500 filas afecta sobre todo el tiempo del LLM (CrewAI). Si los workers ven **abortos por timeout**, subir **`LLM_SHADOW_COMPARE_TIMEOUT_MS`** en el servicio de workers (Railway, etc.).
 
+**Modo primary (`WASELLER_CREW_PRIMARY=true`):** los workers llaman **una vez** al mismo endpoint; si la respuesta incluye `candidateDecision.draftReply` válido, **reemplazan** la decisión del LLM interno (OpenAI/self-hosted) antes del verificador y guardrails. No se hace un segundo POST de “shadow compare” en ese turno. Traza `trace_kind = crew_primary` en `llm_traces`. En **shadow** (política de rollout), el texto al cliente puede seguir yendo por plantillas del lead worker salvo que operen en **active** y el flujo use el `draftReply` del LLM.
+
 ---
 
 ## 1. Campos nuevos opcionales en el body (POST)
@@ -20,7 +22,8 @@ Todos **opcionales**. Tipos alineados a uso en workers / Prisma (strings UUID do
 | `messageId` | `string` | Opcional | UUID del registro `Message` asociado al turno. |
 | `conversationId` | `string \| null` | Opcional | UUID de conversación; `null` si no aplica. |
 | `recentMessages` | `array` | Opcional | Ventana corta de contexto; cada ítem: `{ "direction": "incoming" \| "outgoing", "message": "string" }`. **Tope recomendado enviado por Waseller:** 8 ítems (orden cronológico o explícito en doc del PR). |
-| `stockTable` | `array` | Opcional | Filas de inventario con las **mismas propiedades** que devuelve `GET /products` (variante por fila: `variantId`, `productId`, `name`, `sku`, `attributes`, `stock`, `reservedStock`, `availableStock`, `effectivePrice`, `imageUrl`, `isActive`, `tags`, `basePrice`, `variantPrice`). Waseller envía solo si hay al menos una fila; **tope 500** filas por request (mismo tope que valida el crew). |
+| `stockTable` | `array` | Opcional | Filas de inventario con las **mismas propiedades** que devuelve `GET /products` (variante por fila: `variantId`, `productId`, `name`, `sku`, `attributes`, `stock`, `reservedStock`, `availableStock`, `effectivePrice`, `imageUrl`, `isActive`, `tags`, `basePrice`, `variantPrice`). Waseller envía solo si hay al menos una fila; **tope 500** filas por request (mismo tope que valida el crew). Cuando hay `variantId` en contexto (`activeOffer` / interpretación), **solo variantes del mismo `productId`** (catálogo coherente con la consulta). |
+| `inventoryNarrowingNote` | `string` | Opcional | Solo si `stockTable` tiene **una** fila y el scope fue por producto: texto fijo para que el modelo no invente otras combinaciones de color/talle. Ignorable si el crew usa `extra = ignore` en Pydantic. |
 | `businessProfileSlug` | `string` | Opcional | Patrón seguro `[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}`. Waseller lo deriva del rubro `tenant_knowledge.business_category` cuando no es `general` y cumple el patrón (p. ej. `indumentaria_calzado`); el crew puede cargar `tenant_prompts/<slug>.txt` en su deploy. |
 
 **No** se cambia en v1.1: `schemaVersion`, `kind`, `tenantId`, `leadId`, `incomingText`, `interpretation`, `baselineDecision` (siguen como hoy).
@@ -33,7 +36,7 @@ Todos **opcionales**. Tipos alineados a uso en workers / Prisma (strings UUID do
 
 | Variable | Obligatoriedad | Descripción |
 |----------|----------------|-------------|
-| `LLM_SHADOW_COMPARE_SECRET` | Opcional | Secreto compartido. Si está **definido y no vacío**, el worker envía header de auth (ver abajo). Si está vacío / ausente, **no** envía el header (compatible con entornos sin secret). |
+| `LLM_SHADOW_COMPARE_SECRET` | Opcional | Secreto compartido. Si está **definido y no vacío**, el worker envía header de auth (ver abajo). Si está vacío / ausente, **no** envía el header (compatible con entornos sin secret). **Alias:** si no está definido, el worker también lee **`SHADOW_COMPARE_SECRET`** (útil si en Railway usás el mismo nombre que en waseller-crew). |
 | `LLM_SHADOW_COMPARE_TIMEOUT_MS` | Opcional | Timeout del `fetch` en workers (default **8000** ms, máximo **120000**). Con `stockTable` grande o Crew lento, conviene aumentarlo para evitar cortes antes de la respuesta HTTP. |
 
 **Header (cuando el secret está configurado):**
@@ -148,7 +151,7 @@ Mismo núcleo que arriba **más** campos opcionales (ejemplo ilustrativo):
 
 | Lado | Tarea |
 |------|--------|
-| **Waseller** | Hecho: opcionales + Bearer en `logShadowExternalCompareIfConfigured`; orquestador pasa `phone`, `recentMessages` y `tenantBusinessCategory` (→ `businessProfileSlug` cuando aplica); el servicio adjunta `stockTable` si hay variantes en DB (≤500); `infra/env/.env.example` documenta `LLM_SHADOW_COMPARE_SECRET`. |
+| **Waseller** | Hecho: opcionales + Bearer en `logShadowExternalCompareIfConfigured`; orquestador enriquece `recentMessages` con último bot vía `bot_response_events` si falta el `outgoing` en `messages` (carrera con sender); acota `stockTable` al producto en contexto; `inventoryNarrowingNote` si una sola fila; traza `reply` con `conversationDiagnostics.baselineEchoesLastOutgoing`; lead worker ajusta seguimientos en shadow; `infra/env/.env.example` documenta `LLM_SHADOW_COMPARE_SECRET`. |
 | **waseller-crew** | **Hecho (confirmado por crew):** acepta opcionales v1.1; Bearer vs `SHADOW_COMPARE_SECRET` con `SHADOW_COMPARE_REQUIRE_AUTH`; ver su `docs/CONTRATO_HTTP_V1_1.md` y fixtures. |
 | **Ops** | Mismo valor en `LLM_SHADOW_COMPARE_SECRET` (workers) y `SHADOW_COMPARE_SECRET` (crew); prod con `SHADOW_COMPARE_REQUIRE_AUTH=true`. Tráfico **2xx** tras deploy: verificar con smoke en shadow + logs Railway (workers y crew) o métricas del balanceador. |
 

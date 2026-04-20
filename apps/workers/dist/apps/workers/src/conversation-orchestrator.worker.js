@@ -13,6 +13,7 @@ const llm_verifier_service_1 = require("./services/llm-verifier.service");
 const tenant_knowledge_service_1 = require("./services/tenant-knowledge.service");
 const openai_interpreter_service_1 = require("./services/openai-interpreter.service");
 const conversation_policy_service_1 = require("./services/conversation-policy.service");
+const conversation_recent_messages_service_1 = require("./services/conversation-recent-messages.service");
 const shadow_compare_service_1 = require("./services/shadow-compare.service");
 const orchestratorMetrics = new queue_metrics_service_1.QueueMetricsService(src_2.QueueNames.llmOrchestration);
 const llmService = new self_hosted_llm_service_1.SelfHostedLlmService();
@@ -94,7 +95,7 @@ exports.conversationOrchestratorWorker = new bullmq_1.Worker(src_2.QueueNames.ll
             select: { llmConfidenceThreshold: true }
         });
         const confidenceThreshold = Number(tenant?.llmConfidenceThreshold ?? 0.72);
-        const recentMessages = (await src_1.prisma.message.findMany({
+        let recentMessages = (await src_1.prisma.message.findMany({
             where: { tenantId, phone },
             orderBy: { createdAt: "desc" },
             take: 8,
@@ -103,6 +104,7 @@ exports.conversationOrchestratorWorker = new bullmq_1.Worker(src_2.QueueNames.ll
                 message: true
             }
         }));
+        recentMessages = await (0, conversation_recent_messages_service_1.enrichRecentMessagesWithLastBotReply)(tenantId, phone, recentMessages);
         const ragProducts = await buildRagProducts(tenantId, incomingText);
         const tenantKnowledge = await tenantKnowledgeService.getWithRulePack(tenantId);
         const interpreted = await interpreterService.interpret({
@@ -121,7 +123,7 @@ exports.conversationOrchestratorWorker = new bullmq_1.Worker(src_2.QueueNames.ll
             candidateProducts: ragProducts,
             ruleInterpretation: job.data.ruleInterpretation ?? null
         });
-        const llmDecision = await llmService.decide({
+        let llmDecision = await llmService.decide({
             tenantId,
             phone,
             incomingText,
@@ -143,6 +145,45 @@ exports.conversationOrchestratorWorker = new bullmq_1.Worker(src_2.QueueNames.ll
             interpretation: interpreted,
             memoryFacts: job.data.memoryFacts ?? {}
         });
+        const recentChronologicalForCrew = recentMessages
+            .slice()
+            .reverse()
+            .map((item) => ({
+            direction: item.direction,
+            message: item.message
+        }));
+        const variantIdForStock = (typeof interpreted.entities?.variantId === "string" ? interpreted.entities.variantId : null) ??
+            job.data.activeOffer?.variantId ??
+            null;
+        let stockTableProductId = null;
+        if (variantIdForStock) {
+            try {
+                stockTableProductId = await (0, shadow_compare_service_1.resolveProductIdForTenantVariant)(tenantId, variantIdForStock);
+            }
+            catch {
+                stockTableProductId = null;
+            }
+        }
+        let crewPrimaryApplied = false;
+        const crewPrimary = await (0, shadow_compare_service_1.tryWasellerCrewPrimaryReplacement)({
+            tenantId,
+            leadId,
+            conversationId,
+            messageId,
+            correlationId,
+            dedupeKey,
+            phone,
+            incomingText,
+            interpretation: interpreted,
+            baselineDecision: llmDecision,
+            recentMessages: recentChronologicalForCrew,
+            tenantBusinessCategory: tenantKnowledge.profile.businessCategory,
+            stockTableProductId
+        }).catch(() => null);
+        if (crewPrimary) {
+            llmDecision = crewPrimary.decision;
+            crewPrimaryApplied = true;
+        }
         const payment = tenantKnowledge.profile.payment?.methods ?? [];
         const verifierRequired = job.data.verifierRequired !== false;
         const minVerifierScore = Math.max(0, Math.min(1, Number(job.data.minVerifierScore ?? 0.65)));
@@ -269,6 +310,13 @@ exports.conversationOrchestratorWorker = new bullmq_1.Worker(src_2.QueueNames.ll
                 source: effectiveDecision.source
             }
         });
+        const lastOutgoingForDiag = await src_1.prisma.message.findFirst({
+            where: { tenantId, phone, direction: "outgoing" },
+            orderBy: { createdAt: "desc" },
+            select: { message: true }
+        });
+        const baselineEchoesLastOutgoing = Boolean(lastOutgoingForDiag?.message?.trim()) &&
+            (0, conversation_recent_messages_service_1.replySimilarity)(effectiveDecision.draftReply, lastOutgoingForDiag.message) >= 0.72;
         const trace = await src_1.prisma.llmTrace.create({
             data: {
                 tenantId,
@@ -287,7 +335,12 @@ exports.conversationOrchestratorWorker = new bullmq_1.Worker(src_2.QueueNames.ll
                     ragProducts,
                     recentMessages,
                     tenantProfile: tenantKnowledge.profile,
-                    rubroRulePack: tenantKnowledge.rulePack
+                    rubroRulePack: tenantKnowledge.rulePack,
+                    conversationDiagnostics: {
+                        baselineEchoesLastOutgoing,
+                        recentMessageTurns: recentMessages.length,
+                        crewPrimaryApplied
+                    }
                 },
                 response: effectiveDecision,
                 promptTokens: null,
@@ -296,14 +349,7 @@ exports.conversationOrchestratorWorker = new bullmq_1.Worker(src_2.QueueNames.ll
                 handoffRequired: effectiveDecision.handoffRequired
             }
         });
-        if (shadowMode) {
-            const recentChronological = recentMessages
-                .slice()
-                .reverse()
-                .map((item) => ({
-                direction: item.direction,
-                message: item.message
-            }));
+        if (shadowMode && !crewPrimaryApplied) {
             void (0, shadow_compare_service_1.logShadowExternalCompareIfConfigured)({
                 tenantId,
                 leadId,
@@ -315,8 +361,9 @@ exports.conversationOrchestratorWorker = new bullmq_1.Worker(src_2.QueueNames.ll
                 incomingText,
                 interpretation: interpreted,
                 baselineDecision: effectiveDecision,
-                recentMessages: recentChronological,
-                tenantBusinessCategory: tenantKnowledge.profile.businessCategory
+                recentMessages: recentChronologicalForCrew,
+                tenantBusinessCategory: tenantKnowledge.profile.businessCategory,
+                stockTableProductId
             }).catch(() => undefined);
         }
         await src_1.prisma.llmTrace.create({

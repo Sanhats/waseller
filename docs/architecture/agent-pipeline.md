@@ -76,6 +76,7 @@ Los tipos canónicos viven en [`packages/queue/src/contracts.ts`](../../packages
 | `LLM_SHADOW_COMPARE_URL` | Opcional: URL POST para candidato externo; traza `shadow_compare` en `LlmTrace`. |
 | `LLM_SHADOW_COMPARE_TIMEOUT_MS` | Timeout del POST de comparación. |
 | `LLM_SHADOW_COMPARE_SECRET` | Opcional: si está definido, `Authorization: Bearer` en el POST (ver [`CONTRATO_V1_1.md`](../integrations/waseller-crew/CONTRATO_V1_1.md)). |
+| `WASELLER_CREW_PRIMARY` | Opcional: `true` — el crew reemplaza la decisión interna antes del verificador (misma URL que shadow-compare); sin segundo POST de comparación en ese turno. |
 
 ## Referencia de decisión de runtime
 

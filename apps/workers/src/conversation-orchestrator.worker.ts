@@ -24,7 +24,15 @@ import {
   resolveExpectedCustomerAction,
   resolvePolicyAction
 } from "./services/conversation-policy.service";
-import { logShadowExternalCompareIfConfigured } from "./services/shadow-compare.service";
+import {
+  enrichRecentMessagesWithLastBotReply,
+  replySimilarity
+} from "./services/conversation-recent-messages.service";
+import {
+  logShadowExternalCompareIfConfigured,
+  resolveProductIdForTenantVariant,
+  tryWasellerCrewPrimaryReplacement
+} from "./services/shadow-compare.service";
 
 const orchestratorMetrics = new QueueMetricsService(QueueNames.llmOrchestration);
 const llmService = new SelfHostedLlmService();
@@ -133,7 +141,7 @@ export const conversationOrchestratorWorker = new Worker<LlmOrchestrationJobV1>(
       });
       const confidenceThreshold = Number(tenant?.llmConfidenceThreshold ?? 0.72);
 
-      const recentMessages = (await prisma.message.findMany({
+      let recentMessages = (await prisma.message.findMany({
         where: { tenantId, phone },
         orderBy: { createdAt: "desc" },
         take: 8,
@@ -142,6 +150,7 @@ export const conversationOrchestratorWorker = new Worker<LlmOrchestrationJobV1>(
           message: true
         }
       })) as Array<{ direction: "incoming" | "outgoing"; message: string }>;
+      recentMessages = await enrichRecentMessagesWithLastBotReply(tenantId, phone, recentMessages);
       const ragProducts = await buildRagProducts(tenantId, incomingText);
       const tenantKnowledge = await tenantKnowledgeService.getWithRulePack(tenantId);
       const interpreted = await interpreterService.interpret({
@@ -160,7 +169,7 @@ export const conversationOrchestratorWorker = new Worker<LlmOrchestrationJobV1>(
         candidateProducts: ragProducts,
         ruleInterpretation: job.data.ruleInterpretation ?? null
       });
-      const llmDecision = await llmService.decide({
+      let llmDecision = await llmService.decide({
         tenantId,
         phone,
         incomingText,
@@ -182,6 +191,47 @@ export const conversationOrchestratorWorker = new Worker<LlmOrchestrationJobV1>(
         interpretation: interpreted,
         memoryFacts: job.data.memoryFacts ?? {}
       });
+
+      const recentChronologicalForCrew = recentMessages
+        .slice()
+        .reverse()
+        .map((item: { direction: "incoming" | "outgoing"; message: string }) => ({
+          direction: item.direction,
+          message: item.message
+        }));
+      const variantIdForStock =
+        (typeof interpreted.entities?.variantId === "string" ? interpreted.entities.variantId : null) ??
+        job.data.activeOffer?.variantId ??
+        null;
+      let stockTableProductId: string | null = null;
+      if (variantIdForStock) {
+        try {
+          stockTableProductId = await resolveProductIdForTenantVariant(tenantId, variantIdForStock);
+        } catch {
+          stockTableProductId = null;
+        }
+      }
+      let crewPrimaryApplied = false;
+      const crewPrimary = await tryWasellerCrewPrimaryReplacement({
+        tenantId,
+        leadId,
+        conversationId,
+        messageId,
+        correlationId,
+        dedupeKey,
+        phone,
+        incomingText,
+        interpretation: interpreted,
+        baselineDecision: llmDecision,
+        recentMessages: recentChronologicalForCrew,
+        tenantBusinessCategory: tenantKnowledge.profile.businessCategory,
+        stockTableProductId
+      }).catch(() => null);
+      if (crewPrimary) {
+        llmDecision = crewPrimary.decision;
+        crewPrimaryApplied = true;
+      }
+
       const payment =
         (tenantKnowledge.profile.payment as { methods?: string[] } | undefined)?.methods ?? [];
       const verifierRequired = job.data.verifierRequired !== false;
@@ -327,6 +377,15 @@ export const conversationOrchestratorWorker = new Worker<LlmOrchestrationJobV1>(
         }
       });
 
+      const lastOutgoingForDiag = await prisma.message.findFirst({
+        where: { tenantId, phone, direction: "outgoing" },
+        orderBy: { createdAt: "desc" },
+        select: { message: true }
+      });
+      const baselineEchoesLastOutgoing =
+        Boolean(lastOutgoingForDiag?.message?.trim()) &&
+        replySimilarity(effectiveDecision.draftReply, lastOutgoingForDiag.message) >= 0.72;
+
       const trace = await prisma.llmTrace.create({
         data: {
           tenantId,
@@ -345,7 +404,12 @@ export const conversationOrchestratorWorker = new Worker<LlmOrchestrationJobV1>(
             ragProducts,
             recentMessages,
             tenantProfile: tenantKnowledge.profile,
-            rubroRulePack: tenantKnowledge.rulePack
+            rubroRulePack: tenantKnowledge.rulePack,
+            conversationDiagnostics: {
+              baselineEchoesLastOutgoing,
+              recentMessageTurns: recentMessages.length,
+              crewPrimaryApplied
+            }
           },
           response: effectiveDecision,
           promptTokens: null,
@@ -354,14 +418,7 @@ export const conversationOrchestratorWorker = new Worker<LlmOrchestrationJobV1>(
           handoffRequired: effectiveDecision.handoffRequired
         }
       });
-      if (shadowMode) {
-        const recentChronological = recentMessages
-          .slice()
-          .reverse()
-          .map((item: { direction: "incoming" | "outgoing"; message: string }) => ({
-            direction: item.direction,
-            message: item.message
-          }));
+      if (shadowMode && !crewPrimaryApplied) {
         void logShadowExternalCompareIfConfigured({
           tenantId,
           leadId,
@@ -373,8 +430,9 @@ export const conversationOrchestratorWorker = new Worker<LlmOrchestrationJobV1>(
           incomingText,
           interpretation: interpreted,
           baselineDecision: effectiveDecision,
-          recentMessages: recentChronological,
-          tenantBusinessCategory: tenantKnowledge.profile.businessCategory
+          recentMessages: recentChronologicalForCrew,
+          tenantBusinessCategory: tenantKnowledge.profile.businessCategory,
+          stockTableProductId
         }).catch(() => undefined);
       }
       await prisma.llmTrace.create({

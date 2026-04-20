@@ -177,7 +177,8 @@ export class SelfHostedLlmService {
         "No inventes datos. Usa el contexto del tenant y de productos.",
         "Si falta informacion critica, usa ask_clarification.",
         "Campos requeridos: intent, leadStage, confidence, entities, nextAction, reason, requiresHuman, recommendedAction, draftReply, handoffRequired, qualityFlags.",
-        "nextAction permitido: reply_only|ask_clarification|offer_reservation|reserve_stock|share_payment_link|handoff_human|close_lead|manual_review."
+        "nextAction permitido: reply_only|ask_clarification|offer_reservation|reserve_stock|share_payment_link|handoff_human|close_lead|manual_review.",
+        "Si recentMessages incluye un mensaje outgoing previo y el incomingText es una pregunta de seguimiento distinta (ej. otro color, otra variante), NO repitas el mismo draftReply ni parafrasees sin aportar informacion nueva: responde a la pregunta nueva usando el hilo."
       ].join(" ");
       const userPayload = {
         incomingText: context.incomingText,

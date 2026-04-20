@@ -9,6 +9,7 @@ const queue_metrics_service_1 = require("./services/queue-metrics.service");
 const bot_template_service_1 = require("./services/bot-template.service");
 const mercado_pago_payment_service_1 = require("./services/mercado-pago-payment.service");
 const conversation_policy_service_1 = require("./services/conversation-policy.service");
+const conversation_recent_messages_service_1 = require("./services/conversation-recent-messages.service");
 const leadMetrics = new queue_metrics_service_1.QueueMetricsService(src_1.QueueNames.leadProcessing);
 const templateService = new bot_template_service_1.BotTemplateService();
 const mercadoPagoPaymentService = new mercado_pago_payment_service_1.MercadoPagoPaymentService();
@@ -704,6 +705,31 @@ exports.leadWorker = new bullmq_1.Worker(src_1.QueueNames.leadProcessing, async 
                 availableStock
             });
             selectedVariant = selectedPlaybook.variant;
+        }
+    }
+    const asksVariantFollowUp = shadowLlm &&
+        variant &&
+        /\b(otro|otra|tambien|tambi[eé]n|en otro|m[aá]s|otro\s+color|otra\s+vari|pero\s|y\s+en|hay\s+en)\b/i.test(job.data.incomingMessage ?? "");
+    if (asksVariantFollowUp) {
+        const lastBotMsg = await src_2.prisma.message.findFirst({
+            where: { tenantId, phone, direction: "outgoing" },
+            orderBy: { createdAt: "desc" },
+            select: { message: true }
+        });
+        const prevText = lastBotMsg?.message?.trim() ?? "";
+        const replyTooSimilar = prevText.length > 12 && (0, conversation_recent_messages_service_1.replySimilarity)(message, prevText) >= 0.68;
+        if (replyTooSimilar) {
+            const currentColorRaw = variantAttributeMap.color ?? variantAttributeMap["color"] ?? "";
+            const currentColor = String(currentColorRaw).trim();
+            const colorOpts = (axisOptions.color ?? []).filter((c) => normalizeText(String(c)) !== normalizeText(currentColor));
+            if (colorOpts.length > 0) {
+                message = `Vi tu consulta. Para ${variant.productName}, en stock aparecen estos colores además del que miramos: ${colorOpts.join(", ")}. ¿Cuál te interesa?`;
+                selectedVariant = "follow-up-colors";
+            }
+            else {
+                message = `Vi tu consulta por otra variante. En el catálogo que registro solo figura lo que ya te pasé (${variantSummary || "esta variante"}) para ${variant.productName}.${exactVariantPriceText} Si buscás otra combinación, hoy no la tengo cargada; te aviso apenas ingrese.`;
+                selectedVariant = "follow-up-single-variant";
+            }
         }
     }
     const priorityTier = (0, src_3.leadStatusToPriorityTier)(status);

@@ -40,7 +40,7 @@ const LEAD_STAGE_SET = new Set(["discovery", "consideration", "decision", "hando
 const POLICY_BANDS = new Set(["high", "medium", "low"]);
 const EXEC_MODES = new Set(["shadow", "active"]);
 const LLM_SOURCES = new Set(["llm", "fallback"]);
-const PROVIDERS = new Set(["self-hosted", "openai", "rules"]);
+const PROVIDERS = new Set(["self-hosted", "openai", "rules", "waseller-crew"]);
 const VERIFIER_PROVIDERS = new Set(["llm-verifier", "rules"]);
 const INTERP_SOURCES = new Set(["rules", "openai"]);
 function isRecord(value) {

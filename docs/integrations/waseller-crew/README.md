@@ -17,6 +17,7 @@ Podés copiar **toda la carpeta** `docs/integrations/waseller-crew/` al nuevo re
 Este documento es **autocontenido** para implementar el microservicio con **`uv`**. Waseller llama a este servicio cuando:
 
 - `LLM_SHADOW_COMPARE_URL` apunta a tu URL (HTTPS en producción).
+- **`WASELLER_CREW_PRIMARY=true`** (opcional): el crew **sustituye** la decisión interna en el orquestador (misma URL y contrato); no se envía un POST adicional solo para comparar en ese turno. Ver `CONTRATO_V1_1.md`.
 - El job de orquestación va en **`executionMode: "shadow"`** (ver `LlmRolloutService` / tenant).
 
 Referencia en Waseller:
@@ -44,7 +45,7 @@ Referencia en Waseller:
 
 - **POST** a la URL exacta configurada en `LLM_SHADOW_COMPARE_URL` (puede ser `https://host/shadow-compare` o la raíz si así lo configurás).
 - **Content-Type:** `application/json`
-- **Authorization (opcional):** si en workers está definido **`LLM_SHADOW_COMPARE_SECRET`** (no vacío), Waseller envía `Authorization: Bearer <secret>`. Alinear con **`SHADOW_COMPARE_SECRET`** en waseller-crew.
+- **Authorization (opcional):** si en workers está definido **`LLM_SHADOW_COMPARE_SECRET`** o **`SHADOW_COMPARE_SECRET`** (no vacío), Waseller envía `Authorization: Bearer <secret>`. El valor debe coincidir con **`SHADOW_COMPARE_SECRET`** en waseller-crew.
 - **Timeout del cliente Waseller:** `LLM_SHADOW_COMPARE_TIMEOUT_MS` (default **8000** ms, máximo 120000). Tu servicio debe responder por debajo de ese valor o Waseller abortará la petición (la traza guardará error de red/abort).
 
 ### Cuerpo JSON (request)
