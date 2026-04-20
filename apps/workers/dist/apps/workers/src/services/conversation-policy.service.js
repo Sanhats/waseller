@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.resolvePolicyAction = exports.buildActiveOfferSnapshot = exports.resolveStageFromContext = exports.resolveExpectedCustomerAction = exports.normalizeConversationText = void 0;
+exports.applyReplyGuardrails = exports.resolvePolicyAction = exports.buildActiveOfferSnapshot = exports.resolveStageFromContext = exports.resolveExpectedCustomerAction = exports.normalizeConversationText = void 0;
 const SENSITIVE_ACTIONS = new Set(["reserve_stock", "share_payment_link", "close_lead"]);
 const normalizeConversationText = (value) => String(value ?? "")
     .toLowerCase()
@@ -91,3 +91,34 @@ const resolvePolicyAction = (input) => {
     return { recommendedAction, executedAction: recommendedAction, flags };
 };
 exports.resolvePolicyAction = resolvePolicyAction;
+const normalizeForPolicy = (value) => value.trim().replace(/\s+/g, " ");
+/**
+ * Misma lógica que el orquestador antes de enviar: evita respuestas vacías, eco o role confusion.
+ */
+const applyReplyGuardrails = (rawReply, guardrailFallbackMessage, incomingText, confidence, threshold) => {
+    const flags = [];
+    const cleaned = normalizeForPolicy(rawReply);
+    const normalizedIncoming = normalizeForPolicy(incomingText).toLowerCase();
+    const normalizedReply = cleaned.toLowerCase();
+    if (cleaned.length < 5)
+        flags.push("empty_reply");
+    if (/garantizado|100% seguro|promesa total/i.test(cleaned))
+        flags.push("overpromise");
+    if (normalizedReply && normalizedReply === normalizedIncoming)
+        flags.push("echo_reply");
+    const roleConfusionPattern = /^(si+|sii+|dale|ok|perfecto)?\s*[,.-]?\s*(enviame|enviame|mandame|pasame|quiero)\b/i;
+    const hasBusinessSignal = /(tenemos|precio|stock|reserva|asesor|podemos|te comparto|te paso|disponible)/i.test(cleaned);
+    if (roleConfusionPattern.test(cleaned) && !hasBusinessSignal)
+        flags.push("role_confusion");
+    if (confidence < threshold)
+        flags.push("low_confidence");
+    if (flags.length > 0) {
+        return {
+            message: guardrailFallbackMessage,
+            blocked: true,
+            flags
+        };
+    }
+    return { message: cleaned, blocked: false, flags };
+};
+exports.applyReplyGuardrails = applyReplyGuardrails;

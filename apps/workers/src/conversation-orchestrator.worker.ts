@@ -20,6 +20,7 @@ import { LlmVerifierService } from "./services/llm-verifier.service";
 import { TenantKnowledgeService } from "./services/tenant-knowledge.service";
 import { OpenAiInterpreterService } from "./services/openai-interpreter.service";
 import {
+  applyReplyGuardrails,
   buildActiveOfferSnapshot,
   resolveExpectedCustomerAction,
   resolvePolicyAction
@@ -47,38 +48,6 @@ const lockService = new ConversationLockService(
 );
 const HIGH_CONFIDENCE_THRESHOLD = Number(process.env.LLM_POLICY_HIGH_CONFIDENCE ?? 0.8);
 const MEDIUM_CONFIDENCE_THRESHOLD = Number(process.env.LLM_POLICY_MEDIUM_CONFIDENCE ?? 0.6);
-
-const normalizeForPolicy = (value: string): string => value.trim().replace(/\s+/g, " ");
-
-const applyGuardrails = (
-  rawReply: string,
-  guardrailFallbackMessage: string,
-  incomingText: string,
-  confidence: number,
-  threshold: number
-): { message: string; blocked: boolean; flags: string[] } => {
-  const flags: string[] = [];
-  const cleaned = normalizeForPolicy(rawReply);
-  const normalizedIncoming = normalizeForPolicy(incomingText).toLowerCase();
-  const normalizedReply = cleaned.toLowerCase();
-  if (cleaned.length < 5) flags.push("empty_reply");
-  if (/garantizado|100% seguro|promesa total/i.test(cleaned)) flags.push("overpromise");
-  if (normalizedReply && normalizedReply === normalizedIncoming) flags.push("echo_reply");
-  const roleConfusionPattern =
-    /^(si+|sii+|dale|ok|perfecto)?\s*[,.-]?\s*(enviame|enviame|mandame|pasame|quiero)\b/i;
-  const hasBusinessSignal =
-    /(tenemos|precio|stock|reserva|asesor|podemos|te comparto|te paso|disponible)/i.test(cleaned);
-  if (roleConfusionPattern.test(cleaned) && !hasBusinessSignal) flags.push("role_confusion");
-  if (confidence < threshold) flags.push("low_confidence");
-  if (flags.length > 0) {
-    return {
-      message: guardrailFallbackMessage,
-      blocked: true,
-      flags
-    };
-  }
-  return { message: cleaned, blocked: false, flags };
-};
 
 const resolvePolicyBand = (confidence: number): "high" | "medium" | "low" => {
   if (confidence >= HIGH_CONFIDENCE_THRESHOLD) return "high";
@@ -249,7 +218,7 @@ export const conversationOrchestratorWorker = new Worker<LlmOrchestrationJobV1>(
       const guardrailFallbackMessage =
         (await templateService.getTemplate(tenantId, "orchestrator_guardrail_handoff")) ||
         "Quiero asegurarme de darte la mejor respuesta. Te paso con un asesor para confirmar los detalles y ayudarte a cerrar la compra.";
-      const guardrails = applyGuardrails(
+      const guardrails = applyReplyGuardrails(
         llmDecision.draftReply,
         guardrailFallbackMessage,
         incomingText,
@@ -470,6 +439,9 @@ export const conversationOrchestratorWorker = new Worker<LlmOrchestrationJobV1>(
         tenantId,
         leadId,
         phone,
+        messageId,
+        conversationId: conversationId ?? null,
+        executionMode: shadowMode ? "shadow" : "active",
         status: lead.status,
         intent: effectiveDecision.intent,
         incomingMessage: incomingText,

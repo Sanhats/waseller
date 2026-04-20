@@ -23,7 +23,7 @@ Todos **opcionales**. Tipos alineados a uso en workers / Prisma (strings UUID do
 | `conversationId` | `string \| null` | Opcional | UUID de conversación; `null` si no aplica. |
 | `recentMessages` | `array` | Opcional | Ventana corta de contexto; cada ítem: `{ "direction": "incoming" \| "outgoing", "message": "string" }`. **Tope recomendado enviado por Waseller:** 8 ítems (orden cronológico o explícito en doc del PR). |
 | `stockTable` | `array` | Opcional | Filas de inventario con las **mismas propiedades** que devuelve `GET /products` (variante por fila: `variantId`, `productId`, `name`, `sku`, `attributes`, `stock`, `reservedStock`, `availableStock`, `effectivePrice`, `imageUrl`, `isActive`, `tags`, `basePrice`, `variantPrice`). Waseller envía solo si hay al menos una fila; **tope 500** filas por request (mismo tope que valida el crew). Cuando hay `variantId` en contexto (`activeOffer` / interpretación), **solo variantes del mismo `productId`** (catálogo coherente con la consulta). |
-| `inventoryNarrowingNote` | `string` | Opcional | Solo si `stockTable` tiene **una** fila y el scope fue por producto: texto fijo para que el modelo no invente otras combinaciones de color/talle. Ignorable si el crew usa `extra = ignore` en Pydantic. |
+| `inventoryNarrowingNote` | `string` | Opcional | Waseller lo envía solo si `stockTable` tiene **una** fila con scope por producto. waseller-crew lo modela y lo usa en el bloque de misión del prompt (además de `extra="ignore"` para campos desconocidos). |
 | `businessProfileSlug` | `string` | Opcional | Patrón seguro `[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}`. Waseller lo deriva del rubro `tenant_knowledge.business_category` cuando no es `general` y cumple el patrón (p. ej. `indumentaria_calzado`); el crew puede cargar `tenant_prompts/<slug>.txt` en su deploy. |
 
 **No** se cambia en v1.1: `schemaVersion`, `kind`, `tenantId`, `leadId`, `incomingText`, `interpretation`, `baselineDecision` (siguen como hoy).
@@ -152,7 +152,7 @@ Mismo núcleo que arriba **más** campos opcionales (ejemplo ilustrativo):
 | Lado | Tarea |
 |------|--------|
 | **Waseller** | Hecho: opcionales + Bearer en `logShadowExternalCompareIfConfigured`; orquestador enriquece `recentMessages` con último bot vía `bot_response_events` si falta el `outgoing` en `messages` (carrera con sender); acota `stockTable` al producto en contexto; `inventoryNarrowingNote` si una sola fila; traza `reply` con `conversationDiagnostics.baselineEchoesLastOutgoing`; lead worker ajusta seguimientos en shadow; `infra/env/.env.example` documenta `LLM_SHADOW_COMPARE_SECRET`. |
-| **waseller-crew** | **Hecho (confirmado por crew):** acepta opcionales v1.1; Bearer vs `SHADOW_COMPARE_SECRET` con `SHADOW_COMPARE_REQUIRE_AUTH`; ver su `docs/CONTRATO_HTTP_V1_1.md` y fixtures. |
+| **waseller-crew** | **Hecho:** ver **§7** (paridad detallada). Repo: `docs/CONTRATO_HTTP_V1_1.md` (incl. observabilidad §4.2), `fixtures/request.v1_1.example.json`, tests API. |
 | **Ops** | Mismo valor en `LLM_SHADOW_COMPARE_SECRET` (workers) y `SHADOW_COMPARE_SECRET` (crew); prod con `SHADOW_COMPARE_REQUIRE_AUTH=true`. Tráfico **2xx** tras deploy: verificar con smoke en shadow + logs Railway (workers y crew) o métricas del balanceador. |
 
 ---
@@ -161,3 +161,23 @@ Mismo núcleo que arriba **más** campos opcionales (ejemplo ilustrativo):
 
 - `Dockerfile` / `docker-compose.yml` para reproducir workers + DB no es necesario para waseller-crew; corresponde al **repo waseller-crew**.
 - Workflow **GitHub Actions** en waseller-crew: lint + `pytest` + build imagen; plantilla genérica puede vivir en waseller-crew sin tocar Waseller.
+
+---
+
+## 7. Paridad waseller-crew (microservicio) — resumen para quien trabaja solo en Waseller
+
+Lo siguiente está **implementado en el repo waseller-crew** (no en este monorepo); se documenta aquí para una sola lectura de integración. Detalle normativo y observabilidad: **`docs/CONTRATO_HTTP_V1_1.md`** en waseller-crew (§4.2 observabilidad, `LLM_SHADOW_COMPARE_TIMEOUT_MS`).
+
+| Área | waseller-crew |
+|------|----------------|
+| **HTTP** | `POST /shadow-compare` y `POST /v1/shadow-compare` — mismo handler, mismo `ShadowCompareRequest` / respuesta. |
+| **Pydantic** | `model_config = ConfigDict(extra="ignore")` — campos futuros de Waseller no rompen el POST. |
+| **Opcionales** | `stockTable` (≤500), `businessProfileSlug`, **`inventoryNarrowingNote`** (Waseller puede enviarlo cuando aplica), `recentMessages`, `phone`, ids, etc. |
+| **Auth** | `SHADOW_COMPARE_SECRET` + `SHADOW_COMPARE_REQUIRE_AUTH` (p. ej. `Depends(check_shadow_compare_bearer)`). |
+| **Respuesta** | Instrucciones al LLM para `draftReply` no vacío en modo primary; si el crew devuelve vacío y el baseline tiene `draftReply`, enriquecimiento desde baseline + log **`shadow_compare_empty_draft_filled_from_baseline`**. `nextAction` sigue coaccionándose a enums válidos. |
+| **Agente** | Sin inventar catálogo; `stockTable` + baseline como contexto; `inventoryNarrowingNote` en bloque de misión; `businessProfileSlug` → `tenant_prompts/<slug>.txt`; reglas de seguimiento / anti-repetición en prompt. |
+| **Ops** | Logs JSON (p. ej. `shadow_compare_completed`, `shadow_compare_reject_kind`, `crew_failure` con `error_type` + `exc_info`); **`GET /health`**. |
+
+### Waseller (este monorepo) — pendiente de producto si quieren crew con variante ya resuelta
+
+Cuando el **message-processor** resuelve **`variantId`**, hoy encola solo **`lead.worker`** y **no** el orquestador → **no** hay `llm_traces` ni POST al crew en ese turno. Para usar waseller-crew ahí también hace falta **cambio de código en Waseller** (routing / llamada explícita); no es un faltante del checklist del crew anterior.

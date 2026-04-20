@@ -1,9 +1,11 @@
 import { Job, Worker } from "bullmq";
 import {
   ActiveOfferV1,
+  ConversationInterpretationV1,
   ConversationStageV1,
   JOB_SCHEMA_VERSION,
   LeadProcessingJobV1,
+  LlmDecisionV1,
   QueueNames,
   buildStableDedupeKey,
   outgoingQueue,
@@ -19,11 +21,21 @@ import { QueueMetricsService } from "./services/queue-metrics.service";
 import { BotTemplateService } from "./services/bot-template.service";
 import { MercadoPagoPaymentService } from "./services/mercado-pago-payment.service";
 import {
+  applyReplyGuardrails,
   buildActiveOfferSnapshot,
   resolveExpectedCustomerAction,
   resolveStageFromContext
 } from "./services/conversation-policy.service";
-import { replySimilarity } from "./services/conversation-recent-messages.service";
+import {
+  enrichRecentMessagesWithLastBotReply,
+  replySimilarity
+} from "./services/conversation-recent-messages.service";
+import {
+  logShadowExternalCompareIfConfigured,
+  resolveProductIdForTenantVariant,
+  tryWasellerCrewPrimaryReplacement
+} from "./services/shadow-compare.service";
+import { TenantKnowledgeService } from "./services/tenant-knowledge.service";
 
 type PlaybookIntent = "precio" | "stock" | "objecion" | "cierre";
 type Playbook = {
@@ -42,6 +54,48 @@ type VariantPerformance = {
 const leadMetrics = new QueueMetricsService(QueueNames.leadProcessing);
 const templateService = new BotTemplateService();
 const mercadoPagoPaymentService = new MercadoPagoPaymentService();
+const tenantKnowledgeService = new TenantKnowledgeService();
+
+const defaultInterpretationForCrew = (job: LeadProcessingJobV1): ConversationInterpretationV1 => ({
+  intent: job.intent ?? "desconocida",
+  confidence: 0.72,
+  entities: {
+    productName: job.productName ?? null,
+    variantId: job.variantId ?? null
+  },
+  references: [],
+  missingFields: job.missingAxes ?? [],
+  nextAction: "reply_only",
+  source: "rules"
+});
+
+const buildLeadTemplateBaselineDecision = (
+  job: LeadProcessingJobV1,
+  draftReply: string,
+  interpretation: ConversationInterpretationV1
+): LlmDecisionV1 => {
+  const leadStage: LlmDecisionV1["leadStage"] =
+    job.status === "listo_para_cobrar" || job.status === "vendido" ? "decision" : "consideration";
+  return {
+    intent: interpretation.intent ?? job.intent ?? "desconocida",
+    leadStage,
+    confidence: 0.78,
+    entities: {
+      productName: job.productName ?? null,
+      variantId: job.variantId ?? null
+    },
+    nextAction: interpretation.nextAction ?? "reply_only",
+    reason: "lead_worker_template_baseline",
+    requiresHuman: false,
+    recommendedAction: interpretation.nextAction ?? "reply_only",
+    draftReply,
+    handoffRequired: false,
+    qualityFlags: ["lead_template_baseline"],
+    source: "fallback",
+    provider: "rules",
+    model: "lead-template"
+  };
+};
 
 /** Postgres / drivers pueden devolver DECIMAL como string u objeto; evita NaN y salto a derivación sin MP. */
 const coerceUnitPrice = (value: unknown): number => {
@@ -896,6 +950,111 @@ export const leadWorker = new Worker<LeadProcessingJobV1>(
       alternativeVariants: alternativeOfferVariants,
       expectedCustomerAction
     });
+
+    /** Ruta directa (message-processor → lead): sin `llmDecision` del orquestador; aquí aplicamos waseller-crew como en el orquestador. */
+    if (!job.data.llmDecision) {
+      const incomingRaw = String(job.data.incomingMessage ?? "").trim();
+      if (incomingRaw.length > 0) {
+        const interpretation = job.data.interpretation ?? defaultInterpretationForCrew(job.data);
+        const messageId =
+          String(job.data.messageId ?? "").trim() || `lead:${leadId}:${job.data.correlationId}`;
+        const crewDedupe =
+          String(job.data.dedupeKey ?? "").trim() ||
+          buildStableDedupeKey("lead-crew", tenantId, leadId, messageId);
+        let recentCrew = (await prisma.message.findMany({
+          where: { tenantId, phone },
+          orderBy: { createdAt: "desc" },
+          take: 8,
+          select: { direction: true, message: true }
+        })) as Array<{ direction: "incoming" | "outgoing"; message: string }>;
+        recentCrew = await enrichRecentMessagesWithLastBotReply(tenantId, phone, recentCrew);
+        const recentChronologicalForCrew = recentCrew
+          .slice()
+          .reverse()
+          .map((item) => ({ direction: item.direction, message: item.message }));
+        const tenantRow = await prisma.tenant.findUnique({
+          where: { id: tenantId },
+          select: { llmConfidenceThreshold: true }
+        });
+        const confidenceThreshold = Number(tenantRow?.llmConfidenceThreshold ?? 0.72);
+        const guardrailFallbackMessage =
+          (await templateService.getTemplate(tenantId, "orchestrator_guardrail_handoff")) ||
+          "Quiero asegurarme de darte la mejor respuesta. Te paso con un asesor para confirmar los detalles y ayudarte a cerrar la compra.";
+        const tenantKnowledge = await tenantKnowledgeService.getWithRulePack(tenantId);
+        const baselineDecision = buildLeadTemplateBaselineDecision(job.data, message, interpretation);
+        let stockTableProductId: string | null = null;
+        const vidForCrew = effectiveVariantId?.trim();
+        if (vidForCrew) {
+          try {
+            stockTableProductId = await resolveProductIdForTenantVariant(tenantId, vidForCrew);
+          } catch {
+            stockTableProductId = null;
+          }
+        }
+        const shadowMode = job.data.executionMode === "shadow";
+        let crewPrimaryApplied = false;
+        const crewPrimary = await tryWasellerCrewPrimaryReplacement({
+          tenantId,
+          leadId,
+          conversationId: job.data.conversationId ?? undefined,
+          messageId,
+          correlationId: job.data.correlationId,
+          dedupeKey: crewDedupe,
+          phone,
+          incomingText: incomingRaw,
+          interpretation,
+          baselineDecision,
+          recentMessages: recentChronologicalForCrew,
+          tenantBusinessCategory: tenantKnowledge.profile.businessCategory,
+          stockTableProductId
+        }).catch(() => null);
+        if (crewPrimary) {
+          const gr = applyReplyGuardrails(
+            crewPrimary.decision.draftReply,
+            message,
+            incomingRaw,
+            crewPrimary.decision.confidence,
+            confidenceThreshold
+          );
+          if (!gr.blocked) {
+            message = gr.message;
+            crewPrimaryApplied = true;
+          }
+        }
+        if (shadowMode && !crewPrimaryApplied) {
+          const templateGuarded = applyReplyGuardrails(
+            message,
+            guardrailFallbackMessage,
+            incomingRaw,
+            baselineDecision.confidence,
+            confidenceThreshold
+          );
+          const shadowBaseline: LlmDecisionV1 = {
+            ...baselineDecision,
+            draftReply: templateGuarded.message,
+            handoffRequired: templateGuarded.blocked,
+            qualityFlags: Array.from(
+              new Set([...(baselineDecision.qualityFlags ?? []), ...templateGuarded.flags])
+            )
+          };
+          void logShadowExternalCompareIfConfigured({
+            tenantId,
+            leadId,
+            conversationId: job.data.conversationId ?? undefined,
+            messageId,
+            correlationId: job.data.correlationId,
+            dedupeKey: crewDedupe,
+            phone,
+            incomingText: incomingRaw,
+            interpretation,
+            baselineDecision: shadowBaseline,
+            recentMessages: recentChronologicalForCrew,
+            tenantBusinessCategory: tenantKnowledge.profile.businessCategory,
+            stockTableProductId
+          }).catch(() => undefined);
+        }
+      }
+    }
 
     const dedupeKey = buildStableDedupeKey(
       "outgoing",

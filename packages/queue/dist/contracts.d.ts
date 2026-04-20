@@ -72,6 +72,11 @@ export type LeadProcessingJobV1 = {
     activeOffer?: ActiveOfferV1 | null;
     interpretation?: ConversationInterpretationV1;
     llmDecision?: LlmDecisionV1;
+    /** Mensaje entrante persistido (ruta directa lead); trazas waseller-crew / shadow. */
+    messageId?: string;
+    conversationId?: string | null;
+    /** Política LLM del tenant en el momento del encolado (solo ruta directa lead). */
+    executionMode?: "shadow" | "active";
 };
 export type LlmOrchestrationJobV1 = {
     schemaVersion: JobSchemaVersion;

@@ -10,9 +10,46 @@ const bot_template_service_1 = require("./services/bot-template.service");
 const mercado_pago_payment_service_1 = require("./services/mercado-pago-payment.service");
 const conversation_policy_service_1 = require("./services/conversation-policy.service");
 const conversation_recent_messages_service_1 = require("./services/conversation-recent-messages.service");
+const shadow_compare_service_1 = require("./services/shadow-compare.service");
+const tenant_knowledge_service_1 = require("./services/tenant-knowledge.service");
 const leadMetrics = new queue_metrics_service_1.QueueMetricsService(src_1.QueueNames.leadProcessing);
 const templateService = new bot_template_service_1.BotTemplateService();
 const mercadoPagoPaymentService = new mercado_pago_payment_service_1.MercadoPagoPaymentService();
+const tenantKnowledgeService = new tenant_knowledge_service_1.TenantKnowledgeService();
+const defaultInterpretationForCrew = (job) => ({
+    intent: job.intent ?? "desconocida",
+    confidence: 0.72,
+    entities: {
+        productName: job.productName ?? null,
+        variantId: job.variantId ?? null
+    },
+    references: [],
+    missingFields: job.missingAxes ?? [],
+    nextAction: "reply_only",
+    source: "rules"
+});
+const buildLeadTemplateBaselineDecision = (job, draftReply, interpretation) => {
+    const leadStage = job.status === "listo_para_cobrar" || job.status === "vendido" ? "decision" : "consideration";
+    return {
+        intent: interpretation.intent ?? job.intent ?? "desconocida",
+        leadStage,
+        confidence: 0.78,
+        entities: {
+            productName: job.productName ?? null,
+            variantId: job.variantId ?? null
+        },
+        nextAction: interpretation.nextAction ?? "reply_only",
+        reason: "lead_worker_template_baseline",
+        requiresHuman: false,
+        recommendedAction: interpretation.nextAction ?? "reply_only",
+        draftReply,
+        handoffRequired: false,
+        qualityFlags: ["lead_template_baseline"],
+        source: "fallback",
+        provider: "rules",
+        model: "lead-template"
+    };
+};
 /** Postgres / drivers pueden devolver DECIMAL como string u objeto; evita NaN y salto a derivación sin MP. */
 const coerceUnitPrice = (value) => {
     if (value === null || value === undefined)
@@ -777,6 +814,94 @@ exports.leadWorker = new bullmq_1.Worker(src_1.QueueNames.leadProcessing, async 
         alternativeVariants: alternativeOfferVariants,
         expectedCustomerAction
     });
+    /** Ruta directa (message-processor → lead): sin `llmDecision` del orquestador; aquí aplicamos waseller-crew como en el orquestador. */
+    if (!job.data.llmDecision) {
+        const incomingRaw = String(job.data.incomingMessage ?? "").trim();
+        if (incomingRaw.length > 0) {
+            const interpretation = job.data.interpretation ?? defaultInterpretationForCrew(job.data);
+            const messageId = String(job.data.messageId ?? "").trim() || `lead:${leadId}:${job.data.correlationId}`;
+            const crewDedupe = String(job.data.dedupeKey ?? "").trim() ||
+                (0, src_1.buildStableDedupeKey)("lead-crew", tenantId, leadId, messageId);
+            let recentCrew = (await src_2.prisma.message.findMany({
+                where: { tenantId, phone },
+                orderBy: { createdAt: "desc" },
+                take: 8,
+                select: { direction: true, message: true }
+            }));
+            recentCrew = await (0, conversation_recent_messages_service_1.enrichRecentMessagesWithLastBotReply)(tenantId, phone, recentCrew);
+            const recentChronologicalForCrew = recentCrew
+                .slice()
+                .reverse()
+                .map((item) => ({ direction: item.direction, message: item.message }));
+            const tenantRow = await src_2.prisma.tenant.findUnique({
+                where: { id: tenantId },
+                select: { llmConfidenceThreshold: true }
+            });
+            const confidenceThreshold = Number(tenantRow?.llmConfidenceThreshold ?? 0.72);
+            const guardrailFallbackMessage = (await templateService.getTemplate(tenantId, "orchestrator_guardrail_handoff")) ||
+                "Quiero asegurarme de darte la mejor respuesta. Te paso con un asesor para confirmar los detalles y ayudarte a cerrar la compra.";
+            const tenantKnowledge = await tenantKnowledgeService.getWithRulePack(tenantId);
+            const baselineDecision = buildLeadTemplateBaselineDecision(job.data, message, interpretation);
+            let stockTableProductId = null;
+            const vidForCrew = effectiveVariantId?.trim();
+            if (vidForCrew) {
+                try {
+                    stockTableProductId = await (0, shadow_compare_service_1.resolveProductIdForTenantVariant)(tenantId, vidForCrew);
+                }
+                catch {
+                    stockTableProductId = null;
+                }
+            }
+            const shadowMode = job.data.executionMode === "shadow";
+            let crewPrimaryApplied = false;
+            const crewPrimary = await (0, shadow_compare_service_1.tryWasellerCrewPrimaryReplacement)({
+                tenantId,
+                leadId,
+                conversationId: job.data.conversationId ?? undefined,
+                messageId,
+                correlationId: job.data.correlationId,
+                dedupeKey: crewDedupe,
+                phone,
+                incomingText: incomingRaw,
+                interpretation,
+                baselineDecision,
+                recentMessages: recentChronologicalForCrew,
+                tenantBusinessCategory: tenantKnowledge.profile.businessCategory,
+                stockTableProductId
+            }).catch(() => null);
+            if (crewPrimary) {
+                const gr = (0, conversation_policy_service_1.applyReplyGuardrails)(crewPrimary.decision.draftReply, message, incomingRaw, crewPrimary.decision.confidence, confidenceThreshold);
+                if (!gr.blocked) {
+                    message = gr.message;
+                    crewPrimaryApplied = true;
+                }
+            }
+            if (shadowMode && !crewPrimaryApplied) {
+                const templateGuarded = (0, conversation_policy_service_1.applyReplyGuardrails)(message, guardrailFallbackMessage, incomingRaw, baselineDecision.confidence, confidenceThreshold);
+                const shadowBaseline = {
+                    ...baselineDecision,
+                    draftReply: templateGuarded.message,
+                    handoffRequired: templateGuarded.blocked,
+                    qualityFlags: Array.from(new Set([...(baselineDecision.qualityFlags ?? []), ...templateGuarded.flags]))
+                };
+                void (0, shadow_compare_service_1.logShadowExternalCompareIfConfigured)({
+                    tenantId,
+                    leadId,
+                    conversationId: job.data.conversationId ?? undefined,
+                    messageId,
+                    correlationId: job.data.correlationId,
+                    dedupeKey: crewDedupe,
+                    phone,
+                    incomingText: incomingRaw,
+                    interpretation,
+                    baselineDecision: shadowBaseline,
+                    recentMessages: recentChronologicalForCrew,
+                    tenantBusinessCategory: tenantKnowledge.profile.businessCategory,
+                    stockTableProductId
+                }).catch(() => undefined);
+            }
+        }
+    }
     const dedupeKey = (0, src_1.buildStableDedupeKey)("outgoing", tenantId, phone, leadId, job.data.correlationId, message);
     await src_1.outgoingQueue.add("send-message-v1", {
         schemaVersion: src_1.JOB_SCHEMA_VERSION,

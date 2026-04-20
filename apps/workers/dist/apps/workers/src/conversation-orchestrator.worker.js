@@ -24,33 +24,6 @@ const tenantKnowledgeService = new tenant_knowledge_service_1.TenantKnowledgeSer
 const lockService = new conversation_lock_service_1.ConversationLockService(src_2.redisConnection, Math.max(1000, Number(process.env.ORCHESTRATOR_LOCK_TTL_MS ?? 12000)), Math.max(200, Number(process.env.ORCHESTRATOR_LOCK_WAIT_MS ?? 8000)));
 const HIGH_CONFIDENCE_THRESHOLD = Number(process.env.LLM_POLICY_HIGH_CONFIDENCE ?? 0.8);
 const MEDIUM_CONFIDENCE_THRESHOLD = Number(process.env.LLM_POLICY_MEDIUM_CONFIDENCE ?? 0.6);
-const normalizeForPolicy = (value) => value.trim().replace(/\s+/g, " ");
-const applyGuardrails = (rawReply, guardrailFallbackMessage, incomingText, confidence, threshold) => {
-    const flags = [];
-    const cleaned = normalizeForPolicy(rawReply);
-    const normalizedIncoming = normalizeForPolicy(incomingText).toLowerCase();
-    const normalizedReply = cleaned.toLowerCase();
-    if (cleaned.length < 5)
-        flags.push("empty_reply");
-    if (/garantizado|100% seguro|promesa total/i.test(cleaned))
-        flags.push("overpromise");
-    if (normalizedReply && normalizedReply === normalizedIncoming)
-        flags.push("echo_reply");
-    const roleConfusionPattern = /^(si+|sii+|dale|ok|perfecto)?\s*[,.-]?\s*(enviame|enviame|mandame|pasame|quiero)\b/i;
-    const hasBusinessSignal = /(tenemos|precio|stock|reserva|asesor|podemos|te comparto|te paso|disponible)/i.test(cleaned);
-    if (roleConfusionPattern.test(cleaned) && !hasBusinessSignal)
-        flags.push("role_confusion");
-    if (confidence < threshold)
-        flags.push("low_confidence");
-    if (flags.length > 0) {
-        return {
-            message: guardrailFallbackMessage,
-            blocked: true,
-            flags
-        };
-    }
-    return { message: cleaned, blocked: false, flags };
-};
 const resolvePolicyBand = (confidence) => {
     if (confidence >= HIGH_CONFIDENCE_THRESHOLD)
         return "high";
@@ -198,7 +171,7 @@ exports.conversationOrchestratorWorker = new bullmq_1.Worker(src_2.QueueNames.ll
         const verifierFailed = verifierRequired && (!verification.passed || verification.score < minVerifierScore);
         const guardrailFallbackMessage = (await templateService.getTemplate(tenantId, "orchestrator_guardrail_handoff")) ||
             "Quiero asegurarme de darte la mejor respuesta. Te paso con un asesor para confirmar los detalles y ayudarte a cerrar la compra.";
-        const guardrails = applyGuardrails(llmDecision.draftReply, guardrailFallbackMessage, incomingText, llmDecision.confidence, confidenceThreshold);
+        const guardrails = (0, conversation_policy_service_1.applyReplyGuardrails)(llmDecision.draftReply, guardrailFallbackMessage, incomingText, llmDecision.confidence, confidenceThreshold);
         const policyBand = resolvePolicyBand(llmDecision.confidence);
         const shadowMode = (job.data.executionMode ?? "active") === "shadow";
         const requiresHuman = Boolean(llmDecision.requiresHuman) ||
@@ -400,6 +373,9 @@ exports.conversationOrchestratorWorker = new bullmq_1.Worker(src_2.QueueNames.ll
             tenantId,
             leadId,
             phone,
+            messageId,
+            conversationId: conversationId ?? null,
+            executionMode: shadowMode ? "shadow" : "active",
             status: lead.status,
             intent: effectiveDecision.intent,
             incomingMessage: incomingText,

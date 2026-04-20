@@ -121,3 +121,38 @@ export const resolvePolicyAction = (input: {
   }
   return { recommendedAction, executedAction: recommendedAction, flags };
 };
+
+const normalizeForPolicy = (value: string): string => value.trim().replace(/\s+/g, " ");
+
+/**
+ * Misma lógica que el orquestador antes de enviar: evita respuestas vacías, eco o role confusion.
+ */
+export const applyReplyGuardrails = (
+  rawReply: string,
+  guardrailFallbackMessage: string,
+  incomingText: string,
+  confidence: number,
+  threshold: number
+): { message: string; blocked: boolean; flags: string[] } => {
+  const flags: string[] = [];
+  const cleaned = normalizeForPolicy(rawReply);
+  const normalizedIncoming = normalizeForPolicy(incomingText).toLowerCase();
+  const normalizedReply = cleaned.toLowerCase();
+  if (cleaned.length < 5) flags.push("empty_reply");
+  if (/garantizado|100% seguro|promesa total/i.test(cleaned)) flags.push("overpromise");
+  if (normalizedReply && normalizedReply === normalizedIncoming) flags.push("echo_reply");
+  const roleConfusionPattern =
+    /^(si+|sii+|dale|ok|perfecto)?\s*[,.-]?\s*(enviame|enviame|mandame|pasame|quiero)\b/i;
+  const hasBusinessSignal =
+    /(tenemos|precio|stock|reserva|asesor|podemos|te comparto|te paso|disponible)/i.test(cleaned);
+  if (roleConfusionPattern.test(cleaned) && !hasBusinessSignal) flags.push("role_confusion");
+  if (confidence < threshold) flags.push("low_confidence");
+  if (flags.length > 0) {
+    return {
+      message: guardrailFallbackMessage,
+      blocked: true,
+      flags
+    };
+  }
+  return { message: cleaned, blocked: false, flags };
+};

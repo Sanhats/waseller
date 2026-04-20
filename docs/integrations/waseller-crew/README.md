@@ -35,7 +35,7 @@ Referencia en Waseller:
 | **uv** | Instalación: [documentación oficial de uv](https://docs.astral.sh/uv/getting-started/installation/). En Windows: instalador o `pip install uv`. |
 | **API de LLM** | `OPENAI_API_KEY` u otro proveedor compatible con lo que use CrewAI en tu proyecto. |
 | **Red** | URL pública HTTPS (Railway, Fly.io, Cloud Run, etc.) accesible **desde los workers** de Waseller. |
-| **Seguridad** | Recomendado: token compartido (`SHADOW_SERVICE_SECRET`) validado en header `Authorization: Bearer …` (Waseller hoy **no** envía el header; podés añadirlo después en el worker o usar un reverse proxy con auth). |
+| **Seguridad** | `SHADOW_COMPARE_SECRET` en el crew + `LLM_SHADOW_COMPARE_SECRET` o `SHADOW_COMPARE_SECRET` en workers Waseller; Bearer cuando el secret está definido. Ver `CONTRATO_V1_1.md`. |
 
 ---
 
@@ -61,6 +61,7 @@ Detalle completo v1.1: [`CONTRATO_V1_1.md`](./CONTRATO_V1_1.md). Resumen:
 | `correlationId`, `messageId` | `string` | Opcionales. |
 | `conversationId` | `string` | Opcional (si el job trae conversación). |
 | `recentMessages` | `{ direction, message }[]` | Opcional; hasta **8** mensajes, orden cronológico (más antiguo primero). |
+| `stockTable`, `businessProfileSlug`, `inventoryNarrowingNote` | ver `CONTRATO_V1_1.md` §1 | Opcionales v1.1; el crew usa `extra="ignore"` para campos desconocidos. |
 
 #### `ConversationInterpretationV1` (resumen)
 
@@ -145,8 +146,9 @@ Waseller **no** exige `2xx` para parsear: lee el body igualmente. Igual conviene
 ## Qué hace Waseller con tu respuesta
 
 1. Si el JSON es inválido → traza `shadow_compare` con `error` y/o `issues`.  
-2. Si es válido → calcula `diff` (`draftReplyEqual`, `intentMatch`, `nextActionMatch`, `recommendedActionMatch`, `confidenceDelta`) comparando `baselineDecision` con `candidateDecision`.  
-3. **Importante:** en modo shadow, el **cliente no recibe** el `draftReply` del LLM de Waseller como mensaje final según la lógica actual del `lead.worker`; tu `candidateDecision` es **solo telemetría** hasta que integreis otro flujo.
+2. Si es válido → calcula `diff` (`draftReplyEqual`, `intentMatch`, …) comparando `baselineDecision` con `candidateDecision` (cuando corre el flujo de shadow-compare).  
+3. **`WASELLER_CREW_PRIMARY=true`:** una llamada al mismo endpoint puede **reemplazar** la decisión interna antes del verificador; traza `crew_primary`. Ver `CONTRATO_V1_1.md`.  
+4. **Shadow (rollout):** si el mensaje va por **lead worker** con variante resuelta, el orquestador **no** corre → **no** hay POST al crew ni `llm_traces` en ese turno (límite actual del monorepo Waseller, no del contrato HTTP).
 
 ---
 
@@ -199,8 +201,11 @@ Probar con `curl` usando un JSON de ejemplo guardado en `fixtures/request.json`.
 |----------|-------------|-------------|
 | `OPENAI_API_KEY` | Sí (si usás OpenAI con Crew) | Clave del proveedor LLM. |
 | `PORT` | No | Puerto del servidor (p. ej. 8080). Plataformas suelen inyectar `PORT`. |
-| `SHADOW_SERVICE_SECRET` | Recomendada | Si implementás auth, validá `Authorization: Bearer <token>`. |
+| `SHADOW_COMPARE_SECRET` | Recomendada en prod | Mismo valor que workers; ver `CONTRATO_V1_1.md`. |
+| `SHADOW_COMPARE_REQUIRE_AUTH` | No | `true` en prod si el endpoint es público. |
 | `LOG_LEVEL` | No | `INFO`, `DEBUG`, etc. |
+
+Observabilidad y detalle de respuesta (enriquecimiento de `draftReply` vacío, logs): ver **`docs/CONTRATO_HTTP_V1_1.md`** en el repo **waseller-crew** (§4.2 y resto del contrato).
 
 En **Waseller (workers)** ya existen:
 
@@ -237,8 +242,6 @@ No intentes llamar a Prisma ni a Redis desde este servicio en la fase shadow: el
 
 ---
 
-## Extensión futura (opcional)
+## Extensión futura (Waseller monorepo)
 
-- Que Waseller envíe `Authorization` con un secret (cambio pequeño en `shadow-compare.service.ts`).  
-- Añadir al body `phone`, `correlationId`, `messageId` para correlación en vuestros logs (requiere PR en Waseller).  
-- Segunda fase: sustituir el pipeline interno por la respuesta del crew **solo** tras verificación humana o métricas — eso ya es diseño de producto, no solo shadow.
+- Encolar **orquestador** (y por tanto POST al crew / `llm_traces`) también cuando **`shouldHandleInLeadWorker`** es true por variante resuelta, si el producto quiere crew o telemetría en ese camino. Hoy es decisión de routing en `apps/workers/src/message-processor.worker.ts`.
