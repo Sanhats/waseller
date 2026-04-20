@@ -1,9 +1,11 @@
 # Contrato HTTP v1.1 — shadow compare (coordinación Waseller ↔ waseller-crew)
 
-**Estado:** cuerpo opcional + Bearer **implementados en Waseller** (`shadow-compare.service.ts` + orquestador). **waseller-crew** debe aceptar los campos nuevos y, si usan auth, validar `SHADOW_COMPARE_SECRET` + `SHADOW_COMPARE_REQUIRE_AUTH` como acordaron.  
+**Estado:** cuerpo opcional + Bearer **implementados en Waseller** (`shadow-compare.service.ts` + orquestador). **waseller-crew** confirmó que **acepta** `stockTable` (hasta 500 filas, modelo flexible alineado a filas tipo `GET /products`) y `businessProfileSlug` con el patrón seguro documentado abajo; valida `Authorization: Bearer` contra `SHADOW_COMPARE_SECRET` cuando `SHADOW_COMPARE_REQUIRE_AUTH=true` (recomendado en prod; mismo valor que `LLM_SHADOW_COMPARE_SECRET` en workers).  
 **Compatibilidad:** `schemaVersion` y `kind` **sin cambio** respecto a v1; los campos nuevos son **opcionales**. Los clientes que solo implementaron v1 siguen siendo válidos.
 
-**Resumen en una frase:** el siguiente paso global sigue siendo **desplegar waseller-crew con URL estable y validar en staging**; Waseller ya envía **body extendido + Bearer opcional**; el crew debe **aceptar/validar** según `CONTRATO_V1_1.md` y sus env.
+**Documentación cruzada:** en el repo **waseller-crew** el archivo `docs/CONTRATO_HTTP_V1_1.md` describe el mismo contrato y **remite a este documento** como referencia de lo que serializa Waseller (main). Aquí se mantiene la descripción orientada al monorepo Waseller.
+
+**Resumen operativo:** Waseller envía **body extendido + Bearer opcional**; URL del crew: `POST /shadow-compare` o **`POST /v1/shadow-compare`** (mismo contrato). El crew no impone un timeout HTTP más agresivo que el de la plataforma; el volumen de 500 filas afecta sobre todo el tiempo del LLM (CrewAI). Si los workers ven **abortos por timeout**, subir **`LLM_SHADOW_COMPARE_TIMEOUT_MS`** en el servicio de workers (Railway, etc.).
 
 ---
 
@@ -32,6 +34,7 @@ Todos **opcionales**. Tipos alineados a uso en workers / Prisma (strings UUID do
 | Variable | Obligatoriedad | Descripción |
 |----------|----------------|-------------|
 | `LLM_SHADOW_COMPARE_SECRET` | Opcional | Secreto compartido. Si está **definido y no vacío**, el worker envía header de auth (ver abajo). Si está vacío / ausente, **no** envía el header (compatible con entornos sin secret). |
+| `LLM_SHADOW_COMPARE_TIMEOUT_MS` | Opcional | Timeout del `fetch` en workers (default **8000** ms, máximo **120000**). Con `stockTable` grande o Crew lento, conviene aumentarlo para evitar cortes antes de la respuesta HTTP. |
 
 **Header (cuando el secret está configurado):**
 
@@ -146,8 +149,8 @@ Mismo núcleo que arriba **más** campos opcionales (ejemplo ilustrativo):
 | Lado | Tarea |
 |------|--------|
 | **Waseller** | Hecho: opcionales + Bearer en `logShadowExternalCompareIfConfigured`; orquestador pasa `phone`, `recentMessages` y `tenantBusinessCategory` (→ `businessProfileSlug` cuando aplica); el servicio adjunta `stockTable` si hay variantes en DB (≤500); `infra/env/.env.example` documenta `LLM_SHADOW_COMPARE_SECRET`. |
-| **waseller-crew** | Extender `ShadowCompareRequest` (Pydantic); README; fixture `request.v1_1.example.json`; middleware FastAPI para Bearer cuando `SHADOW_COMPARE_REQUIRE_AUTH` / `SHADOW_COMPARE_SECRET`. |
-| **Ops** | Mismo valor en `LLM_SHADOW_COMPARE_SECRET` (workers) y `SHADOW_COMPARE_SECRET` (crew); prod con `SHADOW_COMPARE_REQUIRE_AUTH=true`. |
+| **waseller-crew** | **Hecho (confirmado por crew):** acepta opcionales v1.1; Bearer vs `SHADOW_COMPARE_SECRET` con `SHADOW_COMPARE_REQUIRE_AUTH`; ver su `docs/CONTRATO_HTTP_V1_1.md` y fixtures. |
+| **Ops** | Mismo valor en `LLM_SHADOW_COMPARE_SECRET` (workers) y `SHADOW_COMPARE_SECRET` (crew); prod con `SHADOW_COMPARE_REQUIRE_AUTH=true`. Tráfico **2xx** tras deploy: verificar con smoke en shadow + logs Railway (workers y crew) o métricas del balanceador. |
 
 ---
 
