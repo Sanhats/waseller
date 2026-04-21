@@ -1,5 +1,5 @@
-@import “tailwindcss”;
-@config “../../tailwind.config.js”;
+@import "tailwindcss";
+@config "../../tailwind.config.js";
 
 /* -------------------------------------------------------------------------- */
 /* Design tokens — Waseller UI (brand + growth + estados; dark mode opcional) */
@@ -59,7 +59,7 @@
 
     /* Tipografía */
     --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
-      “Segoe UI”, sans-serif;
+      "Segoe UI", sans-serif;
     --text-title: 1.5rem;
     --text-title--line-height: 1.3;
     --text-title--weight: 700;
@@ -115,7 +115,7 @@
     --mobile-nav-height: 62px;
   }
 
-  [data-theme=”dark”] {
+  [data-theme="dark"] {
     --color-bg: #0f172a;
     --color-surface: #1e293b;
     --color-border: #334155;
