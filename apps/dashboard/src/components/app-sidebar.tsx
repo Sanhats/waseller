@@ -4,6 +4,7 @@ import Image from "next/image";
 import { Activity, Boxes, Building2, Home, MessagesSquare } from "lucide-react";
 import { ComponentType } from "react";
 import { cn } from "@/lib/cn";
+import { SidebarWhatsappControl } from "@/components/sidebar-whatsapp-control";
 
 type SectionKey = "home" | "leads" | "conversations" | "ops" | "stock";
 
@@ -71,7 +72,7 @@ export function AppSidebar({
     return (
       <aside
         className={cn(
-          "flex w-full shrink-0 flex-col gap-2.5 border-b border-primary-active px-2.5 py-2.5",
+          "flex min-h-0 w-full shrink-0 flex-col gap-2.5 border-b border-primary-active px-2.5 py-2.5",
           shell,
         )}
       >
@@ -79,7 +80,7 @@ export function AppSidebar({
           <BrandMark compact />
         </div>
 
-        <nav className="flex gap-1.5 overflow-x-auto pb-0.5">
+        <nav className="flex min-h-0 flex-1 gap-1.5 overflow-x-auto pb-0.5">
           {navItems.map((item) => {
             const isActive = item.key === active;
             const Icon = item.icon;
@@ -115,6 +116,7 @@ export function AppSidebar({
             );
           })}
         </nav>
+        <SidebarWhatsappControl compact />
       </aside>
     );
   }
@@ -122,15 +124,15 @@ export function AppSidebar({
   return (
     <aside
       className={cn(
-        "flex w-[260px] shrink-0 flex-col gap-6 border-r border-primary-active py-5 pl-3 pr-3",
+        "flex min-h-0 w-[260px] shrink-0 flex-col gap-6 self-stretch border-r border-primary-active py-5 pl-3 pr-3",
         shell,
       )}
     >
-      <div className="flex w-full min-w-0 items-center justify-center px-2">
+      <div className="flex w-full min-w-0 shrink-0 items-center justify-center px-2">
         <BrandMark compact={false} />
       </div>
 
-      <nav className="flex flex-col gap-1">
+      <nav className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
         {navItems.map((item) => {
           const isActive = item.key === active;
           const Icon = item.icon;
@@ -166,6 +168,7 @@ export function AppSidebar({
           );
         })}
       </nav>
+      <SidebarWhatsappControl />
     </aside>
   );
 }

@@ -115,6 +115,35 @@ let OnboardingService = class OnboardingService {
         }
         return this.getWhatsappState(tenantId);
     }
+    async disconnectWhatsapp(tenantId) {
+        const tenantWhatsappNumber = this.normalizeWhatsappNumber(await this.getTenantWhatsappNumber(tenantId)) ?? null;
+        if (!tenantWhatsappNumber) {
+            throw new common_1.BadRequestException("No hay número de WhatsApp configurado para este negocio.");
+        }
+        if (!this.whatsappServiceUrl) {
+            throw new common_1.BadGatewayException("Falta WHATSAPP_SERVICE_URL (o WHATSAPP_API_URL): la URL del servicio WhatsApp no está configurada.");
+        }
+        try {
+            const response = await fetch(`${this.whatsappServiceUrl}/sessions/disconnect`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    tenantId,
+                    whatsappNumber: tenantWhatsappNumber
+                })
+            });
+            if (!response.ok) {
+                const detail = await response.text();
+                throw new common_1.BadGatewayException(detail?.trim() || "El servicio de WhatsApp devolvió un error al desconectar.");
+            }
+        }
+        catch (error) {
+            if (error instanceof common_1.BadGatewayException || error instanceof common_1.BadRequestException)
+                throw error;
+            throw new common_1.BadGatewayException("No se pudo contactar al servicio de WhatsApp para desconectar.");
+        }
+        return this.getWhatsappState(tenantId);
+    }
     async getWhatsappQrPng(tenantId) {
         const state = await this.getWhatsappState(tenantId);
         if (!state.tenantWhatsappNumber)

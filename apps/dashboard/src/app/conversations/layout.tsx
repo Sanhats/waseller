@@ -19,7 +19,7 @@ export default function ConversationsLayout({ children }: { children: React.Reac
     <main
       className={cn(
         "flex min-h-screen bg-canvas text-[var(--color-text)]",
-        isMobile ? "flex-col" : "flex-row"
+        isMobile ? "flex-col" : "flex-row items-stretch"
       )}
     >
       <AppSidebar active="conversations" compact={isMobile} />

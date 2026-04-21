@@ -33,6 +33,10 @@ let OnboardingController = class OnboardingController {
         (0, require_role_1.requireRole)(req.auth?.role, ["admin", "vendedor"]);
         return this.onboardingService.connectWhatsapp(req.tenantId, body?.whatsappNumber);
     }
+    async whatsappDisconnect(req) {
+        (0, require_role_1.requireRole)(req.auth?.role, ["admin", "vendedor"]);
+        return this.onboardingService.disconnectWhatsapp(req.tenantId);
+    }
     async whatsappQr(req, res) {
         (0, require_role_1.requireRole)(req.auth?.role, ["admin", "vendedor", "viewer"]);
         const png = await this.onboardingService.getWhatsappQrPng(req.tenantId);
@@ -68,6 +72,13 @@ __decorate([
     __metadata("design:paramtypes", [Object, Object]),
     __metadata("design:returntype", Promise)
 ], OnboardingController.prototype, "whatsappConnect", null);
+__decorate([
+    (0, common_1.Post)("whatsapp/disconnect"),
+    __param(0, (0, common_1.Req)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", Promise)
+], OnboardingController.prototype, "whatsappDisconnect", null);
 __decorate([
     (0, common_1.Get)("whatsapp/qr.png"),
     __param(0, (0, common_1.Req)()),

@@ -65,6 +65,8 @@ function getResolvedWaAuthDir() {
 }
 class BaileysSessionManager {
     sessions = new Map();
+    /** Evita el auto-reconnect de Baileys tras un cierre voluntario (logout manual desde API). */
+    skipReconnectKeys = new Set();
     logger = (0, pino_1.default)({ level: process.env.LOG_LEVEL ?? "info" });
     maxRetries = Number(process.env.WA_MAX_RETRIES ?? 10);
     authRoot = getResolvedWaAuthDir();
@@ -122,6 +124,13 @@ class BaileysSessionManager {
                 record.qr = undefined;
             }
             if (update.connection === "close") {
+                if (this.skipReconnectKeys.has(key)) {
+                    record.socket = undefined;
+                    record.status = "disconnected";
+                    this.sessions.delete(key);
+                    this.skipReconnectKeys.delete(key);
+                    return;
+                }
                 const shouldReconnect = update.lastDisconnect?.error?.output
                     ?.statusCode !==
                     baileys.DisconnectReason.loggedOut;
@@ -206,6 +215,46 @@ class BaileysSessionManager {
             }
         });
         return this.toSnapshot(record);
+    }
+    /**
+     * Cierra la sesión de WhatsApp (logout si está disponible), borra credenciales locales
+     * y deja de recibir mensajes hasta un nuevo `connect`.
+     */
+    async disconnect(input) {
+        const key = buildSessionKey(input.tenantId, input.whatsappNumber);
+        const sessionDir = node_path_1.default.join(this.authRoot, key.replace(/[:/\\]/g, "_"));
+        this.skipReconnectKeys.add(key);
+        const record = this.sessions.get(key);
+        if (record?.socket) {
+            try {
+                const sock = record.socket;
+                if (typeof sock.logout === "function") {
+                    await sock.logout();
+                }
+                else if (typeof sock.end === "function") {
+                    sock.end(new Error("user_disconnect"));
+                }
+            }
+            catch (error) {
+                this.logger.warn({ key, error }, "WhatsApp disconnect: socket close failed");
+            }
+            record.socket = undefined;
+        }
+        this.sessions.delete(key);
+        try {
+            node_fs_1.default.rmSync(sessionDir, { recursive: true, force: true });
+        }
+        catch {
+            // Ignorar si el directorio no existía.
+        }
+        setTimeout(() => this.skipReconnectKeys.delete(key), 3000);
+        return {
+            key,
+            tenantId: input.tenantId,
+            whatsappNumber: input.whatsappNumber,
+            status: "disconnected",
+            retries: 0
+        };
     }
     async getProfilePicture(tenantId, phone) {
         const tenantSessions = Array.from(this.sessions.values()).filter((s) => s.tenantId === tenantId);

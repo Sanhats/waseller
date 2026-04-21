@@ -24,6 +24,15 @@ app.post("/sessions/connect", async (req, res) => {
     const snapshot = await manager.connect({ tenantId, whatsappNumber });
     res.json(snapshot);
 });
+app.post("/sessions/disconnect", async (req, res) => {
+    const { tenantId, whatsappNumber } = req.body;
+    if (!tenantId || !whatsappNumber) {
+        res.status(400).json({ message: "tenantId and whatsappNumber are required" });
+        return;
+    }
+    const snapshot = await manager.disconnect({ tenantId, whatsappNumber });
+    res.json(snapshot);
+});
 app.get("/sessions/qr.png", async (req, res) => {
     const tenantId = req.query.tenantId;
     const whatsappNumber = req.query.whatsappNumber;

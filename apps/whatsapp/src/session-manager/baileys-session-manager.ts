@@ -105,6 +105,8 @@ export function getResolvedWaAuthDir(): string {
 
 export class BaileysSessionManager {
   private readonly sessions = new Map<string, SessionRecord>();
+  /** Evita el auto-reconnect de Baileys tras un cierre voluntario (logout manual desde API). */
+  private readonly skipReconnectKeys = new Set<string>();
   private readonly logger = pino({ level: process.env.LOG_LEVEL ?? "info" });
   private readonly maxRetries = Number(process.env.WA_MAX_RETRIES ?? 10);
   private readonly authRoot = getResolvedWaAuthDir();
@@ -175,6 +177,14 @@ export class BaileysSessionManager {
       }
 
       if (update.connection === "close") {
+        if (this.skipReconnectKeys.has(key)) {
+          record.socket = undefined;
+          record.status = "disconnected";
+          this.sessions.delete(key);
+          this.skipReconnectKeys.delete(key);
+          return;
+        }
+
         const shouldReconnect =
           (update.lastDisconnect?.error as { output?: { statusCode?: number } } | undefined)?.output
             ?.statusCode !==
@@ -277,6 +287,51 @@ export class BaileysSessionManager {
     });
 
     return this.toSnapshot(record);
+  }
+
+  /**
+   * Cierra la sesión de WhatsApp (logout si está disponible), borra credenciales locales
+   * y deja de recibir mensajes hasta un nuevo `connect`.
+   */
+  async disconnect(input: SessionInput): Promise<SessionSnapshot> {
+    const key = buildSessionKey(input.tenantId, input.whatsappNumber);
+    const sessionDir = path.join(this.authRoot, key.replace(/[:/\\]/g, "_"));
+    this.skipReconnectKeys.add(key);
+
+    const record = this.sessions.get(key);
+    if (record?.socket) {
+      try {
+        const sock = record.socket as {
+          logout?: () => Promise<void>;
+          end?: (reason?: unknown) => void;
+        };
+        if (typeof sock.logout === "function") {
+          await sock.logout();
+        } else if (typeof sock.end === "function") {
+          sock.end(new Error("user_disconnect"));
+        }
+      } catch (error) {
+        this.logger.warn({ key, error }, "WhatsApp disconnect: socket close failed");
+      }
+      record.socket = undefined;
+    }
+
+    this.sessions.delete(key);
+    try {
+      fs.rmSync(sessionDir, { recursive: true, force: true });
+    } catch {
+      // Ignorar si el directorio no existía.
+    }
+
+    setTimeout(() => this.skipReconnectKeys.delete(key), 3000);
+
+    return {
+      key,
+      tenantId: input.tenantId,
+      whatsappNumber: input.whatsappNumber,
+      status: "disconnected",
+      retries: 0
+    };
   }
 
   async getProfilePicture(tenantId: string, phone: string): Promise<{ url: string | null }> {

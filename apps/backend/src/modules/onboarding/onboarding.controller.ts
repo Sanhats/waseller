@@ -79,6 +79,21 @@ export class OnboardingController {
     return this.onboardingService.connectWhatsapp(req.tenantId, body?.whatsappNumber);
   }
 
+  @Post("whatsapp/disconnect")
+  async whatsappDisconnect(
+    @Req() req: Request & { tenantId: string; auth?: AuthTokenPayload }
+  ): Promise<{
+    tenantWhatsappNumber: string | null;
+    sessionStatus: "connecting" | "connected" | "disconnected" | "qr_required" | "not_connected";
+    qrAvailable: boolean;
+    lastConnectedAt?: string;
+    retries?: number;
+    lastError?: string;
+  }> {
+    requireRole(req.auth?.role, ["admin", "vendedor"]);
+    return this.onboardingService.disconnectWhatsapp(req.tenantId);
+  }
+
   @Get("whatsapp/qr.png")
   async whatsappQr(
     @Req() req: Request & { tenantId: string; auth?: AuthTokenPayload },

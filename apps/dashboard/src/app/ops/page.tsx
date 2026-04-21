@@ -20,7 +20,7 @@ export default function OpsPage() {
       className={cn(
         "flex min-h-0 bg-canvas text-[var(--color-text)]",
         "h-[100dvh] max-h-[100dvh] flex-col",
-        "lg:flex-row"
+        "lg:flex-row lg:items-stretch"
       )}
     >
       <AppSidebar active="ops" compact={isMobile} />

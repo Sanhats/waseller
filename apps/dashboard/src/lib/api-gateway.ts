@@ -317,6 +317,10 @@ export async function dispatchApi(
       const body = (await req.json().catch(() => ({}))) as { whatsappNumber?: string };
       return NextResponse.json(await s.onboarding.connectWhatsapp(tenantId, body?.whatsappNumber));
     }
+    if (path === "/onboarding/whatsapp/disconnect" && method === "POST") {
+      requireRole(auth?.role, ["admin", "vendedor"]);
+      return NextResponse.json(await s.onboarding.disconnectWhatsapp(tenantId));
+    }
     if (path === "/onboarding/whatsapp/qr.png" && method === "GET") {
       requireRole(auth?.role, ["admin", "vendedor", "viewer"]);
       const png = await s.onboarding.getWhatsappQrPng(tenantId);

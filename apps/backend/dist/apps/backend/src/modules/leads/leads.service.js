@@ -38,7 +38,10 @@ let LeadsService = class LeadsService {
             }),
             includeOrphanConversations
                 ? src_1.prisma.lead.findMany({
-                    where: { tenantId },
+                    where: {
+                        tenantId,
+                        ...(includeHiddenFromInbox ? {} : { inboxHiddenAt: null })
+                    },
                     select: { phone: true }
                 })
                 : Promise.resolve([])

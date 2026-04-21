@@ -376,25 +376,31 @@ let ConversationsService = class ConversationsService {
         });
         if (!lead)
             return [];
-        const rows = (await src_1.prisma.$queryRaw `
-      select
-        id,
-        status::text as status,
-        title,
-        amount,
-        currency,
-        checkout_url as "checkoutUrl",
-        sandbox_checkout_url as "sandboxCheckoutUrl",
-        payment_link_sent_at as "paymentLinkSentAt",
-        metadata,
-        created_at as "createdAt",
-        updated_at as "updatedAt"
-      from public.payment_attempts
-      where tenant_id::text = ${tenantId}
-        and lead_id::text = ${lead.id}
-      order by created_at desc
-      limit 10
-    `);
+        let rows = [];
+        try {
+            rows = (await src_1.prisma.$queryRaw `
+        select
+          id,
+          status::text as status,
+          title,
+          amount,
+          currency,
+          checkout_url as "checkoutUrl",
+          sandbox_checkout_url as "sandboxCheckoutUrl",
+          payment_link_sent_at as "paymentLinkSentAt",
+          metadata,
+          created_at as "createdAt",
+          updated_at as "updatedAt"
+        from public.payment_attempts
+        where tenant_id::text = ${tenantId}
+          and lead_id::text = ${lead.id}
+        order by created_at desc
+        limit 10
+      `);
+        }
+        catch {
+            rows = [];
+        }
         const mapped = rows.map((row) => {
             const metadata = typeof row.metadata === "object" && row.metadata !== null ? row.metadata : {};
             const variantAttributes = typeof metadata.variantAttributes === "object" && metadata.variantAttributes !== null
@@ -532,7 +538,7 @@ let ConversationsService = class ConversationsService {
         const lead = await src_1.prisma.lead.findFirst({
             where: { tenantId, phone: resolvedPhone },
             orderBy: { updatedAt: "desc" },
-            select: { id: true }
+            select: { id: true, score: true }
         });
         if (!lead)
             throw new Error("Lead no encontrado para esta conversación.");
@@ -591,6 +597,13 @@ let ConversationsService = class ConversationsService {
         updated_at = now()
       where id::text = ${attempt.id}
     `;
+        await src_1.prisma.lead.update({
+            where: { id: lead.id },
+            data: {
+                status: "listo_para_cobrar",
+                score: Math.max(120, lead.score ?? 0)
+            }
+        });
         return { queued: true, attemptId: attempt.id };
     }
     async handoffAssistive(tenantId, phone, reason) {
