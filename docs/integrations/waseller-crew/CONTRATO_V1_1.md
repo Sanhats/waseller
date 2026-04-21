@@ -171,7 +171,7 @@ Mismo núcleo que arriba **más** campos opcionales (ejemplo ilustrativo):
 | Lado | Tarea |
 |------|--------|
 | **Waseller** | Hecho: opcionales + Bearer en `logShadowExternalCompareIfConfigured`; orquestador enriquece `recentMessages` con último bot vía `bot_response_events` si falta el `outgoing` en `messages` (carrera con sender); acota `stockTable` al producto en contexto; `inventoryNarrowingNote` si una sola fila; traza `reply` con `conversationDiagnostics.baselineEchoesLastOutgoing`; lead worker ajusta seguimientos en shadow; `infra/env/.env.example` documenta `LLM_SHADOW_COMPARE_SECRET`. |
-| **waseller-crew** | **Hecho:** ver **§7** (paridad detallada). Repo: `docs/CONTRATO_HTTP_V1_1.md` (incl. observabilidad §4.2), `fixtures/request.v1_1.example.json`, tests API. |
+| **waseller-crew** | **Hecho:** ver **§7** (paridad detallada). Repo: `docs/CONTRATO_HTTP_V1_1.md` (incl. observabilidad §4.2), `fixtures/request.v1_1.example.json`, tests API. **Mejora continua de conversación:** ver **§8** (prompt / anti-eco / volumen / catálogo). |
 | **Ops** | Mismo valor en `LLM_SHADOW_COMPARE_SECRET` (workers) y `SHADOW_COMPARE_SECRET` (crew); prod con `SHADOW_COMPARE_REQUIRE_AUTH=true`. Tráfico **2xx** tras deploy: verificar con smoke en shadow + logs Railway (workers y crew) o métricas del balanceador. |
 
 ---
@@ -200,3 +200,21 @@ Lo siguiente está **implementado en el repo waseller-crew** (no en este monorep
 ### Waseller (este monorepo) — rutas que POSTean al crew
 
 Con `LLM_SHADOW_COMPARE_URL` definida: **`conversation-orchestrator.worker`** (ruta orquestada) y **`lead.worker`** en la ruta directa sin `llmDecision` llaman a `logShadowExternalCompareIfConfigured` / `tryWasellerCrewPrimaryReplacement` y persisten trazas en `llm_traces` cuando corresponde.
+
+---
+
+## 8. waseller-crew — cómo subir aún más la calidad de leads (recomendaciones)
+
+Waseller ya envía `recentMessages`, `stockTable`, `inventoryNarrowingNote` y baseline recortado; el **crew** puede mejorar respuestas sin cambiar el contrato HTTP, ajustando **prompt del agente**, **post-validación** o **segunda pasada** ligera.
+
+| Tema | Qué hacer en waseller-crew |
+|------|-----------------------------|
+| **Anti-eco** | Instruir al LLM: si el **último** `recentMessages[].message` con `direction: "outgoing"` es muy parecido al `baselineDecision.draftReply` y el `incomingText` pide algo distinto (color, cantidad, otro artículo, catálogo), **no** repetir el mismo cierre; responder a la pregunta literal o pedir un dato mínimo. Opcional: heurística en código (similitud texto) antes de devolver `candidateDecision`. |
+| **Seguimiento de variante** | Si `incomingText` menciona color/talle/“otra variante” y `stockTable` tiene **varias** filas, **listar** opciones reales desde la tabla (atributos + stock). Si hay **una** fila y `inventoryNarrowingNote` dice alcance único, decir con claridad que en el inventario recibido no hay otra combinación (sin inventar). |
+| **Volumen / cantidad** | Parsear números en `incomingText`; si la cantidad pedida **supera** `availableStock` de la variante (o la suma del producto en `stockTable` si el crew agrega esa regla), reconocer el faltante, ofrecer reservar lo disponible y **derivación a humano** o “consultar reposición” según tono del `businessProfileSlug`. |
+| **Catálogo amplio** | Si el cliente pide “otro producto”, “qué más hay” o “el catálogo” y el payload solo trae **un** producto en `stockTable`, el agente debe decir que **con el alcance de este turno** solo ve ese bloque y pedir **criterio de búsqueda** (palabras clave, uso), en lugar de inventar listados. |
+| **`inventoryNarrowingNote`** | Darle **prioridad** sobre suposiciones del baseline cuando el mensaje del cliente amplía el alcance (multi-producto RAG vs producto único). |
+| **Modo primary** | Reforzar en system prompt que `draftReply` es lo que **ve el cliente** en WhatsApp: tono comercial breve, español rioplatense si el slug/rubro lo indica, y **CTA** claro (reservar, medidas, derivación). |
+| **Observabilidad** | Log estructurado cuando se detecte “baseline ignorado por mismatch con incoming” o “eco corregido” para afinar prompts con datos reales. |
+
+Copiar esta tabla al backlog de **waseller-crew** (`docs/CONTRATO_HTTP_V1_1.md` o README del agente) mantiene alineación con lo que Waseller ya optimiza en `lead.worker` / orquestador.
