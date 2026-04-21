@@ -1,9 +1,6 @@
 @import “tailwindcss”;
 @config “../../tailwind.config.ts”;
 
-/* Explicit source paths for Tailwind v4 — required for monorepo Vercel builds */
-@source “../../src/**/*.{js,ts,jsx,tsx,mdx}”;
-
 /* -------------------------------------------------------------------------- */
 /* Design tokens — Waseller UI (brand + growth + estados; dark mode opcional) */
 /* -------------------------------------------------------------------------- */
