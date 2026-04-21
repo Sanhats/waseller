@@ -1,7 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(cat postcss.config.js)",
+      "Bash(cat postcss.config.mjs)",
+      "Bash(cat postcss.config.ts)"
     ]
   }
 }

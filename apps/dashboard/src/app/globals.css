@@ -1,6 +1,9 @@
 @import “tailwindcss”;
 @config “../../tailwind.config.ts”;
 
+/* Explicit source paths for Tailwind v4 — required for monorepo Vercel builds */
+@source “../../src/**/*.{js,ts,jsx,tsx,mdx}”;
+
 /* -------------------------------------------------------------------------- */
 /* Design tokens — Waseller UI (brand + growth + estados; dark mode opcional) */
 /* -------------------------------------------------------------------------- */
@@ -182,53 +185,23 @@
   ::-webkit-scrollbar-thumb:hover {
     background: rgb(15 23 42 / 0.22);
   }
-}
 
-/* -------------------------------------------------------------------------- */
-/* Keyframes                                                                   */
-/* -------------------------------------------------------------------------- */
-
-@keyframes fade-in-up {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
+  /* Keyframes — inside @layer base so @tailwindcss/postcss includes them */
+  @keyframes fade-in-up {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
   }
-  to {
-    opacity: 1;
-    transform: translateY(0);
+  @keyframes scale-in {
+    from { opacity: 0; transform: scale(0.95); }
+    to   { opacity: 1; transform: scale(1); }
   }
-}
-
-@keyframes scale-in {
-  from {
-    opacity: 0;
-    transform: scale(0.95);
+  @keyframes slide-in-right {
+    from { opacity: 0; transform: translateX(-8px); }
+    to   { opacity: 1; transform: translateX(0); }
   }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-@keyframes slide-in-right {
-  from {
-    opacity: 0;
-    transform: translateX(-8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-@keyframes pulse-dot {
-  0%, 100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.5;
-    transform: scale(0.75);
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50%       { opacity: 0.5; transform: scale(0.75); }
   }
 }
 
