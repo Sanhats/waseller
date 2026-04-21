@@ -290,12 +290,14 @@ export class BaileysSessionManager {
   }
 
   /**
-   * Cierra la sesión de WhatsApp (logout si está disponible), borra credenciales locales
-   * y deja de recibir mensajes hasta un nuevo `connect`.
+   * Desconecta el socket activo.
+   * - Por defecto: **soft disconnect** (NO hace logout y NO borra credenciales), para reconectar sin QR.
+   * - Con `logout: true`: cierra sesión y borra credenciales locales (reconexión requerirá QR).
    */
-  async disconnect(input: SessionInput): Promise<SessionSnapshot> {
+  async disconnect(input: SessionInput, opts?: { logout?: boolean }): Promise<SessionSnapshot> {
     const key = buildSessionKey(input.tenantId, input.whatsappNumber);
     const sessionDir = path.join(this.authRoot, key.replace(/[:/\\]/g, "_"));
+    const doLogout = Boolean(opts?.logout);
     this.skipReconnectKeys.add(key);
 
     const record = this.sessions.get(key);
@@ -305,7 +307,7 @@ export class BaileysSessionManager {
           logout?: () => Promise<void>;
           end?: (reason?: unknown) => void;
         };
-        if (typeof sock.logout === "function") {
+        if (doLogout && typeof sock.logout === "function") {
           await sock.logout();
         } else if (typeof sock.end === "function") {
           sock.end(new Error("user_disconnect"));
@@ -316,11 +318,19 @@ export class BaileysSessionManager {
       record.socket = undefined;
     }
 
-    this.sessions.delete(key);
-    try {
-      fs.rmSync(sessionDir, { recursive: true, force: true });
-    } catch {
-      // Ignorar si el directorio no existía.
+    if (doLogout) {
+      this.sessions.delete(key);
+      try {
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+      } catch {
+        // Ignorar si el directorio no existía.
+      }
+    } else if (record) {
+      record.status = "disconnected";
+      record.qr = undefined;
+      record.lastError = undefined;
+      record.retries = 0;
+      this.sessions.set(key, record);
     }
 
     setTimeout(() => this.skipReconnectKeys.delete(key), 3000);

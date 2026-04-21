@@ -27,13 +27,17 @@ app.post("/sessions/connect", async (req, res) => {
 });
 
 app.post("/sessions/disconnect", async (req, res) => {
-  const { tenantId, whatsappNumber } = req.body as { tenantId?: string; whatsappNumber?: string };
+  const { tenantId, whatsappNumber, logout } = req.body as {
+    tenantId?: string;
+    whatsappNumber?: string;
+    logout?: boolean;
+  };
   if (!tenantId || !whatsappNumber) {
     res.status(400).json({ message: "tenantId and whatsappNumber are required" });
     return;
   }
 
-  const snapshot = await manager.disconnect({ tenantId, whatsappNumber });
+  const snapshot = await manager.disconnect({ tenantId, whatsappNumber }, { logout: Boolean(logout) });
   res.json(snapshot);
 });
 

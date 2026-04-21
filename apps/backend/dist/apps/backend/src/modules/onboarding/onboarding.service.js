@@ -129,7 +129,8 @@ let OnboardingService = class OnboardingService {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     tenantId,
-                    whatsappNumber: tenantWhatsappNumber
+                    whatsappNumber: tenantWhatsappNumber,
+                    logout: false
                 })
             });
             if (!response.ok) {

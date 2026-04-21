@@ -217,18 +217,20 @@ class BaileysSessionManager {
         return this.toSnapshot(record);
     }
     /**
-     * Cierra la sesión de WhatsApp (logout si está disponible), borra credenciales locales
-     * y deja de recibir mensajes hasta un nuevo `connect`.
+     * Desconecta el socket activo.
+     * - Por defecto: **soft disconnect** (NO hace logout y NO borra credenciales), para reconectar sin QR.
+     * - Con `logout: true`: cierra sesión y borra credenciales locales (reconexión requerirá QR).
      */
-    async disconnect(input) {
+    async disconnect(input, opts) {
         const key = buildSessionKey(input.tenantId, input.whatsappNumber);
         const sessionDir = node_path_1.default.join(this.authRoot, key.replace(/[:/\\]/g, "_"));
+        const doLogout = Boolean(opts?.logout);
         this.skipReconnectKeys.add(key);
         const record = this.sessions.get(key);
         if (record?.socket) {
             try {
                 const sock = record.socket;
-                if (typeof sock.logout === "function") {
+                if (doLogout && typeof sock.logout === "function") {
                     await sock.logout();
                 }
                 else if (typeof sock.end === "function") {
@@ -240,12 +242,21 @@ class BaileysSessionManager {
             }
             record.socket = undefined;
         }
-        this.sessions.delete(key);
-        try {
-            node_fs_1.default.rmSync(sessionDir, { recursive: true, force: true });
+        if (doLogout) {
+            this.sessions.delete(key);
+            try {
+                node_fs_1.default.rmSync(sessionDir, { recursive: true, force: true });
+            }
+            catch {
+                // Ignorar si el directorio no existía.
+            }
         }
-        catch {
-            // Ignorar si el directorio no existía.
+        else if (record) {
+            record.status = "disconnected";
+            record.qr = undefined;
+            record.lastError = undefined;
+            record.retries = 0;
+            this.sessions.set(key, record);
         }
         setTimeout(() => this.skipReconnectKeys.delete(key), 3000);
         return {
