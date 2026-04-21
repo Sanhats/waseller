@@ -4,6 +4,7 @@ import {
   parseShadowCompareHttpResponse,
   summarizeDecisionDiff,
   type ConversationInterpretationV1,
+  type ConversationReferenceV1,
   type LlmDecisionV1,
   type ShadowCompareCandidateDecision
 } from "../../../../packages/queue/src";
@@ -31,6 +32,146 @@ export type ShadowCompareStockRowV1 = {
   basePrice: number | null;
   variantPrice: number | null;
 };
+
+function readNumericEnv(key: string, fallback: number): number {
+  const n = Number(process.env[key]);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+function clampStr(s: string, max: number): string {
+  const t = String(s ?? "");
+  if (t.length <= max) return t;
+  return `${t.slice(0, max)}…`;
+}
+
+/** Reduce tokens en waseller-crew: truncar textos y quitar campos pesados del JSON HTTP. */
+function slimInterpretationForCrewHttp(i: ConversationInterpretationV1): ConversationInterpretationV1 {
+  const maxRef = readNumericEnv("LLM_SHADOW_COMPARE_MAX_REFERENCES", 8);
+  const maxNotes = readNumericEnv("LLM_SHADOW_COMPARE_MAX_NOTES", 5);
+  const maxEntityStr = readNumericEnv("LLM_SHADOW_COMPARE_MAX_ENTITY_VALUE_CHARS", 320);
+  const maxMissing = readNumericEnv("LLM_SHADOW_COMPARE_MAX_MISSING_FIELDS", 14);
+  const maxEntityKeys = readNumericEnv("LLM_SHADOW_COMPARE_MAX_ENTITY_KEYS", 28);
+
+  const entities: ConversationInterpretationV1["entities"] = {};
+  let ek = 0;
+  for (const [k, v] of Object.entries(i.entities ?? {})) {
+    if (ek++ >= maxEntityKeys) break;
+    if (typeof v === "string") {
+      entities[k] = clampStr(v, maxEntityStr);
+    } else if (v !== null && typeof v === "object" && !Array.isArray(v)) {
+      const sub: Record<string, string> = {};
+      let skc = 0;
+      for (const [sk, sv] of Object.entries(v as Record<string, unknown>)) {
+        if (skc++ >= 12) break;
+        sub[sk] = typeof sv === "string" ? clampStr(sv, 120) : String(sv ?? "").slice(0, 80);
+      }
+      entities[k] = sub;
+    } else {
+      (entities as Record<string, string | number | boolean | null | Record<string, string>>)[k] = v as
+        | string
+        | number
+        | boolean
+        | null;
+    }
+  }
+
+  const references: ConversationReferenceV1[] = (i.references ?? []).slice(0, maxRef).map((r) => ({
+    ...r,
+    value:
+      r.value != null && String(r.value).length > 140 ? `${String(r.value).slice(0, 140)}…` : r.value,
+    metadata:
+      r.metadata && Object.keys(r.metadata).length > 8
+        ? Object.fromEntries(Object.entries(r.metadata).slice(0, 8))
+        : r.metadata
+  }));
+
+  return {
+    ...i,
+    entities,
+    references,
+    notes: i.notes?.slice(0, maxNotes),
+    missingFields: (i.missingFields ?? []).slice(0, maxMissing)
+  };
+}
+
+function slimDecisionEntities(entities: LlmDecisionV1["entities"]): LlmDecisionV1["entities"] {
+  const out: LlmDecisionV1["entities"] = {};
+  let c = 0;
+  const maxKeys = readNumericEnv("LLM_SHADOW_COMPARE_MAX_BASELINE_ENTITY_KEYS", 24);
+  const maxVal = readNumericEnv("LLM_SHADOW_COMPARE_MAX_BASELINE_ENTITY_VALUE_CHARS", 280);
+  for (const [k, v] of Object.entries(entities ?? {})) {
+    if (c++ >= maxKeys) break;
+    if (typeof v === "string") out[k] = clampStr(v, maxVal);
+    else out[k] = v;
+  }
+  return out;
+}
+
+function slimBaselineForCrewHttp(d: LlmDecisionV1): LlmDecisionV1 {
+  const maxDraft = readNumericEnv("LLM_SHADOW_COMPARE_MAX_DRAFT_CHARS", 1400);
+  const maxReason = readNumericEnv("LLM_SHADOW_COMPARE_MAX_REASON_CHARS", 420);
+  const { verification, ...rest } = d;
+  return {
+    ...rest,
+    draftReply: clampStr(rest.draftReply ?? "", maxDraft),
+    reason: clampStr(rest.reason ?? "", maxReason),
+    entities: slimDecisionEntities(rest.entities),
+    qualityFlags: (rest.qualityFlags ?? []).slice(0, 16),
+    verification: verification
+      ? {
+          passed: verification.passed,
+          score: verification.score,
+          flags: (verification.flags ?? []).slice(0, 8),
+          reason: clampStr(verification.reason ?? "", 200),
+          provider: verification.provider,
+          model: verification.model
+        }
+      : undefined,
+    policy: rest.policy
+      ? {
+          recommendedAction: rest.policy.recommendedAction,
+          executedAction: rest.policy.executedAction,
+          shadowMode: rest.policy.shadowMode,
+          allowSensitiveActions: rest.policy.allowSensitiveActions,
+          contextRecovered: rest.policy.contextRecovered,
+          verifierRequired: rest.policy.verifierRequired,
+          minVerifierScore: rest.policy.minVerifierScore
+        }
+      : undefined
+  };
+}
+
+/** Filas más livianas para el POST (sin tags/imagen por defecto). */
+function slimStockRowsForCrewHttp(rows: ShadowCompareStockRowV1[]): Record<string, unknown>[] {
+  const includeImage = /^(1|true|yes)$/i.test(
+    String(process.env.LLM_SHADOW_COMPARE_INCLUDE_STOCK_IMAGE_URL ?? "").trim()
+  );
+  const maxName = readNumericEnv("LLM_SHADOW_COMPARE_MAX_STOCK_NAME_CHARS", 120);
+  const maxSku = readNumericEnv("LLM_SHADOW_COMPARE_MAX_STOCK_SKU_CHARS", 64);
+  const maxAttr = readNumericEnv("LLM_SHADOW_COMPARE_MAX_STOCK_ATTR_KEYS", 12);
+  const maxAttrVal = readNumericEnv("LLM_SHADOW_COMPARE_MAX_STOCK_ATTR_VALUE_CHARS", 80);
+  return rows.map((r) => {
+    const attrs = Object.fromEntries(
+      Object.entries(r.attributes).slice(0, maxAttr).map(([k, v]) => [k, clampStr(v, maxAttrVal)])
+    );
+    const row: Record<string, unknown> = {
+      variantId: r.variantId,
+      productId: r.productId,
+      name: clampStr(r.name, maxName),
+      sku: clampStr(r.sku, maxSku),
+      attributes: attrs,
+      stock: r.stock,
+      reservedStock: r.reservedStock,
+      availableStock: r.availableStock,
+      effectivePrice: r.effectivePrice,
+      isActive: r.isActive,
+      basePrice: r.basePrice,
+      variantPrice: r.variantPrice
+    };
+    if (includeImage && r.imageUrl) row.imageUrl = r.imageUrl;
+    return row;
+  });
+}
 
 const normalizeShadowStockAttributes = (raw: unknown): Record<string, string> => {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
@@ -317,14 +458,17 @@ export async function assembleShadowCompareOutboundBody(input: ShadowCompareInpu
     ragRowCap
   });
 
+  const maxIncoming = readNumericEnv("LLM_SHADOW_COMPARE_MAX_INCOMING_CHARS", 2500);
+  const maxRecentMsg = readNumericEnv("LLM_SHADOW_COMPARE_MAX_RECENT_MSG_CHARS", 900);
+
   const payload: Record<string, unknown> = {
     schemaVersion: JOB_SCHEMA_VERSION,
     kind: "waseller.shadow_compare.v1",
     tenantId: input.tenantId,
     leadId: input.leadId,
-    incomingText: input.incomingText,
-    interpretation: input.interpretation,
-    baselineDecision: input.baselineDecision
+    incomingText: clampStr(input.incomingText, maxIncoming),
+    interpretation: slimInterpretationForCrewHttp(input.interpretation),
+    baselineDecision: slimBaselineForCrewHttp(input.baselineDecision)
   };
   const phone = String(input.phone ?? "").trim();
   if (phone) payload.phone = phone;
@@ -337,11 +481,11 @@ export async function assembleShadowCompareOutboundBody(input: ShadowCompareInpu
   if (recent.length > 0) {
     payload.recentMessages = recent.slice(-8).map((m) => ({
       direction: m.direction,
-      message: m.message
+      message: clampStr(m.message, maxRecentMsg)
     }));
   }
   if (stockTable.length > 0) {
-    payload.stockTable = stockTable;
+    payload.stockTable = slimStockRowsForCrewHttp(stockTable);
   }
   payload.inventoryNarrowingNote = inventoryNarrowingNote;
   const crewSlug = toCrewBusinessProfileSlug(String(input.tenantBusinessCategory ?? ""));
@@ -475,6 +619,11 @@ export async function tryWasellerCrewPrimaryReplacement(
 export async function logShadowExternalCompareIfConfigured(input: ShadowCompareInput): Promise<void> {
   const url = String(process.env.LLM_SHADOW_COMPARE_URL ?? "").trim();
   if (!url) return;
+  if (isWasellerCrewPrimaryEnabled()) {
+    // `tryWasellerCrewPrimaryReplacement` ya hizo POST al mismo endpoint con el mismo `correlationId`.
+    // Evitar segundo POST y telemetría duplicada en waseller-crew (la traza `crew_primary` en `llm_traces` alcanza).
+    return;
+  }
 
   const timeoutMs = Math.max(
     1000,

@@ -5,7 +5,9 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const qrcode_1 = __importDefault(require("qrcode"));
+const wa_console_redact_1 = require("./wa-console-redact");
 const baileys_session_manager_1 = require("./session-manager/baileys-session-manager");
+(0, wa_console_redact_1.installWaConsoleCryptoRedaction)();
 const app = (0, express_1.default)();
 app.use(express_1.default.json());
 const manager = new baileys_session_manager_1.BaileysSessionManager();

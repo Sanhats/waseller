@@ -67,7 +67,10 @@ class BaileysSessionManager {
     sessions = new Map();
     /** Evita el auto-reconnect de Baileys tras un cierre voluntario (logout manual desde API). */
     skipReconnectKeys = new Set();
-    logger = (0, pino_1.default)({ level: process.env.LOG_LEVEL ?? "info" });
+    logger = (0, pino_1.default)({
+        level: process.env.LOG_LEVEL?.trim() ||
+            (process.env.RAILWAY_ENVIRONMENT ? "warn" : "info")
+    });
     maxRetries = Number(process.env.WA_MAX_RETRIES ?? 10);
     authRoot = getResolvedWaAuthDir();
     constructor() {

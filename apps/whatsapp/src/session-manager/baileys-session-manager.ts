@@ -107,7 +107,11 @@ export class BaileysSessionManager {
   private readonly sessions = new Map<string, SessionRecord>();
   /** Evita el auto-reconnect de Baileys tras un cierre voluntario (logout manual desde API). */
   private readonly skipReconnectKeys = new Set<string>();
-  private readonly logger = pino({ level: process.env.LOG_LEVEL ?? "info" });
+  private readonly logger = pino({
+    level:
+      process.env.LOG_LEVEL?.trim() ||
+      (process.env.RAILWAY_ENVIRONMENT ? "warn" : "info")
+  });
   private readonly maxRetries = Number(process.env.WA_MAX_RETRIES ?? 10);
   private readonly authRoot = getResolvedWaAuthDir();
 

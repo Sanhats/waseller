@@ -7,7 +7,9 @@
 
 **Resumen operativo:** Waseller envía **body extendido + Bearer opcional**; URL del crew: `POST /shadow-compare` o **`POST /v1/shadow-compare`** (mismo contrato). El crew no impone un timeout HTTP más agresivo que el de la plataforma; el volumen de 500 filas afecta sobre todo el tiempo del LLM (CrewAI). Si los workers ven **abortos por timeout**, subir **`LLM_SHADOW_COMPARE_TIMEOUT_MS`** en el servicio de workers (Railway, etc.).
 
-**Modo primary (`WASELLER_CREW_PRIMARY=true`):** los workers llaman **una vez** al mismo endpoint; si la respuesta incluye `candidateDecision.draftReply` válido, **reemplazan** la decisión del LLM interno (OpenAI/self-hosted) antes del verificador y guardrails. No se hace un segundo POST de “shadow compare” en ese turno. Traza `trace_kind = crew_primary` en `llm_traces`. En **shadow** (política de rollout), el texto al cliente puede seguir yendo por plantillas del lead worker salvo que operen en **active** y el flujo use el `draftReply` del LLM.
+**Modo primary (`WASELLER_CREW_PRIMARY=true`):** los workers llaman **una vez** al mismo endpoint; si la respuesta incluye `candidateDecision.draftReply` válido, **reemplazan** la decisión del LLM interno (OpenAI/self-hosted) antes del verificador y guardrails. Con primary activo **no** se invoca el POST adicional de telemetría `shadow_compare` (evita dos `POST` con el mismo `correlationId` al crew). Solo queda la traza `trace_kind = crew_primary` en `llm_traces` para ese turno. En **shadow** (política de rollout), el texto al cliente puede seguir yendo por plantillas del lead worker salvo que operen en **active** y el flujo use el `draftReply` del LLM.
+
+**Tamaño del payload hacia el crew:** Waseller **recorta** textos y campos pesados en el JSON HTTP (mensaje entrante, `recentMessages`, `interpretation`, `baselineDecision`, filas de `stockTable` sin `tags` salvo configuración explícita). Los límites se ajustan con variables `LLM_SHADOW_COMPARE_MAX_*` (ver tabla en §2); defaults orientados a bajar tokens (~orden 10–20k) sin romper el contrato.
 
 ---
 
@@ -39,6 +41,22 @@ Todos **opcionales**. Tipos alineados a uso en workers / Prisma (strings UUID do
 | `LLM_SHADOW_COMPARE_SECRET` | Opcional | Secreto compartido. Si está **definido y no vacío**, el worker envía header de auth (ver abajo). Si está vacío / ausente, **no** envía el header (compatible con entornos sin secret). **Alias:** si no está definido, el worker también lee **`SHADOW_COMPARE_SECRET`** (útil si en Railway usás el mismo nombre que en waseller-crew). |
 | `LLM_SHADOW_COMPARE_TIMEOUT_MS` | Opcional | Timeout del `fetch` en workers (default **30000** ms, máximo **120000**). Tabla guía crew: ~15s con pocas filas, 30s con decenas, 60s con ~500 filas. |
 | `LLM_SHADOW_COMPARE_STOCK_RAG_ROW_LIMIT` | Opcional | Máximo de filas de `stockTable` en modo multi-producto RAG (default **30**, rango 5–100). |
+| `LLM_SHADOW_COMPARE_MAX_INCOMING_CHARS` | Opcional | Tope de caracteres de `incomingText` en el POST (default **2500**). |
+| `LLM_SHADOW_COMPARE_MAX_RECENT_MSG_CHARS` | Opcional | Tope por ítem de `recentMessages[].message` (default **900**). |
+| `LLM_SHADOW_COMPARE_MAX_REFERENCES` | Opcional | Máximo de ítems en `interpretation.references` (default **8**). |
+| `LLM_SHADOW_COMPARE_MAX_NOTES` | Opcional | Máximo de notas en `interpretation.notes` (default **5**). |
+| `LLM_SHADOW_COMPARE_MAX_ENTITY_VALUE_CHARS` | Opcional | Tope por valor string en `interpretation.entities` (default **320**). |
+| `LLM_SHADOW_COMPARE_MAX_ENTITY_KEYS` | Opcional | Máximo de claves en `interpretation.entities` (default **28**). |
+| `LLM_SHADOW_COMPARE_MAX_MISSING_FIELDS` | Opcional | Máximo de ítems en `interpretation.missingFields` (default **14**). |
+| `LLM_SHADOW_COMPARE_MAX_DRAFT_CHARS` | Opcional | Tope de `baselineDecision.draftReply` (default **1400**). |
+| `LLM_SHADOW_COMPARE_MAX_REASON_CHARS` | Opcional | Tope de `baselineDecision.reason` (default **420**). |
+| `LLM_SHADOW_COMPARE_MAX_BASELINE_ENTITY_KEYS` | Opcional | Máximo de claves en `baselineDecision.entities` (default **24**). |
+| `LLM_SHADOW_COMPARE_MAX_BASELINE_ENTITY_VALUE_CHARS` | Opcional | Tope por valor string en `baselineDecision.entities` (default **280**). |
+| `LLM_SHADOW_COMPARE_MAX_STOCK_NAME_CHARS` | Opcional | Tope de `name` por fila de `stockTable` (default **120**). |
+| `LLM_SHADOW_COMPARE_MAX_STOCK_SKU_CHARS` | Opcional | Tope de `sku` por fila (default **64**). |
+| `LLM_SHADOW_COMPARE_MAX_STOCK_ATTR_KEYS` | Opcional | Máximo de atributos por variante en `stockTable` (default **12**). |
+| `LLM_SHADOW_COMPARE_MAX_STOCK_ATTR_VALUE_CHARS` | Opcional | Tope por valor de atributo (default **80**). |
+| `LLM_SHADOW_COMPARE_INCLUDE_STOCK_IMAGE_URL` | Opcional | Si es `true`/`1`/`yes`, incluye `imageUrl` en filas de stock (por defecto **no**, para ahorrar tokens). |
 
 **Header (cuando el secret está configurado):**
 

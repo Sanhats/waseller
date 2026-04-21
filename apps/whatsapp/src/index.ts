@@ -1,6 +1,9 @@
 import express from "express";
 import QRCode from "qrcode";
+import { installWaConsoleCryptoRedaction } from "./wa-console-redact";
 import { BaileysSessionManager, getResolvedWaAuthDir } from "./session-manager/baileys-session-manager";
+
+installWaConsoleCryptoRedaction();
 
 const app = express();
 app.use(express.json());
