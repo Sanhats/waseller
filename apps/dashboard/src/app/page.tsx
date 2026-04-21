@@ -35,8 +35,8 @@ export default function HomePage() {
     <main
       className={cn(
         "flex min-h-0 bg-canvas text-[var(--color-text)]",
-        "h-[100dvh] max-h-[100dvh] flex-col",
-        "lg:flex-row lg:items-stretch",
+        "h-[100dvh] max-h-[100dvh]",
+        "flex-col-reverse lg:flex-row lg:items-stretch",
       )}
     >
       <AppSidebar active="home" compact={isMobile} />
@@ -44,7 +44,6 @@ export default function HomePage() {
         className={cn(
           "min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain bg-canvas",
           "px-3 py-5 sm:px-4 md:py-6 lg:px-5 lg:py-8 xl:px-6",
-          "pb-[max(1.5rem,env(safe-area-inset-bottom,0px))]",
         )}
       >
         <HomeDashboard />

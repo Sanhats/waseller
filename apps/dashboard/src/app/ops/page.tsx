@@ -19,8 +19,8 @@ export default function OpsPage() {
     <main
       className={cn(
         "flex min-h-0 bg-canvas text-[var(--color-text)]",
-        "h-[100dvh] max-h-[100dvh] flex-col",
-        "lg:flex-row lg:items-stretch"
+        "h-[100dvh] max-h-[100dvh]",
+        "flex-col-reverse lg:flex-row lg:items-stretch"
       )}
     >
       <AppSidebar active="ops" compact={isMobile} />

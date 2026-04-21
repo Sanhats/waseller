@@ -21,16 +21,13 @@ const navItems: Array<{
   {
     key: "conversations",
     href: "/conversations",
-    label: "Conversaciones",
+    label: "Chats",
     icon: MessagesSquare,
   },
   { key: "ops", href: "/ops", label: "Negocio", icon: Activity },
   { key: "stock", href: "/stock", label: "Stock", icon: Boxes },
 ];
 
-const shell = "bg-primary text-white";
-
-/** Ratio intrínseco del PNG (ancho × alto); solo afecta al layout de Next/Image, no estira el dibujo. */
 const LOGO_SRC_WIDTH = 2000;
 const LOGO_SRC_HEIGHT = 2000;
 
@@ -39,10 +36,10 @@ function BrandMark({ compact }: { compact: boolean }) {
     <a
       href="/"
       className={cn(
-        "block min-w-0 w-1/4 shrink-0 overflow-hidden no-underline outline-none",
-        "ring-1 ring-white/10",
+        "block min-w-0 shrink-0 overflow-hidden no-underline outline-none",
+        "ring-1 ring-white/10 transition-opacity hover:opacity-90",
         "focus-visible:ring-2 focus-visible:ring-white/80 focus-visible:ring-offset-2 focus-visible:ring-offset-primary",
-        compact ? "max-w-[5.5rem] rounded-xl ring-white/5" : "rounded-2xl",
+        compact ? "w-[52px] rounded-xl ring-white/5" : "w-[140px] rounded-2xl",
       )}
       aria-label="Waseller — inicio"
     >
@@ -52,13 +49,16 @@ function BrandMark({ compact }: { compact: boolean }) {
         width={LOGO_SRC_WIDTH}
         height={LOGO_SRC_HEIGHT}
         className="h-auto w-full max-w-full object-contain object-center"
-        sizes={compact ? "90px" : "120px"}
+        sizes={compact ? "52px" : "140px"}
         priority
       />
     </a>
   );
 }
 
+/* ──────────────────────────────────────────────────────────
+   COMPACT = bottom tab bar (mobile)
+────────────────────────────────────────────────────────── */
 export function AppSidebar({
   active,
   leadsCount,
@@ -71,16 +71,17 @@ export function AppSidebar({
   if (compact) {
     return (
       <aside
-        className={cn(
-          "flex min-h-0 w-full shrink-0 flex-col gap-2.5 border-b border-primary-active px-2.5 py-2.5",
-          shell,
-        )}
+        className="flex w-full shrink-0 flex-col border-t border-white/10"
+        style={{
+          background: "linear-gradient(180deg, #1c506a 0%, #14394f 100%)",
+          paddingBottom: "env(safe-area-inset-bottom, 0px)",
+        }}
       >
-        <div className="flex w-full min-w-0 items-center justify-center px-1">
-          <BrandMark compact />
-        </div>
-
-        <nav className="flex min-h-0 flex-1 gap-1.5 overflow-x-auto pb-0.5">
+        <nav
+          className="flex w-full items-stretch justify-around"
+          style={{ height: "var(--mobile-nav-height, 62px)" }}
+          aria-label="Navegación principal"
+        >
           {navItems.map((item) => {
             const isActive = item.key === active;
             const Icon = item.icon;
@@ -89,50 +90,76 @@ export function AppSidebar({
                 key={item.key}
                 href={item.href}
                 className={cn(
-                  "inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-pill border px-2.5 py-1.5 text-xs font-medium no-underline transition-colors duration-fast",
-                  isActive
-                    ? "border-growth-strong/40 bg-growth text-primary"
-                    : "border-transparent bg-transparent text-white/75 hover:bg-primary-hover hover:text-white",
+                  "relative flex flex-1 flex-col items-center justify-center gap-[3px] px-1 py-2",
+                  "no-underline outline-none transition-all duration-fast",
+                  "focus-visible:ring-2 focus-visible:ring-white/60 focus-visible:ring-inset",
                 )}
+                aria-current={isActive ? "page" : undefined}
               >
-                <Icon
-                  size={14}
-                  className={cn(isActive ? "text-primary" : "text-white/80")}
-                />
-                {item.label}
-                {item.key === "leads" && typeof leadsCount === "number" ? (
+                {/* Active pill */}
+                {isActive && (
                   <span
-                    className={cn(
-                      "ml-0.5 rounded-pill px-1 py-px text-[11px] font-medium tabular-nums",
-                      isActive
-                        ? "bg-primary/10 text-primary"
-                        : "bg-white/20 text-white/95",
-                    )}
-                  >
-                    {leadsCount}
-                  </span>
-                ) : null}
+                    className="absolute inset-x-1.5 inset-y-1.5 rounded-xl"
+                    style={{ backgroundColor: "var(--color-growth-base)" }}
+                    aria-hidden
+                  />
+                )}
+
+                <Icon
+                  size={21}
+                  className={cn(
+                    "relative z-10 shrink-0 transition-colors duration-fast",
+                    isActive ? "text-[var(--color-primary)]" : "text-white/55",
+                  )}
+                />
+                <span
+                  className={cn(
+                    "relative z-10 text-[10px] font-semibold leading-none tracking-wide",
+                    isActive ? "text-[var(--color-primary)]" : "text-white/50",
+                  )}
+                >
+                  {item.label}
+                </span>
+
+                {/* Leads badge */}
+                {item.key === "leads" &&
+                  typeof leadsCount === "number" &&
+                  leadsCount > 0 && (
+                    <span className="absolute right-1.5 top-2 flex h-[17px] min-w-[17px] items-center justify-center rounded-full bg-error px-1 text-[9px] font-bold text-white ring-2 ring-[#14394f]">
+                      {leadsCount > 99 ? "99+" : leadsCount}
+                    </span>
+                  )}
               </a>
             );
           })}
         </nav>
-        <SidebarWhatsappControl compact />
       </aside>
     );
   }
 
+  /* ──────────────────────────────────────────────────────────
+     FULL = left sidebar (desktop)
+  ────────────────────────────────────────────────────────── */
   return (
     <aside
-      className={cn(
-        "flex min-h-0 w-[260px] shrink-0 flex-col gap-6 self-stretch border-r border-primary-active py-5 pl-3 pr-3",
-        shell,
-      )}
+      className="flex min-h-0 w-[268px] shrink-0 flex-col self-stretch border-r border-white/[0.07] py-5 pl-3.5 pr-3.5"
+      style={{
+        background: "linear-gradient(175deg, #1d526c 0%, #153c54 45%, #102e42 100%)",
+      }}
     >
-      <div className="flex w-full min-w-0 shrink-0 items-center justify-center px-2">
+      {/* Logo */}
+      <div className="flex w-full min-w-0 shrink-0 items-center justify-center px-2 pb-5">
         <BrandMark compact={false} />
       </div>
 
-      <nav className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
+      {/* Divider */}
+      <div className="mx-1 mb-3 h-px bg-white/[0.08]" />
+
+      {/* Nav */}
+      <nav
+        className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto py-1"
+        aria-label="Navegación principal"
+      >
         {navItems.map((item) => {
           const isActive = item.key === active;
           const Icon = item.icon;
@@ -140,25 +167,33 @@ export function AppSidebar({
             <a
               key={item.key}
               href={item.href}
+              aria-current={isActive ? "page" : undefined}
               className={cn(
-                "flex items-center gap-2.5 rounded-md px-3 py-2 text-sm no-underline transition-colors duration-fast",
+                "group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm no-underline",
+                "transition-all duration-fast",
                 isActive
-                  ? "bg-growth font-medium text-primary"
-                  : "font-normal text-white/75 hover:bg-primary-hover hover:text-white",
+                  ? "bg-[var(--color-growth-base)] font-semibold text-[var(--color-primary)]"
+                  : "font-normal text-white/65 hover:bg-white/[0.08] hover:text-white",
               )}
             >
               <Icon
-                size={16}
-                className={cn(isActive ? "text-primary" : "text-white/80")}
+                size={17}
+                className={cn(
+                  "shrink-0 transition-colors duration-fast",
+                  isActive
+                    ? "text-[var(--color-primary-active)]"
+                    : "text-white/50 group-hover:text-white/85",
+                )}
               />
-              {item.label}
+              <span className="min-w-0 flex-1 truncate">{item.label}</span>
+
               {item.key === "leads" && typeof leadsCount === "number" ? (
                 <span
                   className={cn(
-                    "ml-auto rounded-md px-1.5 py-0.5 text-xs font-medium tabular-nums",
+                    "ml-auto shrink-0 rounded-md px-1.5 py-0.5 text-xs font-semibold tabular-nums",
                     isActive
-                      ? "bg-primary/10 text-primary"
-                      : "bg-white/20 text-white/95",
+                      ? "bg-[var(--color-primary)]/12 text-[var(--color-primary)]"
+                      : "bg-white/12 text-white/85",
                   )}
                 >
                   {leadsCount}
@@ -168,6 +203,10 @@ export function AppSidebar({
           );
         })}
       </nav>
+
+      {/* Divider */}
+      <div className="mx-1 mt-3 mb-1 h-px bg-white/[0.08]" />
+
       <SidebarWhatsappControl />
     </aside>
   );

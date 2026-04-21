@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/cn";
@@ -15,14 +15,6 @@ export default function LoginPage() {
   const [whatsappNumber, setWhatsappNumber] = useState("");
   const [loading, setLoading] = useState(false);
   const [formError, setFormError] = useState("");
-  const [isMobile, setIsMobile] = useState(false);
-
-  useEffect(() => {
-    const onResize = () => setIsMobile(window.innerWidth < 640);
-    onResize();
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -107,122 +99,141 @@ export default function LoginPage() {
   };
 
   return (
-    <main className="grid min-h-screen place-items-center bg-canvas px-3 py-8 text-[var(--color-text)]">
-      <form
-        onSubmit={mode === "login" ? submit : registerTenant}
-        className={cn(
-          "flex w-full max-w-[390px] flex-col gap-3 rounded-lg border border-border bg-surface p-5 shadow-md",
-          isMobile && "mx-auto"
-        )}
-      >
-        <h1 className="text-[1.375rem] font-bold leading-tight tracking-tight text-[var(--color-text)]">
-          Ingreso Waseller
-        </h1>
-        <p className="text-sm text-muted">
-          {mode === "login"
-            ? "Accedé con tu usuario existente."
-            : "Creá tu tenant y administrador en un solo paso."}
-        </p>
-
-        <div className="mt-1 flex overflow-hidden rounded-md border border-border">
-          <button
-            type="button"
-            onClick={() => {
-              setMode("login");
-              setFormError("");
+    <main
+      className="flex min-h-screen items-center justify-center px-4 py-8 text-[var(--color-text)]"
+      style={{
+        background:
+          "radial-gradient(ellipse 90% 70% at 50% -10%, rgba(25,72,95,0.12) 0%, transparent 70%), var(--color-bg)",
+      }}
+    >
+      <div className="flex w-full max-w-[400px] flex-col gap-0 animate-fade-in-up">
+        {/* Brand mark */}
+        <div className="mb-6 flex flex-col items-center gap-3">
+          <div
+            className="flex h-14 w-14 items-center justify-center rounded-2xl shadow-md ring-1 ring-white/20"
+            style={{
+              background:
+                "linear-gradient(145deg, var(--color-primary) 0%, var(--color-primary-active) 100%)",
             }}
-            className={cn(
-              "flex-1 border-none px-3 py-2 text-sm font-semibold transition-colors duration-fast",
-              mode === "login"
-                ? "bg-[var(--badge-active-bg)] text-primary"
-                : "bg-surface text-muted hover:bg-canvas"
-            )}
           >
-            Iniciar sesión
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setMode("register");
-              setFormError("");
-            }}
-            className={cn(
-              "flex-1 border-l border-border px-3 py-2 text-sm font-semibold transition-colors duration-fast",
-              mode === "register"
-                ? "bg-[var(--badge-active-bg)] text-primary"
-                : "bg-surface text-muted hover:bg-canvas"
-            )}
-          >
-            Crear tenant
-          </button>
+            <span className="text-xl font-black text-[var(--color-growth-base)]">W</span>
+          </div>
+          <div className="text-center">
+            <p className="text-[11px] font-semibold uppercase tracking-widest text-muted-ui">
+              {mode === "login" ? "Bienvenido de vuelta" : "Nuevo negocio"}
+            </p>
+          </div>
         </div>
 
-        {mode === "register" ? (
-          <>
-            <Input
-              label="Negocio / tenant"
-              placeholder="Nombre del negocio"
-              value={tenantName}
-              onChange={(e) => setTenantName(e.target.value)}
-              autoComplete="organization"
-            />
-            <Input
-              label="WhatsApp del negocio"
-              placeholder="Ej: 54911..."
-              value={whatsappNumber}
-              onChange={(e) => setWhatsappNumber(e.target.value)}
-              inputMode="numeric"
-            />
-          </>
-        ) : null}
-
-        <Input
-          label="Email"
-          type="email"
-          placeholder="tu@email.com"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          autoComplete="email"
-        />
-        <Input
-          label="Contraseña"
-          type="password"
-          placeholder="••••••••"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          autoComplete={mode === "login" ? "current-password" : "new-password"}
-        />
-        {mode === "register" ? (
-          <Input
-            label="Confirmar contraseña"
-            type="password"
-            placeholder="Repetir contraseña"
-            value={confirmPassword}
-            onChange={(e) => setConfirmPassword(e.target.value)}
-            autoComplete="new-password"
-          />
-        ) : null}
-
-        {mode === "register" ? (
-          <p className="text-xs text-muted">
-            Al crear el tenant, ingresás a Negocio para conectar WhatsApp, Mercado Pago, contexto de la tienda y
-            catálogo.
-          </p>
-        ) : null}
-
-        {formError ? (
-          <div
-            className="rounded-md border border-error bg-error-bg px-3 py-2 text-xs font-medium text-error"
-            role="alert"
-          >
-            {formError}
+        <form
+          onSubmit={mode === "login" ? submit : registerTenant}
+          className="flex flex-col gap-3 rounded-2xl border border-border bg-surface p-6 shadow-md ring-1 ring-black/[0.03]"
+        >
+          {/* Mode tabs */}
+          <div className="flex overflow-hidden rounded-lg border border-border bg-canvas">
+            <button
+              type="button"
+              onClick={() => { setMode("login"); setFormError(""); }}
+              className={cn(
+                "flex-1 border-none px-3 py-2 text-sm font-semibold transition-colors duration-fast",
+                mode === "login"
+                  ? "bg-primary text-white shadow-sm"
+                  : "bg-transparent text-muted hover:text-[var(--color-text)]",
+              )}
+            >
+              Iniciar sesión
+            </button>
+            <button
+              type="button"
+              onClick={() => { setMode("register"); setFormError(""); }}
+              className={cn(
+                "flex-1 border-l border-border px-3 py-2 text-sm font-semibold transition-colors duration-fast",
+                mode === "register"
+                  ? "bg-primary text-white shadow-sm"
+                  : "bg-transparent text-muted hover:text-[var(--color-text)]",
+              )}
+            >
+              Crear cuenta
+            </button>
           </div>
-        ) : null}
 
-        <Button type="submit" variant="primary" className="mt-2 w-full" loading={loading} disabled={loading}>
-          {mode === "login" ? "Iniciar sesión" : "Crear tenant e ingresar"}
-        </Button>
-      </form>
+          {mode === "register" ? (
+            <>
+              <Input
+                label="Nombre del negocio"
+                placeholder="Mi tienda"
+                value={tenantName}
+                onChange={(e) => setTenantName(e.target.value)}
+                autoComplete="organization"
+              />
+              <Input
+                label="WhatsApp del negocio"
+                placeholder="Ej: 549112345678"
+                value={whatsappNumber}
+                onChange={(e) => setWhatsappNumber(e.target.value)}
+                inputMode="numeric"
+              />
+            </>
+          ) : null}
+
+          <Input
+            label="Email"
+            type="email"
+            placeholder="tu@email.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            autoComplete="email"
+          />
+          <Input
+            label="Contraseña"
+            type="password"
+            placeholder="••••••••"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete={mode === "login" ? "current-password" : "new-password"}
+          />
+          {mode === "register" ? (
+            <Input
+              label="Confirmar contraseña"
+              type="password"
+              placeholder="Repetir contraseña"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              autoComplete="new-password"
+            />
+          ) : null}
+
+          {mode === "register" ? (
+            <p className="text-xs leading-relaxed text-muted">
+              Al crear la cuenta ingresás directo al panel de configuración para
+              conectar WhatsApp, Mercado Pago y tu catálogo.
+            </p>
+          ) : null}
+
+          {formError ? (
+            <div
+              className="rounded-lg border border-error bg-error-bg px-3 py-2.5 text-xs font-medium text-error"
+              role="alert"
+            >
+              {formError}
+            </div>
+          ) : null}
+
+          <Button
+            type="submit"
+            variant="primary"
+            className="mt-1 w-full"
+            loading={loading}
+            disabled={loading}
+          >
+            {mode === "login" ? "Iniciar sesión" : "Crear cuenta e ingresar"}
+          </Button>
+        </form>
+
+        <p className="mt-4 text-center text-[11px] text-muted-ui">
+          Waseller &mdash; Ventas por WhatsApp con IA
+        </p>
+      </div>
     </main>
   );
 }

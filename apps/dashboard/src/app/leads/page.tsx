@@ -255,9 +255,10 @@ export default function LeadsPage() {
   return (
     <main
       style={{
-        minHeight: "100vh",
+        height: "100dvh",
+        maxHeight: "100dvh",
         display: "flex",
-        flexDirection: isMobile ? "column" : "row",
+        flexDirection: isMobile ? "column-reverse" : "row",
       }}
     >
       <AppSidebar

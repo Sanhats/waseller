@@ -110,19 +110,31 @@ export function ConversationListPanel() {
   return (
     <aside
       className={cn(
-        "flex max-h-[42vh] w-full shrink-0 flex-col overflow-hidden border-b border-border bg-surface shadow-sm ring-1 ring-black/[0.02]",
+        "flex max-h-[42vh] w-full shrink-0 flex-col overflow-hidden border-b border-border bg-surface",
+        "shadow-sm ring-1 ring-black/[0.03]",
         "lg:h-full lg:max-h-none lg:w-80 lg:max-w-[20rem] lg:border-b-0 lg:border-r",
       )}
       aria-busy={loading}
     >
-      <div className="border-b border-border px-4 pb-3 pt-4">
-        <h2 className="text-section">Conversaciones</h2>
+      {/* Header */}
+      <div
+        className="shrink-0 border-b border-border px-4 pb-3 pt-4"
+        style={{
+          background:
+            "linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-light) 100%)",
+        }}
+      >
+        <h2 className="text-sm font-bold tracking-wide text-white">
+          Conversaciones
+        </h2>
       </div>
-      <div className="px-4 pb-3 pt-1">
+
+      {/* Search */}
+      <div className="shrink-0 border-b border-border px-3 py-2">
         <Input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Buscar por nombre o teléfono..."
+          placeholder="Buscar por nombre o teléfono…"
           aria-label="Buscar conversación"
           className="w-full"
         />
@@ -138,10 +150,7 @@ export function ConversationListPanel() {
           </>
         ) : null}
         {error && !loading ? (
-          <p
-            className="px-4 py-3 text-center text-body text-error"
-            role="alert"
-          >
+          <p className="px-4 py-3 text-center text-body text-error" role="alert">
             {error}
           </p>
         ) : null}
@@ -149,7 +158,7 @@ export function ConversationListPanel() {
           <p className="px-4 py-8 text-center text-body text-muted-ui">
             {leads.length === 0
               ? "No hay conversaciones todavía."
-              : "No hay contactos que coincidan con la búsqueda."}
+              : "No hay contactos que coincidan."}
           </p>
         ) : null}
         {!loading &&
@@ -161,43 +170,71 @@ export function ConversationListPanel() {
             const isSelected =
               selectedPhone !== null &&
               digitsOnlyPhone(lead.phone) === digitsOnlyPhone(selectedPhone);
+            const initials =
+              displayName
+                .split(" ")
+                .slice(0, 2)
+                .map((w: string) => (w[0] ?? "").toUpperCase())
+                .join("") || "?";
+            const PALETTES = [
+              "#2d6e8a","#3d7a6a","#5a7d3a","#7c6a3a","#5a4d8a",
+              "#3a6a7c","#6a5a3a","#3a7c5a",
+            ];
+            const bgColor =
+              PALETTES[
+                displayName
+                  .split("")
+                  .reduce((a: number, c: string) => a + c.charCodeAt(0), 0) %
+                  PALETTES.length
+              ] ?? "#2d6e8a";
+
             return (
               <Link
                 key={lead.id}
                 href={href}
                 className={cn(
-                  "flex items-center gap-3 border-l-[3px] px-4 py-3 no-underline transition-colors duration-fast",
+                  "flex items-center gap-3 border-l-[3px] px-3 py-2.5 no-underline transition-colors duration-fast",
                   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/30",
                   isSelected
-                    ? "border-l-chat-active-border bg-chat-active text-[var(--color-text)] shadow-[inset_0_0_0_1px_rgba(25,72,95,0.06)]"
+                    ? "border-l-[var(--color-primary)] bg-[var(--color-primary-ultra-light)]"
                     : "border-transparent text-[var(--color-text)] hover:bg-canvas",
                 )}
               >
+                {/* Avatar */}
                 {lead.profilePictureUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
                     src={lead.profilePictureUrl}
                     alt=""
-                    className="size-10 shrink-0 rounded-full object-cover"
+                    className="h-9 w-9 shrink-0 rounded-full object-cover"
                   />
                 ) : (
-                  <div className="grid size-10 shrink-0 place-items-center rounded-full bg-disabled-bg text-sm font-semibold text-muted">
-                    {displayName.charAt(0).toUpperCase()}
+                  <div
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white"
+                    style={{ backgroundColor: bgColor }}
+                  >
+                    {initials}
                   </div>
                 )}
+
                 <div className="min-w-0 flex-1">
                   <div className="flex min-w-0 items-center gap-2">
-                    <span className="truncate text-body font-semibold text-[var(--color-text)]">
+                    <span
+                      className={cn(
+                        "truncate text-sm font-semibold",
+                        isSelected ? "text-primary" : "text-[var(--color-text)]",
+                      )}
+                    >
                       {displayName}
                     </span>
                     <span
-                      className="shrink-0 rounded-pill border border-border bg-disabled-bg px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-ui"
+                      className="shrink-0 rounded-pill border border-border bg-disabled-bg px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide text-muted-ui"
                       title="Estado del lead"
                     >
                       {labelLeadStatus(lead.status)}
                     </span>
                   </div>
-                  <p className="mt-1 line-clamp-2 text-label-ui text-muted-ui">
+                  <p className="mt-0.5 truncate text-[11px] text-muted-ui">
                     {lead.lastMessage?.trim() || "Sin mensajes"}
                   </p>
                 </div>
