@@ -990,6 +990,8 @@ export const leadWorker = new Worker<LeadProcessingJobV1>(
           } catch {
             stockTableProductId = null;
           }
+        } else if (productContext?.productId) {
+          stockTableProductId = String(productContext.productId).trim() || null;
         }
         const shadowMode = job.data.executionMode === "shadow";
         let crewPrimaryApplied = false;

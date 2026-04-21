@@ -474,7 +474,8 @@ let OpsService = class OpsService {
             indumentaria_calzado: "Indumentaria y Calzado",
             electronica: "Electrónica",
             hogar_deco: "Hogar y Deco",
-            belleza_salud: "Belleza y Salud"
+            belleza_salud: "Belleza y Salud",
+            repuestos_lubricentro: "Repuestos y lubricentro"
         };
         const categories = Object.keys(src_3.BUSINESS_PRESETS).map((id) => ({
             id,

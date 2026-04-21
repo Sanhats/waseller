@@ -382,7 +382,13 @@ export async function dispatchApi(
       requireRole(auth?.role, ["admin"]);
       const body = (await req.json()) as {
         knowledge?: Record<string, unknown>;
-        presetCategory?: "general" | "indumentaria_calzado" | "electronica" | "hogar_deco" | "belleza_salud";
+        presetCategory?:
+          | "general"
+          | "indumentaria_calzado"
+          | "electronica"
+          | "hogar_deco"
+          | "belleza_salud"
+          | "repuestos_lubricentro";
       };
       return NextResponse.json(await s.ops.updateTenantKnowledge(tenantId, body ?? {}));
     }

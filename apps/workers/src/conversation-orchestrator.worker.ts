@@ -30,6 +30,7 @@ import {
   replySimilarity
 } from "./services/conversation-recent-messages.service";
 import {
+  extractInterpretationProductId,
   logShadowExternalCompareIfConfigured,
   resolveProductIdForTenantVariant,
   tryWasellerCrewPrimaryReplacement
@@ -58,10 +59,11 @@ const resolvePolicyBand = (confidence: number): "high" | "medium" | "low" => {
 const buildRagProducts = async (
   tenantId: string,
   incomingText: string
-): Promise<Array<{ name: string; price: number; availableStock: number }>> => {
+): Promise<Array<{ productId: string; name: string; price: number; availableStock: number }>> => {
   const normalizedText = incomingText.toLowerCase().trim();
   const products = (await (prisma as any).$queryRaw`
     select
+      p.id as "productId",
       p.name,
       p.price,
       coalesce(sum(greatest(v.stock - v.reserved_stock, 0)), 0) as "availableStock"
@@ -72,9 +74,10 @@ const buildRagProducts = async (
     group by p.id, p.name, p.price
     order by p.updated_at desc
     limit 3
-  `) as Array<{ name: string; price: unknown; availableStock: number }>;
+  `) as Array<{ productId: string; name: string; price: unknown; availableStock: number }>;
 
   return products.map((item) => ({
+    productId: String(item.productId ?? ""),
     name: item.name,
     price: Number(item.price ?? 0),
     availableStock: Number(item.availableStock ?? 0)
@@ -168,6 +171,14 @@ export const conversationOrchestratorWorker = new Worker<LlmOrchestrationJobV1>(
           direction: item.direction,
           message: item.message
         }));
+      const interpretationProductId = extractInterpretationProductId(interpreted);
+      const ragProductIdsForCrew = [
+        ...new Set(
+          [interpretationProductId, ...ragProducts.map((p) => p.productId)].filter((id): id is string =>
+            Boolean(id && id.length > 0)
+          )
+        )
+      ].slice(0, 8);
       const variantIdForStock =
         (typeof interpreted.entities?.variantId === "string" ? interpreted.entities.variantId : null) ??
         job.data.activeOffer?.variantId ??
@@ -194,7 +205,8 @@ export const conversationOrchestratorWorker = new Worker<LlmOrchestrationJobV1>(
         baselineDecision: llmDecision,
         recentMessages: recentChronologicalForCrew,
         tenantBusinessCategory: tenantKnowledge.profile.businessCategory,
-        stockTableProductId
+        stockTableProductId,
+        stockTableRagProductIds: ragProductIdsForCrew.length > 0 ? ragProductIdsForCrew : null
       }).catch(() => null);
       if (crewPrimary) {
         llmDecision = crewPrimary.decision;
@@ -401,7 +413,8 @@ export const conversationOrchestratorWorker = new Worker<LlmOrchestrationJobV1>(
           baselineDecision: effectiveDecision,
           recentMessages: recentChronologicalForCrew,
           tenantBusinessCategory: tenantKnowledge.profile.businessCategory,
-          stockTableProductId
+          stockTableProductId,
+          stockTableRagProductIds: ragProductIdsForCrew.length > 0 ? ragProductIdsForCrew : null
         }).catch(() => undefined);
       }
       await prisma.llmTrace.create({

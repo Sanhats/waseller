@@ -1,5 +1,11 @@
 export declare const TENANT_BUSINESS_PROFILE_VERSION: 1;
-export type BusinessCategory = "general" | "indumentaria_calzado" | "electronica" | "hogar_deco" | "belleza_salud";
+export type BusinessCategory =
+  | "general"
+  | "indumentaria_calzado"
+  | "electronica"
+  | "hogar_deco"
+  | "belleza_salud"
+  | "repuestos_lubricentro";
 /** Solo Mercado Pago (link) y efectivo; cobros confirmados vía webhook o acción manual en panel. */
 export type PaymentMethod = "link_pago" | "efectivo_retiro";
 export type ShippingMethod = "retiro_local" | "envio_moto" | "correo" | "pickup_point";

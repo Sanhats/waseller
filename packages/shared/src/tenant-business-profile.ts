@@ -5,7 +5,8 @@ export type BusinessCategory =
   | "indumentaria_calzado"
   | "electronica"
   | "hogar_deco"
-  | "belleza_salud";
+  | "belleza_salud"
+  | "repuestos_lubricentro";
 
 /** Solo Mercado Pago (link) y efectivo; cobros confirmados vía webhook o acción manual en panel. */
 export type PaymentMethod = "link_pago" | "efectivo_retiro";
@@ -56,7 +57,8 @@ const isBusinessCategory = (value: string): value is BusinessCategory =>
   value === "indumentaria_calzado" ||
   value === "electronica" ||
   value === "hogar_deco" ||
-  value === "belleza_salud";
+  value === "belleza_salud" ||
+  value === "repuestos_lubricentro";
 
 const asBusinessCategory = (value: unknown): BusinessCategory => {
   const candidate = String(value ?? "").trim().toLowerCase();
@@ -147,6 +149,12 @@ export const BUSINESS_PRESETS: Record<BusinessCategory, Partial<TenantBusinessPr
     payment: { methods: ["link_pago", "efectivo_retiro"], acceptsInstallments: false },
     productVariantAxes: ["color", "modelo"],
     policy: { reservationTtlMinutes: 20, allowExchange: false, allowReturns: false }
+  },
+  repuestos_lubricentro: {
+    businessLabels: ["compatibilidad_vehiculo", "stock_bajo_rotacion"],
+    payment: { methods: ["link_pago", "efectivo_retiro"], acceptsInstallments: false },
+    productVariantAxes: ["modelo", "material"],
+    policy: { reservationTtlMinutes: 30, allowExchange: true, allowReturns: false }
   }
 };
 

@@ -7,6 +7,7 @@ import {
   type LlmDecisionV1,
   type ShadowCompareCandidateDecision
 } from "../../../../packages/queue/src";
+import { toCrewBusinessProfileSlug } from "../../../../packages/shared/src/crew-business-profile-slug";
 
 export type ShadowCompareRecentMessageV1 = {
   direction: "incoming" | "outgoing";
@@ -30,8 +31,6 @@ export type ShadowCompareStockRowV1 = {
   basePrice: number | null;
   variantPrice: number | null;
 };
-
-const CREW_BUSINESS_PROFILE_SLUG_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
 
 const normalizeShadowStockAttributes = (raw: unknown): Record<string, string> => {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
@@ -58,13 +57,57 @@ type StockRowRaw = {
   isActive: boolean;
 };
 
-async function loadStockTableForShadowCompare(
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+type ShadowStockLoadScope = "single_product" | "multi_rag" | "none";
+
+type ShadowStockLoadResult = {
+  rows: ShadowCompareStockRowV1[];
+  scope: ShadowStockLoadScope;
+  ragProductIdsTried: string[];
+};
+
+function sanitizeUuidProductIds(ids: unknown[] | null | undefined, max: number): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const id of ids ?? []) {
+    const t = String(id ?? "").trim();
+    if (!UUID_RE.test(t) || seen.has(t)) continue;
+    seen.add(t);
+    out.push(t);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+function mapStockRows(rows: StockRowRaw[]): ShadowCompareStockRowV1[] {
+  return rows.map((row) => ({
+    variantId: row.variantId,
+    productId: row.productId,
+    name: row.name,
+    sku: row.sku,
+    attributes: normalizeShadowStockAttributes(row.attributes),
+    stock: Number(row.stock ?? 0),
+    reservedStock: Number(row.reservedStock ?? 0),
+    availableStock: Number(row.availableStock ?? 0),
+    effectivePrice: Number(row.effectivePrice ?? 0),
+    imageUrl: row.imageUrl ?? undefined,
+    isActive: Boolean(row.isActive),
+    tags: Array.isArray(row.tags) ? row.tags : [],
+    basePrice: row.basePrice == null ? null : Number(row.basePrice),
+    variantPrice: row.variantPrice == null ? null : Number(row.variantPrice)
+  }));
+}
+
+async function queryVariantsForProduct(
   tenantId: string,
-  productId: string | null | undefined
+  productId: string,
+  rowLimit: number
 ): Promise<ShadowCompareStockRowV1[]> {
-  const pid = productId && String(productId).trim().length > 0 ? String(productId).trim() : null;
-  const rows = (pid
-    ? await (prisma as any).$queryRaw`
+  const pid = String(productId).trim();
+  if (!UUID_RE.test(pid)) return [];
+  const rows = (await (prisma as any).$queryRaw`
     select
       v.id as "variantId",
       p.id as "productId",
@@ -84,48 +127,82 @@ async function loadStockTableForShadowCompare(
     inner join public.products p on p.id = v.product_id
     where v.tenant_id::text = ${tenantId}
       and p.id::text = ${pid}
+      and v.is_active = true
+      and greatest(v.stock - v.reserved_stock, 0) > 0
     order by p.updated_at desc, p.name asc, v.sku asc
-    limit 500
-  `
-    : await (prisma as any).$queryRaw`
-    select
-      v.id as "variantId",
-      p.id as "productId",
-      p.name as "name",
-      p.price as "basePrice",
-      v.price as "variantPrice",
-      coalesce(v.price, p.price) as "effectivePrice",
-      v.sku as "sku",
-      v.attributes as "attributes",
-      v.stock as "stock",
-      v.reserved_stock as "reservedStock",
-      greatest(v.stock - v.reserved_stock, 0) as "availableStock",
-      p.image_url as "imageUrl",
-      p.tags as "tags",
-      v.is_active as "isActive"
-    from public.product_variants v
-    inner join public.products p on p.id = v.product_id
-    where v.tenant_id::text = ${tenantId}
-    order by p.updated_at desc, p.name asc, v.sku asc
-    limit 500
+    limit ${Math.max(1, Math.min(500, rowLimit))}
   `) as StockRowRaw[];
+  return mapStockRows(rows);
+}
 
-  return rows.map((row) => ({
-    variantId: row.variantId,
-    productId: row.productId,
-    name: row.name,
-    sku: row.sku,
-    attributes: normalizeShadowStockAttributes(row.attributes),
-    stock: Number(row.stock ?? 0),
-    reservedStock: Number(row.reservedStock ?? 0),
-    availableStock: Number(row.availableStock ?? 0),
-    effectivePrice: Number(row.effectivePrice ?? 0),
-    imageUrl: row.imageUrl ?? undefined,
-    isActive: Boolean(row.isActive),
-    tags: Array.isArray(row.tags) ? row.tags : [],
-    basePrice: row.basePrice == null ? null : Number(row.basePrice),
-    variantPrice: row.variantPrice == null ? null : Number(row.variantPrice)
-  }));
+async function loadStockTableBundle(
+  tenantId: string,
+  singleProductId: string | null | undefined,
+  ragProductIds: string[] | null | undefined
+): Promise<ShadowStockLoadResult> {
+  const single = singleProductId && String(singleProductId).trim();
+  if (single && UUID_RE.test(single)) {
+    const rows = await queryVariantsForProduct(tenantId, single, 500);
+    return { rows, scope: "single_product", ragProductIdsTried: [] };
+  }
+  const ragRowLimit = Math.max(
+    5,
+    Math.min(100, Number(process.env.LLM_SHADOW_COMPARE_STOCK_RAG_ROW_LIMIT ?? 30))
+  );
+  const ragIds = sanitizeUuidProductIds(ragProductIds ?? [], 8);
+  if (ragIds.length === 0) {
+    return { rows: [], scope: "none", ragProductIdsTried: [] };
+  }
+  const combined: ShadowCompareStockRowV1[] = [];
+  const seen = new Set<string>();
+  for (const pid of ragIds) {
+    const chunk = await queryVariantsForProduct(tenantId, pid, ragRowLimit);
+    for (const r of chunk) {
+      if (seen.has(r.variantId)) continue;
+      seen.add(r.variantId);
+      combined.push(r);
+      if (combined.length >= ragRowLimit) break;
+    }
+    if (combined.length >= ragRowLimit) break;
+  }
+  return {
+    rows: combined.slice(0, ragRowLimit),
+    scope: "multi_rag",
+    ragProductIdsTried: ragIds
+  };
+}
+
+function buildInventoryNarrowingNote(input: {
+  scope: ShadowStockLoadScope;
+  rowCount: number;
+  stockTableProductId?: string | null;
+  ragProductIdsTried: string[];
+  ragRowCap: number;
+}): string {
+  if (input.scope === "none") {
+    return "No se incluyó tabla de stock: sin producto concreto en contexto ni coincidencias RAG por nombre para acotar el catálogo. El catálogo completo puede tener más productos.";
+  }
+  if (input.rowCount === 0) {
+    if (input.scope === "single_product") {
+      return "Se acotó al producto en contexto pero no hay variantes activas con stock disponible en Waseller.";
+    }
+    return "Se filtraron productos candidatos (similitud con el mensaje) pero ninguna variante activa tiene stock > 0.";
+  }
+  if (input.scope === "single_product") {
+    if (input.rowCount === 1 && input.stockTableProductId) {
+      return "En el inventario enviado solo figura una variante activa con stock de este producto; no inventes otras combinaciones de color/talle salvo que el cliente las mencione en el hilo.";
+    }
+    return "Solo variantes activas con stock > 0 del producto asociado a la conversación (Waseller).";
+  }
+  const n = input.ragProductIdsTried.length;
+  return `Hasta ${n} producto(s) candidato(s) por similitud con el mensaje; solo variantes activas con stock > 0, máximo ${input.ragRowCap} filas (${input.rowCount} enviadas). El catálogo completo tiene más artículos.`;
+}
+
+/** `productId` en entities de la interpretación, si viene como UUID válido. */
+export function extractInterpretationProductId(interpreted: ConversationInterpretationV1): string | null {
+  const pid = interpreted.entities?.productId;
+  if (typeof pid === "string" && UUID_RE.test(pid.trim())) return pid.trim();
+  return null;
 }
 
 /** Resuelve el producto de una variante para acotar `stockTable` al mismo alcance que el lead worker (hermanas). */
@@ -162,14 +239,17 @@ export type ShadowCompareInput = {
   recentMessages?: ShadowCompareRecentMessageV1[];
   /**
    * Rubro / categoría de negocio (`tenant_knowledge.business_category`).
-   * Si no es `general` y cumple el patrón del crew, se serializa `businessProfileSlug` en el POST.
+   * Se mapea a `businessProfileSlug` del crew cuando aplica (p. ej. `hogar_deco` → `muebles_deco`).
    */
   tenantBusinessCategory?: string;
   /**
-   * Si hay `variantId` en contexto, restringe `stockTable` a variantes del mismo producto (como tabla de stock por SKU).
-   * Si no se pasa, se envía inventario global del tenant (hasta 500 filas).
+   * Variantes del mismo producto (activas, stock > 0). Tiene prioridad sobre `stockTableRagProductIds`.
    */
   stockTableProductId?: string | null;
+  /**
+   * Productos candidatos (p. ej. RAG por nombre) cuando no hay `stockTableProductId`: hasta 8 IDs, máx. filas según `LLM_SHADOW_COMPARE_STOCK_RAG_ROW_LIMIT` (default 30).
+   */
+  stockTableRagProductIds?: string[] | null;
 };
 
 const readShadowCompareSecret = (): string =>
@@ -214,12 +294,29 @@ function mergeCrewCandidateIntoLlmDecision(
 
 /** Cuerpo JSON del POST shadow-compare (mismo contrato para comparar o para modo primary). */
 export async function assembleShadowCompareOutboundBody(input: ShadowCompareInput): Promise<Record<string, unknown>> {
-  let stockTable: ShadowCompareStockRowV1[] = [];
+  let stockLoad: ShadowStockLoadResult = { rows: [], scope: "none", ragProductIdsTried: [] };
   try {
-    stockTable = await loadStockTableForShadowCompare(input.tenantId, input.stockTableProductId ?? null);
+    stockLoad = await loadStockTableBundle(
+      input.tenantId,
+      input.stockTableProductId ?? null,
+      input.stockTableRagProductIds ?? null
+    );
   } catch {
-    stockTable = [];
+    stockLoad = { rows: [], scope: "none", ragProductIdsTried: [] };
   }
+  const stockTable = stockLoad.rows;
+  const ragRowCap = Math.max(
+    5,
+    Math.min(100, Number(process.env.LLM_SHADOW_COMPARE_STOCK_RAG_ROW_LIMIT ?? 30))
+  );
+  const inventoryNarrowingNote = buildInventoryNarrowingNote({
+    scope: stockLoad.scope,
+    rowCount: stockTable.length,
+    stockTableProductId: input.stockTableProductId,
+    ragProductIdsTried: stockLoad.ragProductIdsTried,
+    ragRowCap
+  });
+
   const payload: Record<string, unknown> = {
     schemaVersion: JOB_SCHEMA_VERSION,
     kind: "waseller.shadow_compare.v1",
@@ -245,14 +342,11 @@ export async function assembleShadowCompareOutboundBody(input: ShadowCompareInpu
   }
   if (stockTable.length > 0) {
     payload.stockTable = stockTable;
-    if (stockTable.length === 1 && input.stockTableProductId) {
-      payload.inventoryNarrowingNote =
-        "En el inventario enviado solo figura una variante de este producto; no inventes otras combinaciones de color/talle salvo que el cliente las mencione en el hilo.";
-    }
   }
-  const rubro = String(input.tenantBusinessCategory ?? "").trim();
-  if (rubro && rubro !== "general" && CREW_BUSINESS_PROFILE_SLUG_RE.test(rubro)) {
-    payload.businessProfileSlug = rubro;
+  payload.inventoryNarrowingNote = inventoryNarrowingNote;
+  const crewSlug = toCrewBusinessProfileSlug(String(input.tenantBusinessCategory ?? ""));
+  if (crewSlug) {
+    payload.businessProfileSlug = crewSlug;
   }
   return payload;
 }
@@ -272,7 +366,7 @@ export async function tryWasellerCrewPrimaryReplacement(
   const outboundBody = await assembleShadowCompareOutboundBody(input);
   const timeoutMs = Math.max(
     1000,
-    Math.min(120_000, Number(process.env.LLM_SHADOW_COMPARE_TIMEOUT_MS ?? 8000))
+    Math.min(120_000, Number(process.env.LLM_SHADOW_COMPARE_TIMEOUT_MS ?? 30_000))
   );
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -384,7 +478,7 @@ export async function logShadowExternalCompareIfConfigured(input: ShadowCompareI
 
   const timeoutMs = Math.max(
     1000,
-    Math.min(120_000, Number(process.env.LLM_SHADOW_COMPARE_TIMEOUT_MS ?? 8000))
+    Math.min(120_000, Number(process.env.LLM_SHADOW_COMPARE_TIMEOUT_MS ?? 30_000))
   );
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);

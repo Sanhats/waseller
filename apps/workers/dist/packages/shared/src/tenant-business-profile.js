@@ -12,7 +12,8 @@ const isBusinessCategory = (value) => value === "general" ||
     value === "indumentaria_calzado" ||
     value === "electronica" ||
     value === "hogar_deco" ||
-    value === "belleza_salud";
+    value === "belleza_salud" ||
+    value === "repuestos_lubricentro";
 const asBusinessCategory = (value) => {
     const candidate = String(value ?? "").trim().toLowerCase();
     return isBusinessCategory(candidate) ? candidate : "general";
@@ -96,6 +97,12 @@ exports.BUSINESS_PRESETS = {
         payment: { methods: ["link_pago", "efectivo_retiro"], acceptsInstallments: false },
         productVariantAxes: ["color", "modelo"],
         policy: { reservationTtlMinutes: 20, allowExchange: false, allowReturns: false }
+    },
+    repuestos_lubricentro: {
+        businessLabels: ["compatibilidad_vehiculo", "stock_bajo_rotacion"],
+        payment: { methods: ["link_pago", "efectivo_retiro"], acceptsInstallments: false },
+        productVariantAxes: ["modelo", "material"],
+        policy: { reservationTtlMinutes: 30, allowExchange: true, allowReturns: false }
     }
 };
 const normalizeTenantBusinessProfile = (raw) => {

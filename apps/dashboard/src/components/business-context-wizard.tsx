@@ -7,7 +7,13 @@ import { cn } from "@/lib/cn";
 import { getClientApiBase } from "@/lib/api-base";
 
 type TenantPresetOption = {
-  id: "general" | "indumentaria_calzado" | "electronica" | "hogar_deco" | "belleza_salud";
+  id:
+    | "general"
+    | "indumentaria_calzado"
+    | "electronica"
+    | "hogar_deco"
+    | "belleza_salud"
+    | "repuestos_lubricentro";
   label: string;
   profile: Record<string, unknown>;
 };

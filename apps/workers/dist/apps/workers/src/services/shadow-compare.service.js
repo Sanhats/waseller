@@ -1,12 +1,13 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.extractInterpretationProductId = extractInterpretationProductId;
 exports.resolveProductIdForTenantVariant = resolveProductIdForTenantVariant;
 exports.assembleShadowCompareOutboundBody = assembleShadowCompareOutboundBody;
 exports.tryWasellerCrewPrimaryReplacement = tryWasellerCrewPrimaryReplacement;
 exports.logShadowExternalCompareIfConfigured = logShadowExternalCompareIfConfigured;
 const src_1 = require("../../../../packages/db/src");
 const src_2 = require("../../../../packages/queue/src");
-const CREW_BUSINESS_PROFILE_SLUG_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
+const crew_business_profile_slug_1 = require("../../../../packages/shared/src/crew-business-profile-slug");
 const normalizeShadowStockAttributes = (raw) => {
     if (!raw || typeof raw !== "object" || Array.isArray(raw))
         return {};
@@ -15,10 +16,44 @@ const normalizeShadowStockAttributes = (raw) => {
         .filter(([key, value]) => key.length > 0 && value.length > 0);
     return Object.fromEntries(entries);
 };
-async function loadStockTableForShadowCompare(tenantId, productId) {
-    const pid = productId && String(productId).trim().length > 0 ? String(productId).trim() : null;
-    const rows = (pid
-        ? await src_1.prisma.$queryRaw `
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function sanitizeUuidProductIds(ids, max) {
+    const out = [];
+    const seen = new Set();
+    for (const id of ids ?? []) {
+        const t = String(id ?? "").trim();
+        if (!UUID_RE.test(t) || seen.has(t))
+            continue;
+        seen.add(t);
+        out.push(t);
+        if (out.length >= max)
+            break;
+    }
+    return out;
+}
+function mapStockRows(rows) {
+    return rows.map((row) => ({
+        variantId: row.variantId,
+        productId: row.productId,
+        name: row.name,
+        sku: row.sku,
+        attributes: normalizeShadowStockAttributes(row.attributes),
+        stock: Number(row.stock ?? 0),
+        reservedStock: Number(row.reservedStock ?? 0),
+        availableStock: Number(row.availableStock ?? 0),
+        effectivePrice: Number(row.effectivePrice ?? 0),
+        imageUrl: row.imageUrl ?? undefined,
+        isActive: Boolean(row.isActive),
+        tags: Array.isArray(row.tags) ? row.tags : [],
+        basePrice: row.basePrice == null ? null : Number(row.basePrice),
+        variantPrice: row.variantPrice == null ? null : Number(row.variantPrice)
+    }));
+}
+async function queryVariantsForProduct(tenantId, productId, rowLimit) {
+    const pid = String(productId).trim();
+    if (!UUID_RE.test(pid))
+        return [];
+    const rows = (await src_1.prisma.$queryRaw `
     select
       v.id as "variantId",
       p.id as "productId",
@@ -38,47 +73,70 @@ async function loadStockTableForShadowCompare(tenantId, productId) {
     inner join public.products p on p.id = v.product_id
     where v.tenant_id::text = ${tenantId}
       and p.id::text = ${pid}
+      and v.is_active = true
+      and greatest(v.stock - v.reserved_stock, 0) > 0
     order by p.updated_at desc, p.name asc, v.sku asc
-    limit 500
-  `
-        : await src_1.prisma.$queryRaw `
-    select
-      v.id as "variantId",
-      p.id as "productId",
-      p.name as "name",
-      p.price as "basePrice",
-      v.price as "variantPrice",
-      coalesce(v.price, p.price) as "effectivePrice",
-      v.sku as "sku",
-      v.attributes as "attributes",
-      v.stock as "stock",
-      v.reserved_stock as "reservedStock",
-      greatest(v.stock - v.reserved_stock, 0) as "availableStock",
-      p.image_url as "imageUrl",
-      p.tags as "tags",
-      v.is_active as "isActive"
-    from public.product_variants v
-    inner join public.products p on p.id = v.product_id
-    where v.tenant_id::text = ${tenantId}
-    order by p.updated_at desc, p.name asc, v.sku asc
-    limit 500
+    limit ${Math.max(1, Math.min(500, rowLimit))}
   `);
-    return rows.map((row) => ({
-        variantId: row.variantId,
-        productId: row.productId,
-        name: row.name,
-        sku: row.sku,
-        attributes: normalizeShadowStockAttributes(row.attributes),
-        stock: Number(row.stock ?? 0),
-        reservedStock: Number(row.reservedStock ?? 0),
-        availableStock: Number(row.availableStock ?? 0),
-        effectivePrice: Number(row.effectivePrice ?? 0),
-        imageUrl: row.imageUrl ?? undefined,
-        isActive: Boolean(row.isActive),
-        tags: Array.isArray(row.tags) ? row.tags : [],
-        basePrice: row.basePrice == null ? null : Number(row.basePrice),
-        variantPrice: row.variantPrice == null ? null : Number(row.variantPrice)
-    }));
+    return mapStockRows(rows);
+}
+async function loadStockTableBundle(tenantId, singleProductId, ragProductIds) {
+    const single = singleProductId && String(singleProductId).trim();
+    if (single && UUID_RE.test(single)) {
+        const rows = await queryVariantsForProduct(tenantId, single, 500);
+        return { rows, scope: "single_product", ragProductIdsTried: [] };
+    }
+    const ragRowLimit = Math.max(5, Math.min(100, Number(process.env.LLM_SHADOW_COMPARE_STOCK_RAG_ROW_LIMIT ?? 30)));
+    const ragIds = sanitizeUuidProductIds(ragProductIds ?? [], 8);
+    if (ragIds.length === 0) {
+        return { rows: [], scope: "none", ragProductIdsTried: [] };
+    }
+    const combined = [];
+    const seen = new Set();
+    for (const pid of ragIds) {
+        const chunk = await queryVariantsForProduct(tenantId, pid, ragRowLimit);
+        for (const r of chunk) {
+            if (seen.has(r.variantId))
+                continue;
+            seen.add(r.variantId);
+            combined.push(r);
+            if (combined.length >= ragRowLimit)
+                break;
+        }
+        if (combined.length >= ragRowLimit)
+            break;
+    }
+    return {
+        rows: combined.slice(0, ragRowLimit),
+        scope: "multi_rag",
+        ragProductIdsTried: ragIds
+    };
+}
+function buildInventoryNarrowingNote(input) {
+    if (input.scope === "none") {
+        return "No se incluyó tabla de stock: sin producto concreto en contexto ni coincidencias RAG por nombre para acotar el catálogo. El catálogo completo puede tener más productos.";
+    }
+    if (input.rowCount === 0) {
+        if (input.scope === "single_product") {
+            return "Se acotó al producto en contexto pero no hay variantes activas con stock disponible en Waseller.";
+        }
+        return "Se filtraron productos candidatos (similitud con el mensaje) pero ninguna variante activa tiene stock > 0.";
+    }
+    if (input.scope === "single_product") {
+        if (input.rowCount === 1 && input.stockTableProductId) {
+            return "En el inventario enviado solo figura una variante activa con stock de este producto; no inventes otras combinaciones de color/talle salvo que el cliente las mencione en el hilo.";
+        }
+        return "Solo variantes activas con stock > 0 del producto asociado a la conversación (Waseller).";
+    }
+    const n = input.ragProductIdsTried.length;
+    return `Hasta ${n} producto(s) candidato(s) por similitud con el mensaje; solo variantes activas con stock > 0, máximo ${input.ragRowCap} filas (${input.rowCount} enviadas). El catálogo completo tiene más artículos.`;
+}
+/** `productId` en entities de la interpretación, si viene como UUID válido. */
+function extractInterpretationProductId(interpreted) {
+    const pid = interpreted.entities?.productId;
+    if (typeof pid === "string" && UUID_RE.test(pid.trim()))
+        return pid.trim();
+    return null;
 }
 /** Resuelve el producto de una variante para acotar `stockTable` al mismo alcance que el lead worker (hermanas). */
 async function resolveProductIdForTenantVariant(tenantId, variantId) {
@@ -127,13 +185,22 @@ function mergeCrewCandidateIntoLlmDecision(baseline, candidate) {
 }
 /** Cuerpo JSON del POST shadow-compare (mismo contrato para comparar o para modo primary). */
 async function assembleShadowCompareOutboundBody(input) {
-    let stockTable = [];
+    let stockLoad = { rows: [], scope: "none", ragProductIdsTried: [] };
     try {
-        stockTable = await loadStockTableForShadowCompare(input.tenantId, input.stockTableProductId ?? null);
+        stockLoad = await loadStockTableBundle(input.tenantId, input.stockTableProductId ?? null, input.stockTableRagProductIds ?? null);
     }
     catch {
-        stockTable = [];
+        stockLoad = { rows: [], scope: "none", ragProductIdsTried: [] };
     }
+    const stockTable = stockLoad.rows;
+    const ragRowCap = Math.max(5, Math.min(100, Number(process.env.LLM_SHADOW_COMPARE_STOCK_RAG_ROW_LIMIT ?? 30)));
+    const inventoryNarrowingNote = buildInventoryNarrowingNote({
+        scope: stockLoad.scope,
+        rowCount: stockTable.length,
+        stockTableProductId: input.stockTableProductId,
+        ragProductIdsTried: stockLoad.ragProductIdsTried,
+        ragRowCap
+    });
     const payload = {
         schemaVersion: src_2.JOB_SCHEMA_VERSION,
         kind: "waseller.shadow_compare.v1",
@@ -162,14 +229,11 @@ async function assembleShadowCompareOutboundBody(input) {
     }
     if (stockTable.length > 0) {
         payload.stockTable = stockTable;
-        if (stockTable.length === 1 && input.stockTableProductId) {
-            payload.inventoryNarrowingNote =
-                "En el inventario enviado solo figura una variante de este producto; no inventes otras combinaciones de color/talle salvo que el cliente las mencione en el hilo.";
-        }
     }
-    const rubro = String(input.tenantBusinessCategory ?? "").trim();
-    if (rubro && rubro !== "general" && CREW_BUSINESS_PROFILE_SLUG_RE.test(rubro)) {
-        payload.businessProfileSlug = rubro;
+    payload.inventoryNarrowingNote = inventoryNarrowingNote;
+    const crewSlug = (0, crew_business_profile_slug_1.toCrewBusinessProfileSlug)(String(input.tenantBusinessCategory ?? ""));
+    if (crewSlug) {
+        payload.businessProfileSlug = crewSlug;
     }
     return payload;
 }
@@ -185,7 +249,7 @@ async function tryWasellerCrewPrimaryReplacement(input) {
     if (!url)
         return null;
     const outboundBody = await assembleShadowCompareOutboundBody(input);
-    const timeoutMs = Math.max(1000, Math.min(120_000, Number(process.env.LLM_SHADOW_COMPARE_TIMEOUT_MS ?? 8000)));
+    const timeoutMs = Math.max(1000, Math.min(120_000, Number(process.env.LLM_SHADOW_COMPARE_TIMEOUT_MS ?? 30_000)));
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     const shadowSecret = readShadowCompareSecret();
@@ -286,7 +350,7 @@ async function logShadowExternalCompareIfConfigured(input) {
     const url = String(process.env.LLM_SHADOW_COMPARE_URL ?? "").trim();
     if (!url)
         return;
-    const timeoutMs = Math.max(1000, Math.min(120_000, Number(process.env.LLM_SHADOW_COMPARE_TIMEOUT_MS ?? 8000)));
+    const timeoutMs = Math.max(1000, Math.min(120_000, Number(process.env.LLM_SHADOW_COMPARE_TIMEOUT_MS ?? 30_000)));
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     const shadowSecret = readShadowCompareSecret();

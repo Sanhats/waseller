@@ -135,7 +135,13 @@ export class OpsController {
     @Body()
     body: {
       knowledge?: Record<string, unknown>;
-      presetCategory?: "general" | "indumentaria_calzado" | "electronica" | "hogar_deco" | "belleza_salud";
+      presetCategory?:
+        | "general"
+        | "indumentaria_calzado"
+        | "electronica"
+        | "hogar_deco"
+        | "belleza_salud"
+        | "repuestos_lubricentro";
     }
   ): Promise<{ tenantId: string; knowledge: Record<string, unknown> }> {
     requireRole(req.auth?.role, ["admin"]);

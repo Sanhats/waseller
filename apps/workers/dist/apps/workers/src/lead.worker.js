@@ -852,6 +852,9 @@ exports.leadWorker = new bullmq_1.Worker(src_1.QueueNames.leadProcessing, async 
                     stockTableProductId = null;
                 }
             }
+            else if (productContext?.productId) {
+                stockTableProductId = String(productContext.productId).trim() || null;
+            }
             const shadowMode = job.data.executionMode === "shadow";
             let crewPrimaryApplied = false;
             const crewPrimary = await (0, shadow_compare_service_1.tryWasellerCrewPrimaryReplacement)({

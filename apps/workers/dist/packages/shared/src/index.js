@@ -19,6 +19,7 @@ __exportStar(require("./lead"), exports);
 __exportStar(require("./outgoing"), exports);
 __exportStar(require("./auth"), exports);
 __exportStar(require("./tenant-business-profile"), exports);
+__exportStar(require("./crew-business-profile-slug"), exports);
 __exportStar(require("./mercado-pago"), exports);
 __exportStar(require("./conversation-labels"), exports);
 __exportStar(require("./whatsapp-service-url"), exports);

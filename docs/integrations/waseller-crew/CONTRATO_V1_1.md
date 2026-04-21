@@ -22,9 +22,9 @@ Todos **opcionales**. Tipos alineados a uso en workers / Prisma (strings UUID do
 | `messageId` | `string` | Opcional | UUID del registro `Message` asociado al turno. |
 | `conversationId` | `string \| null` | Opcional | UUID de conversación; `null` si no aplica. |
 | `recentMessages` | `array` | Opcional | Ventana corta de contexto; cada ítem: `{ "direction": "incoming" \| "outgoing", "message": "string" }`. **Tope recomendado enviado por Waseller:** 8 ítems (orden cronológico o explícito en doc del PR). |
-| `stockTable` | `array` | Opcional | Filas de inventario con las **mismas propiedades** que devuelve `GET /products` (variante por fila: `variantId`, `productId`, `name`, `sku`, `attributes`, `stock`, `reservedStock`, `availableStock`, `effectivePrice`, `imageUrl`, `isActive`, `tags`, `basePrice`, `variantPrice`). Waseller envía solo si hay al menos una fila; **tope 500** filas por request (mismo tope que valida el crew). Cuando hay `variantId` en contexto (`activeOffer` / interpretación), **solo variantes del mismo `productId`** (catálogo coherente con la consulta). |
-| `inventoryNarrowingNote` | `string` | Opcional | Waseller lo envía solo si `stockTable` tiene **una** fila con scope por producto. waseller-crew lo modela y lo usa en el bloque de misión del prompt (además de `extra="ignore"` para campos desconocidos). |
-| `businessProfileSlug` | `string` | Opcional | Patrón seguro `[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}`. Waseller lo deriva del rubro `tenant_knowledge.business_category` cuando no es `general` y cumple el patrón (p. ej. `indumentaria_calzado`); el crew puede cargar `tenant_prompts/<slug>.txt` en su deploy. |
+| `stockTable` | `array` | Opcional | Filas alineadas a `GET /products` (misma forma por variante). **Solo variantes `is_active` con `availableStock > 0`.** Con `variantId` / producto en contexto: todas las variantes de ese **un** `productId` (tope 500). Sin producto único: Waseller arma candidatos por **RAG** (nombre similiar al mensaje, hasta 3 `productId`) + opcional `entities.productId` de la interpretación; **tope de filas** configurable (`LLM_SHADOW_COMPARE_STOCK_RAG_ROW_LIMIT`, default **30**). Si no hay alcance posible, **no** se envía `stockTable`. |
+| `inventoryNarrowingNote` | `string` | Opcional | Waseller envía **siempre** una nota en español que explica el alcance: producto único, multi-producto RAG, sin tabla por falta de contexto, o conjunto vacío tras filtros. waseller-crew la usa en el bloque de misión (`extra="ignore"` sigue aplicando a campos desconocidos). |
+| `businessProfileSlug` | `string` | Opcional | Patrón seguro `[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}`. Waseller parte de `tenant_knowledge.business_category` y aplica **mapeo** a slugs del crew cuando hace falta (p. ej. `hogar_deco` → `muebles_deco`); valores como `indumentaria_calzado` o `repuestos_lubricentro` se envían tal cual si ya coinciden con el crew. |
 
 **No** se cambia en v1.1: `schemaVersion`, `kind`, `tenantId`, `leadId`, `incomingText`, `interpretation`, `baselineDecision` (siguen como hoy).
 
@@ -37,7 +37,8 @@ Todos **opcionales**. Tipos alineados a uso en workers / Prisma (strings UUID do
 | Variable | Obligatoriedad | Descripción |
 |----------|----------------|-------------|
 | `LLM_SHADOW_COMPARE_SECRET` | Opcional | Secreto compartido. Si está **definido y no vacío**, el worker envía header de auth (ver abajo). Si está vacío / ausente, **no** envía el header (compatible con entornos sin secret). **Alias:** si no está definido, el worker también lee **`SHADOW_COMPARE_SECRET`** (útil si en Railway usás el mismo nombre que en waseller-crew). |
-| `LLM_SHADOW_COMPARE_TIMEOUT_MS` | Opcional | Timeout del `fetch` en workers (default **8000** ms, máximo **120000**). Con `stockTable` grande o Crew lento, conviene aumentarlo para evitar cortes antes de la respuesta HTTP. |
+| `LLM_SHADOW_COMPARE_TIMEOUT_MS` | Opcional | Timeout del `fetch` en workers (default **30000** ms, máximo **120000**). Tabla guía crew: ~15s con pocas filas, 30s con decenas, 60s con ~500 filas. |
+| `LLM_SHADOW_COMPARE_STOCK_RAG_ROW_LIMIT` | Opcional | Máximo de filas de `stockTable` en modo multi-producto RAG (default **30**, rango 5–100). |
 
 **Header (cuando el secret está configurado):**
 
@@ -178,6 +179,6 @@ Lo siguiente está **implementado en el repo waseller-crew** (no en este monorep
 | **Agente** | Sin inventar catálogo; `stockTable` + baseline como contexto; `inventoryNarrowingNote` en bloque de misión; `businessProfileSlug` → `tenant_prompts/<slug>.txt`; reglas de seguimiento / anti-repetición en prompt. |
 | **Ops** | Logs JSON (p. ej. `shadow_compare_completed`, `shadow_compare_reject_kind`, `crew_failure` con `error_type` + `exc_info`); **`GET /health`**. |
 
-### Waseller (este monorepo) — pendiente de producto si quieren crew con variante ya resuelta
+### Waseller (este monorepo) — rutas que POSTean al crew
 
-Cuando el **message-processor** resuelve **`variantId`**, hoy encola solo **`lead.worker`** y **no** el orquestador → **no** hay `llm_traces` ni POST al crew en ese turno. Para usar waseller-crew ahí también hace falta **cambio de código en Waseller** (routing / llamada explícita); no es un faltante del checklist del crew anterior.
+Con `LLM_SHADOW_COMPARE_URL` definida: **`conversation-orchestrator.worker`** (ruta orquestada) y **`lead.worker`** en la ruta directa sin `llmDecision` llaman a `logShadowExternalCompareIfConfigured` / `tryWasellerCrewPrimaryReplacement` y persisten trazas en `llm_traces` cuando corresponde.

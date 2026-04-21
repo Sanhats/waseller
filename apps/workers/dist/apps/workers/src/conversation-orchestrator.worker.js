@@ -35,6 +35,7 @@ const buildRagProducts = async (tenantId, incomingText) => {
     const normalizedText = incomingText.toLowerCase().trim();
     const products = (await src_1.prisma.$queryRaw `
     select
+      p.id as "productId",
       p.name,
       p.price,
       coalesce(sum(greatest(v.stock - v.reserved_stock, 0)), 0) as "availableStock"
@@ -47,6 +48,7 @@ const buildRagProducts = async (tenantId, incomingText) => {
     limit 3
   `);
     return products.map((item) => ({
+        productId: String(item.productId ?? ""),
         name: item.name,
         price: Number(item.price ?? 0),
         availableStock: Number(item.availableStock ?? 0)
@@ -125,6 +127,10 @@ exports.conversationOrchestratorWorker = new bullmq_1.Worker(src_2.QueueNames.ll
             direction: item.direction,
             message: item.message
         }));
+        const interpretationProductId = (0, shadow_compare_service_1.extractInterpretationProductId)(interpreted);
+        const ragProductIdsForCrew = [
+            ...new Set([interpretationProductId, ...ragProducts.map((p) => p.productId)].filter((id) => Boolean(id && id.length > 0)))
+        ].slice(0, 8);
         const variantIdForStock = (typeof interpreted.entities?.variantId === "string" ? interpreted.entities.variantId : null) ??
             job.data.activeOffer?.variantId ??
             null;
@@ -151,7 +157,8 @@ exports.conversationOrchestratorWorker = new bullmq_1.Worker(src_2.QueueNames.ll
             baselineDecision: llmDecision,
             recentMessages: recentChronologicalForCrew,
             tenantBusinessCategory: tenantKnowledge.profile.businessCategory,
-            stockTableProductId
+            stockTableProductId,
+            stockTableRagProductIds: ragProductIdsForCrew.length > 0 ? ragProductIdsForCrew : null
         }).catch(() => null);
         if (crewPrimary) {
             llmDecision = crewPrimary.decision;
@@ -336,7 +343,8 @@ exports.conversationOrchestratorWorker = new bullmq_1.Worker(src_2.QueueNames.ll
                 baselineDecision: effectiveDecision,
                 recentMessages: recentChronologicalForCrew,
                 tenantBusinessCategory: tenantKnowledge.profile.businessCategory,
-                stockTableProductId
+                stockTableProductId,
+                stockTableRagProductIds: ragProductIdsForCrew.length > 0 ? ragProductIdsForCrew : null
             }).catch(() => undefined);
         }
         await src_1.prisma.llmTrace.create({
