@@ -648,8 +648,7 @@ exports.leadWorker = new bullmq_1.Worker(src_1.QueueNames.leadProcessing, async 
         [
             "buscar_producto",
             "consultar_precio",
-            "consultar_talle",
-            "consultar_color",
+            // consultar_talle / consultar_color: ramas dedicadas más abajo (listan opciones, no el cierre genérico).
             "elegir_variante",
             "aceptar_oferta",
             "desconocida"
@@ -662,7 +661,38 @@ exports.leadWorker = new bullmq_1.Worker(src_1.QueueNames.leadProcessing, async 
         }
         selectedVariant = "exact-variant-close";
     }
-    else if (job.data.intent === "consultar_talle" || job.data.intent === "consultar_color") {
+    else if (job.data.intent === "consultar_color") {
+        if (availableStock <= 0) {
+            message = await templateService.render(tenantId, "size_no_stock", {
+                product_name: variant.productName
+            });
+            selectedVariant = "color-no-stock";
+        }
+        else {
+            const colorMap = collectAxisOptions(availableSiblingVariants, ["color", "Color"]);
+            const colors = [...new Set([...(colorMap.color ?? []), ...(colorMap.Color ?? [])])].filter(Boolean);
+            if (colors.length > 1) {
+                message = `Para ${variant.productName} hoy tengo estos colores con stock: ${colors.join(", ")}. ¿Con cuál te quedás?${exactVariantPriceText}`;
+                selectedVariant = "color-options";
+            }
+            else if (colors.length === 1) {
+                message = `Ahora mismo solo tengo ${variant.productName} en color ${colors[0]}.${exactVariantPriceText} Tengo ${availableStock} unidad(es). ¿Te sirve o querés que te avise si entran más opciones?`;
+                selectedVariant = "color-single";
+            }
+            else {
+                const comboAxes = Object.keys(variantAttributeMap).length > 0 ? Object.keys(variantAttributeMap) : ["talle", "color", "modelo"];
+                const combos = describeAvailableCombinations(availableSiblingVariants, comboAxes);
+                message = combos
+                    ? `Estas son las variantes con stock de ${variant.productName}: ${combos}. ¿Cuál te interesa?`
+                    : await templateService.render(tenantId, "size_need_input", {
+                        product_name: variant.productName,
+                        price: formattedPrice
+                    });
+                selectedVariant = combos ? "color-combos-fallback" : "color-need-input";
+            }
+        }
+    }
+    else if (job.data.intent === "consultar_talle") {
         if (availableStock <= 0) {
             message = await templateService.render(tenantId, "size_no_stock", {
                 product_name: variant.productName
@@ -744,9 +774,9 @@ exports.leadWorker = new bullmq_1.Worker(src_1.QueueNames.leadProcessing, async 
             selectedVariant = selectedPlaybook.variant;
         }
     }
-    const asksVariantFollowUp = shadowLlm &&
-        variant &&
-        /\b(otro|otra|tambien|tambi[eé]n|en otro|m[aá]s|otro\s+color|otra\s+vari|pero\s|y\s+en|hay\s+en)\b/i.test(job.data.incomingMessage ?? "");
+    // Siempre que aplique (active/shadow, con o sin llmDecision en sombra): evita repetir el mismo cierre ante “otro color”, etc.
+    const asksVariantFollowUp = variant &&
+        /\b(otro|otra|tambien|tambi[eé]n|en otro|m[aá]s|otro\s+color|otra\s+vari|otra\s+opc|ten[eé]s?\s+en\s+otro|hay\s+en\s+otro|pero\s|y\s+en|hay\s+en)\b/i.test(job.data.incomingMessage ?? "");
     if (asksVariantFollowUp) {
         const lastBotMsg = await src_2.prisma.message.findFirst({
             where: { tenantId, phone, direction: "outgoing" },
