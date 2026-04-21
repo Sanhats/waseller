@@ -129,6 +129,108 @@ const isLlmShadowDecision = (decision: LeadProcessingJobV1["llmDecision"] | unde
   return false;
 };
 
+/** Nombres de otros productos con al menos una variante activa y stock > 0 (excluye el producto actual). */
+async function fetchOtherInStockProductNames(
+  tenantId: string,
+  excludeProductId: string,
+  limit: number
+): Promise<string[]> {
+  const cap = Math.max(1, Math.min(15, Math.floor(limit)));
+  const rows = (await (prisma as any).$queryRaw`
+    select distinct p.name as "productName"
+    from public.products p
+    inner join public.product_variants v on v.product_id = p.id and v.tenant_id::text = ${tenantId}
+    where p.tenant_id::text = ${tenantId}
+      and p.id::text <> ${excludeProductId}
+      and v.is_active = true
+      and greatest(v.stock - v.reserved_stock, 0) > 0
+    order by p.updated_at desc
+    limit ${cap}
+  `) as Array<{ productName: string }>;
+  return rows.map((r) => String(r.productName ?? "").trim()).filter(Boolean);
+}
+
+function extractMentionedQuantityUnits(text: string): number | null {
+  const t = normalizeText(text);
+  const strong = t.match(
+    /\b(?:necesito|quiero|pido|pedimos|compro|estoy\s+necesitando)\s*(?:al\s*menos\s*)?(\d{1,4})\b/
+  );
+  if (strong) {
+    const n = parseInt(strong[1], 10);
+    return Number.isFinite(n) && n >= 1 ? Math.min(9999, n) : null;
+  }
+  const units = t.match(/\b(\d{2,4}|\d{1,4})\s*(?:unidad|unidades|piezas?)\b/);
+  if (units) {
+    const n = parseInt(units[1], 10);
+    return Number.isFinite(n) && n >= 1 ? Math.min(9999, n) : null;
+  }
+  return null;
+}
+
+function isCatalogBroadDiscoveryAsk(raw: string): boolean {
+  const t = normalizeText(raw);
+  return (
+    /\b(que\s+otro\s+producto|qu[eé]\s+otro\s+producto|otro\s+producto|otros\s+productos|otra\s+cosa)\b/.test(t) ||
+    /\b(disponible\s+en\s+(el\s+)?catalogo|en\s+el\s+catalogo|todo\s+el\s+catalogo|que\s+hay\s+en\s+(el\s+)?catalogo)\b/.test(
+      t
+    ) ||
+    /\b(que\s+mas\s+tenes|qu[eé]\s*m[aá]s\s+tenes|que\s+tienen\s+disponible|que\s+más\s+hay)\b/.test(t)
+  );
+}
+
+function isAnotherProductOrLineAsk(raw: string): boolean {
+  const t = normalizeText(raw);
+  if (/\b(otra\s+mesa|otro\s+modelo|otra\s+linea|otro\s+articulo|otro\s+item)\b/.test(t)) return true;
+  if (/\bno\s*tenes\s*otra\b/.test(t) && /\b(mesa|silla|escritorio|producto|opcion)\b/.test(t)) return true;
+  if (/\botro[s]?\s+(tipo|modelo|estilo)\b/.test(t)) return true;
+  return false;
+}
+
+function filterOthersByLooseTokens(raw: string, others: string[]): string[] {
+  const t = normalizeText(raw);
+  const stop = new Set([
+    "tenes",
+    "tienen",
+    "tienes",
+    "otra",
+    "otro",
+    "disponible",
+    "producto",
+    "catalogo",
+    "algun",
+    "alguna",
+    "tenemos",
+    "tengo",
+    "hay",
+    "otras",
+    "otros"
+  ]);
+  const words = t.split(/\s+/).filter((w) => w.length >= 5 && !stop.has(w));
+  if (words.length === 0) return others;
+  const hit = others.filter((name) => {
+    const nn = normalizeText(name);
+    return words.some((w) => nn.includes(w));
+  });
+  return hit.length > 0 ? hit : others;
+}
+
+function wantsVariantAxisFollowUp(raw: string): boolean {
+  const plain = normalizeText(raw);
+  if (isCatalogBroadDiscoveryAsk(raw) || isAnotherProductOrLineAsk(raw)) return false;
+  if (/\b(otro\s+producto|otros\s+productos)\b/.test(plain)) return false;
+  if (/\b(no\s+me\s+alcanza|no\s+alcanza|necesito\s+m[aá]s|m[aá]s\s+unidades|no\s+tenes\s+m[aá]s|no\s+tienen\s+m[aá]s)\b/.test(plain))
+    return false;
+
+  if (
+    /\b(otro\s+color|otra\s+vari|otro\s+talle|otra\s+talla|otra\s+combinaci|otra\s+opc|tenes\s+en\s+otro|tenes\s+en\s+otra|hay\s+en\s+otro)\b/.test(
+      plain
+    )
+  )
+    return true;
+  if (/\b(otro|otra)\b/.test(plain) && /\b(color|talle|talla|vari)\b/.test(plain)) return true;
+  return false;
+}
+
 const AXIS_LABELS: Record<string, { singular: string; plural: string }> = {
   talle: { singular: "talle", plural: "talles" },
   color: { singular: "color", plural: "colores" },
@@ -623,6 +725,7 @@ export const leadWorker = new Worker<LeadProcessingJobV1>(
     );
     const axisOptions = collectAxisOptions(availableSiblingVariants, missingAxes);
     const visibleAxes = filterAxesWithOptions(axisOptions, missingAxes);
+    const rawIncoming = String(job.data.incomingMessage ?? "").trim();
     const incomingText = normalizeText(job.data.incomingMessage ?? "");
     const shadowLlm = isLlmShadowDecision(job.data.llmDecision);
     const wantsPaymentLink =
@@ -896,12 +999,49 @@ export const leadWorker = new Worker<LeadProcessingJobV1>(
       }
     }
 
-    // Siempre que aplique (active/shadow, con o sin llmDecision en sombra): evita repetir el mismo cierre ante “otro color”, etc.
-    const asksVariantFollowUp =
+    let contextOverride = false;
+
+    const catalogOrAlternateProduct =
       variant &&
-      /\b(otro|otra|tambien|tambi[eé]n|en otro|m[aá]s|otro\s+color|otra\s+vari|otra\s+opc|ten[eé]s?\s+en\s+otro|hay\s+en\s+otro|pero\s|y\s+en|hay\s+en)\b/i.test(
-        job.data.incomingMessage ?? ""
-      );
+      (isCatalogBroadDiscoveryAsk(rawIncoming) || isAnotherProductOrLineAsk(rawIncoming));
+    if (catalogOrAlternateProduct) {
+      try {
+        const others = await fetchOtherInStockProductNames(tenantId, String(variant.productId), 12);
+        const filtered = others.filter((n) => normalizeText(n) !== normalizeText(variant.productName));
+        const narrowed = isAnotherProductOrLineAsk(rawIncoming)
+          ? filterOthersByLooseTokens(rawIncoming, filtered)
+          : filtered;
+        const list = narrowed.slice(0, 5);
+        if (list.length > 0) {
+          message = `Además de ${variant.productName}, con stock tengo por ejemplo: ${list.join(", ")}. Si buscás algo específico (medidas, otro estilo), decime y lo vemos.`;
+        } else {
+          message = `En lo que tengo sincronizado ahora, lo más cercano a tu consulta es ${variant.productName}.${exactVariantPriceText} Si necesitás otro artículo que no aparece listado, decime modelo o palabras clave y lo busco.`;
+        }
+        selectedVariant = "catalog-or-alternate-product";
+        contextOverride = true;
+      } catch {
+        // seguimos con plantilla / crew
+      }
+    }
+
+    const qtyWanted = extractMentionedQuantityUnits(rawIncoming);
+    const shortageFrustration = /\b(no\s+me\s+alcanza|no\s+alcanza|necesito\s+m[aá]s|m[aá]s\s+unidades|no\s+tenes\s+m[aá]s|no\s+tienen\s+m[aá]s)\b/.test(
+      normalizeText(rawIncoming)
+    );
+    if (!contextOverride && variant && availableStock > 0) {
+      if (qtyWanted !== null && qtyWanted > availableStock) {
+        message = `Respecto a ${variant.productName}${variantSummary ? ` (${variantSummary})` : ""}: registro ${availableStock} unidad(es) disponible(s).${exactVariantPriceText} Para ${qtyWanted} necesitamos más stock del que tengo cargado; no puedo confirmar las ${qtyWanted} sin coordinar reposición o compra por volumen. ¿Reservo las ${availableStock} disponibles o preferís que te pase con un asesor para plazos y mayoreo?`;
+        selectedVariant = "bulk-shortfall";
+        contextOverride = true;
+      } else if (shortageFrustration) {
+        message = `Entiendo que con la cantidad disponible no alcanza: para ${variant.productName}${variantSummary ? ` (${variantSummary})` : ""} ahora tengo ${availableStock} unidad(es).${exactVariantPriceText} Si necesitás volumen mayor, lo vemos con reposición o compra mayorista. ¿Te sirve avanzar con las que hay o preferís que te derivo con un asesor?`;
+        selectedVariant = "bulk-shortage-frustration";
+        contextOverride = true;
+      }
+    }
+
+    // Solo eje color/talle/vari: no dispara con “otro producto”, catálogo, ni pedidos de muchas unidades.
+    const asksVariantFollowUp = variant && !contextOverride && wantsVariantAxisFollowUp(rawIncoming);
     if (asksVariantFollowUp) {
       const lastBotMsg = await prisma.message.findFirst({
         where: { tenantId, phone, direction: "outgoing" },
