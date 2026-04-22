@@ -6,8 +6,10 @@ import {
   type ConversationInterpretationV1,
   type ConversationReferenceV1,
   type LlmDecisionV1,
-  type ShadowCompareCandidateDecision
+  type ShadowCompareCandidateDecision,
+  type ValidationIssue
 } from "../../../../packages/queue/src";
+import { injectLastOutgoingMessageForCrew } from "./conversation-recent-messages.service";
 import { toCrewBusinessProfileSlug } from "../../../../packages/shared/src/crew-business-profile-slug";
 import type { TenantBusinessProfile } from "../../../../packages/shared/src/tenant-business-profile";
 
@@ -544,7 +546,7 @@ export type ShadowCompareInput = {
 const readShadowCompareSecret = (): string =>
   String(process.env.LLM_SHADOW_COMPARE_SECRET ?? process.env.SHADOW_COMPARE_SECRET ?? "").trim();
 
-const isWasellerCrewPrimaryEnabled = (): boolean =>
+export const isWasellerCrewPrimaryEnabled = (): boolean =>
   /^(1|true|yes)$/i.test(String(process.env.WASELLER_CREW_PRIMARY ?? "").trim());
 
 /**
@@ -562,6 +564,23 @@ export function resolveCrewPrimaryEffectiveConfidenceThreshold(
   const floor = Math.max(0.35, Math.min(0.95, Number(process.env.CREW_PRIMARY_GUARDRAIL_CONFIDENCE_FLOOR ?? 0.55)));
   return Math.min(tenantConfidenceThreshold, floor);
 }
+
+/** Resultado de un POST a `LLM_SHADOW_COMPARE_URL` (sin persistir en DB). */
+export type ShadowCompareHttpExecution = {
+  outboundBody: Record<string, unknown>;
+  httpStatus: number;
+  httpOk: boolean;
+  merged: LlmDecisionV1 | null;
+  candidateDecision?: ShadowCompareCandidateDecision | null;
+  candidateInterpretation?: Partial<ConversationInterpretationV1>;
+  parseOk: boolean;
+  parseError?: string;
+  issues?: ValidationIssue[];
+  jsonInvalid: boolean;
+  rawSnippet?: string;
+  /** Fallo de red / abort antes de respuesta HTTP útil */
+  networkError?: string;
+};
 
 function mergeCrewCandidateIntoLlmDecision(
   baseline: LlmDecisionV1,
@@ -599,12 +618,19 @@ function mergeCrewCandidateIntoLlmDecision(
 
 /** Cuerpo JSON del POST shadow-compare (mismo contrato para comparar o para modo primary). */
 export async function assembleShadowCompareOutboundBody(input: ShadowCompareInput): Promise<Record<string, unknown>> {
+  const recentForPayload = await injectLastOutgoingMessageForCrew(
+    input.tenantId,
+    String(input.phone ?? "").trim(),
+    (input.recentMessages ?? []) as Array<{ direction: "incoming" | "outgoing"; message: string }>
+  );
+  const inputResolved: ShadowCompareInput = { ...input, recentMessages: recentForPayload };
+
   let stockLoad: ShadowStockLoadResult = { rows: [], scope: "none", ragProductIdsTried: [] };
   try {
     stockLoad = await loadStockTableBundle(
-      input.tenantId,
-      input.stockTableProductId ?? null,
-      input.stockTableRagProductIds ?? null
+      inputResolved.tenantId,
+      inputResolved.stockTableProductId ?? null,
+      inputResolved.stockTableRagProductIds ?? null
     );
   } catch {
     stockLoad = { rows: [], scope: "none", ragProductIdsTried: [] };
@@ -617,7 +643,7 @@ export async function assembleShadowCompareOutboundBody(input: ShadowCompareInpu
   const inventoryNarrowingNote = buildInventoryNarrowingNote({
     scope: stockLoad.scope,
     rowCount: stockTable.length,
-    stockTableProductId: input.stockTableProductId,
+    stockTableProductId: inputResolved.stockTableProductId,
     ragProductIdsTried: stockLoad.ragProductIdsTried,
     ragRowCap
   });
@@ -628,20 +654,24 @@ export async function assembleShadowCompareOutboundBody(input: ShadowCompareInpu
   const payload: Record<string, unknown> = {
     schemaVersion: JOB_SCHEMA_VERSION,
     kind: "waseller.shadow_compare.v1",
-    tenantId: input.tenantId,
-    leadId: input.leadId,
-    incomingText: clampStr(input.incomingText, maxIncoming),
-    interpretation: slimInterpretationForCrewHttp(input.interpretation),
-    baselineDecision: slimBaselineForCrewHttp(input.baselineDecision)
+    tenantId: inputResolved.tenantId,
+    leadId: inputResolved.leadId,
+    incomingText: clampStr(inputResolved.incomingText, maxIncoming),
+    interpretation: slimInterpretationForCrewHttp(inputResolved.interpretation),
+    baselineDecision: slimBaselineForCrewHttp(inputResolved.baselineDecision)
   };
-  const phone = String(input.phone ?? "").trim();
+  const phone = String(inputResolved.phone ?? "").trim();
   if (phone) payload.phone = phone;
-  if (input.correlationId.trim()) payload.correlationId = input.correlationId;
-  if (input.messageId.trim()) payload.messageId = input.messageId;
-  if (input.conversationId !== undefined && input.conversationId !== null && String(input.conversationId).trim()) {
-    payload.conversationId = input.conversationId;
+  if (inputResolved.correlationId.trim()) payload.correlationId = inputResolved.correlationId;
+  if (inputResolved.messageId.trim()) payload.messageId = inputResolved.messageId;
+  if (
+    inputResolved.conversationId !== undefined &&
+    inputResolved.conversationId !== null &&
+    String(inputResolved.conversationId).trim()
+  ) {
+    payload.conversationId = inputResolved.conversationId;
   }
-  const recent = input.recentMessages?.filter((m) => m.message?.trim()) ?? [];
+  const recent = inputResolved.recentMessages?.filter((m) => m.message?.trim()) ?? [];
   if (recent.length > 0) {
     payload.recentMessages = recent.slice(-8).map((m) => ({
       direction: m.direction,
@@ -652,12 +682,12 @@ export async function assembleShadowCompareOutboundBody(input: ShadowCompareInpu
     payload.stockTable = slimStockRowsForCrewHttp(stockTable);
   }
   payload.inventoryNarrowingNote = inventoryNarrowingNote;
-  const crewSlug = toCrewBusinessProfileSlug(String(input.tenantBusinessCategory ?? ""));
+  const crewSlug = toCrewBusinessProfileSlug(String(inputResolved.tenantBusinessCategory ?? ""));
   if (crewSlug) {
     payload.businessProfileSlug = crewSlug;
   }
-  if (input.tenantBrief && crewTenantBriefHasSignal(input.tenantBrief)) {
-    const slimBrief = slimCrewTenantBriefForHttp(input.tenantBrief);
+  if (inputResolved.tenantBrief && crewTenantBriefHasSignal(inputResolved.tenantBrief)) {
+    const slimBrief = slimCrewTenantBriefForHttp(inputResolved.tenantBrief);
     payload.tenantBrief = slimBrief;
     const commercialLines = buildTenantCommercialContextFromBrief(slimBrief);
     const maxCommercial = readNumericEnv("LLM_SHADOW_COMPARE_MAX_TENANT_COMMERCIAL_CONTEXT_CHARS", 1400);
@@ -669,14 +699,12 @@ export async function assembleShadowCompareOutboundBody(input: ShadowCompareInpu
 }
 
 /**
- * Una sola llamada a waseller-crew: si responde con `candidateDecision.draftReply` válido, reemplaza la decisión
- * interna (OpenAI/self-hosted) **antes** del verificador y guardrails. Requiere `LLM_SHADOW_COMPARE_URL` y
- * `WASELLER_CREW_PRIMARY=true`. No lanza hacia arriba.
+ * POST único a `LLM_SHADOW_COMPARE_URL`. No persiste trazas; usalo y luego `persistShadowCompareTelemetry`
+ * o la traza `crew_primary` en `tryWasellerCrewPrimaryReplacement`.
  */
-export async function tryWasellerCrewPrimaryReplacement(
+export async function executeShadowCompareRequest(
   input: ShadowCompareInput
-): Promise<{ decision: LlmDecisionV1; outboundBody: Record<string, unknown> } | null> {
-  if (!isWasellerCrewPrimaryEnabled()) return null;
+): Promise<ShadowCompareHttpExecution | null> {
   const url = String(process.env.LLM_SHADOW_COMPARE_URL ?? "").trim();
   if (!url) return null;
 
@@ -694,6 +722,76 @@ export async function tryWasellerCrewPrimaryReplacement(
     headers.Authorization = `Bearer ${shadowSecret}`;
   }
 
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers,
+      signal: controller.signal,
+      body: JSON.stringify(outboundBody)
+    });
+    const raw = await res.text();
+    let json: unknown;
+    try {
+      json = raw ? (JSON.parse(raw) as unknown) : {};
+    } catch {
+      return {
+        outboundBody,
+        httpStatus: res.status,
+        httpOk: false,
+        merged: null,
+        parseOk: false,
+        jsonInvalid: true,
+        rawSnippet: raw.slice(0, 800)
+      };
+    }
+    const parsed = parseShadowCompareHttpResponse(json);
+    if (!parsed.ok) {
+      return {
+        outboundBody,
+        httpStatus: res.status,
+        httpOk: res.ok,
+        merged: null,
+        parseOk: false,
+        parseError: parsed.error,
+        issues: parsed.issues,
+        jsonInvalid: false
+      };
+    }
+    const merged = mergeCrewCandidateIntoLlmDecision(input.baselineDecision, parsed.value.candidateDecision);
+    const httpOk = res.ok;
+    return {
+      outboundBody,
+      httpStatus: res.status,
+      httpOk,
+      merged: merged && httpOk ? merged : null,
+      candidateDecision: parsed.value.candidateDecision ?? null,
+      candidateInterpretation: parsed.value.candidateInterpretation,
+      parseOk: true,
+      jsonInvalid: false
+    };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    return {
+      outboundBody,
+      httpStatus: 0,
+      httpOk: false,
+      merged: null,
+      parseOk: false,
+      jsonInvalid: false,
+      networkError: message
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function persistCrewPrimaryTrace(
+  input: ShadowCompareInput,
+  exec: ShadowCompareHttpExecution,
+  url: string,
+  timeoutMs: number,
+  authorizationSent: boolean
+): Promise<void> {
   const persistCrew = async (response: Record<string, unknown>, error?: string) => {
     try {
       await prisma.llmTrace.create({
@@ -711,7 +809,7 @@ export async function tryWasellerCrewPrimaryReplacement(
             url,
             timeoutMs,
             authorizationSent,
-            body: outboundBody
+            body: exec.outboundBody
           },
           response,
           promptTokens: null,
@@ -726,89 +824,61 @@ export async function tryWasellerCrewPrimaryReplacement(
     }
   };
 
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers,
-      signal: controller.signal,
-      body: JSON.stringify(outboundBody)
-    });
-    const raw = await res.text();
-    let json: unknown;
-    try {
-      json = raw ? (JSON.parse(raw) as unknown) : {};
-    } catch {
-      await persistCrew(
-        { httpStatus: res.status, rawSnippet: raw.slice(0, 800) },
-        "invalid_json_body"
-      );
-      return null;
-    }
-    const parsed = parseShadowCompareHttpResponse(json);
-    if (!parsed.ok) {
-      await persistCrew(
-        {
-          httpStatus: res.status,
-          issues: parsed.issues ?? []
-        },
-        parsed.error
-      );
-      return null;
-    }
-    const merged = mergeCrewCandidateIntoLlmDecision(input.baselineDecision, parsed.value.candidateDecision);
-    if (!merged || !res.ok) {
-      await persistCrew(
-        {
-          httpStatus: res.status,
-          httpOk: res.ok,
-          candidateDecision: parsed.value.candidateDecision ?? null,
-          skipped: merged ? false : "no_mergeable_candidate"
-        },
-        !res.ok ? `http_${res.status}` : "no_mergeable_candidate"
-      );
-      return null;
-    }
-    await persistCrew({
-      httpStatus: res.status,
-      httpOk: res.ok,
-      candidateDecision: parsed.value.candidateDecision ?? null,
-      applied: true
-    });
-    return { decision: merged, outboundBody };
-  } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    await persistCrew({ aborted: message.includes("abort"), detail: message }, message);
-    return null;
-  } finally {
-    clearTimeout(timer);
+  if (exec.networkError) {
+    await persistCrew(
+      { aborted: exec.networkError.includes("abort"), detail: exec.networkError },
+      exec.networkError
+    );
+    return;
   }
+  if (exec.jsonInvalid) {
+    await persistCrew({ httpStatus: exec.httpStatus, rawSnippet: exec.rawSnippet }, "invalid_json_body");
+    return;
+  }
+  if (!exec.parseOk) {
+    await persistCrew(
+      {
+        httpStatus: exec.httpStatus,
+        issues: exec.issues ?? []
+      },
+      exec.parseError
+    );
+    return;
+  }
+  if (!exec.merged || !exec.httpOk) {
+    await persistCrew(
+      {
+        httpStatus: exec.httpStatus,
+        httpOk: exec.httpOk,
+        candidateDecision: exec.candidateDecision ?? null,
+        skipped: exec.merged ? false : "no_mergeable_candidate"
+      },
+      !exec.httpOk ? `http_${exec.httpStatus}` : "no_mergeable_candidate"
+    );
+    return;
+  }
+  await persistCrew({
+    httpStatus: exec.httpStatus,
+    httpOk: true,
+    candidateDecision: exec.candidateDecision ?? null,
+    applied: true
+  });
 }
 
 /**
- * Si `LLM_SHADOW_COMPARE_URL` está definida, envía el baseline a un servicio externo (p. ej. CrewAI)
- * y persiste el resultado en `LlmTrace` con `traceKind: "shadow_compare"`.
- * No lanza: errores de red o de persistencia se ignoran para no afectar el camino principal.
+ * Persiste `traceKind: "shadow_compare"` (misma forma que el log histórico).
  */
-export async function logShadowExternalCompareIfConfigured(input: ShadowCompareInput): Promise<void> {
+export async function persistShadowCompareTelemetry(
+  input: ShadowCompareInput,
+  exec: ShadowCompareHttpExecution
+): Promise<void> {
   const url = String(process.env.LLM_SHADOW_COMPARE_URL ?? "").trim();
-  if (!url) return;
-  if (isWasellerCrewPrimaryEnabled()) {
-    // `tryWasellerCrewPrimaryReplacement` ya hizo POST al mismo endpoint con el mismo `correlationId`.
-    // Evitar segundo POST y telemetría duplicada en waseller-crew (la traza `crew_primary` en `llm_traces` alcanza).
-    return;
-  }
-
   const timeoutMs = Math.max(
     1000,
     Math.min(120_000, Number(process.env.LLM_SHADOW_COMPARE_TIMEOUT_MS ?? 30_000))
   );
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-
   const shadowSecret = readShadowCompareSecret();
   const authorizationSent = shadowSecret.length > 0;
-
-  const outboundBody = await assembleShadowCompareOutboundBody(input);
 
   const persist = async (
     body: {
@@ -845,79 +915,108 @@ export async function logShadowExternalCompareIfConfigured(input: ShadowCompareI
         }
       });
     } catch {
-      // No bloquear orquestación si el esquema de DB difiere o falla escritura.
+      // noop
     }
   };
 
-  const headers: Record<string, string> = { "content-type": "application/json" };
-  if (authorizationSent) {
-    headers.Authorization = `Bearer ${shadowSecret}`;
+  if (exec.networkError) {
+    await persist(
+      {
+        error: exec.networkError,
+        response: { aborted: exec.networkError.includes("abort") }
+      },
+      exec.outboundBody
+    );
+    return;
+  }
+  if (exec.jsonInvalid) {
+    await persist(
+      {
+        httpStatus: exec.httpStatus,
+        error: "invalid_json_body",
+        response: { rawSnippet: exec.rawSnippet ?? "" }
+      },
+      exec.outboundBody
+    );
+    return;
+  }
+  if (!exec.parseOk) {
+    await persist(
+      {
+        httpStatus: exec.httpStatus,
+        error: exec.parseError,
+        response: { issues: exec.issues ?? [] }
+      },
+      exec.outboundBody
+    );
+    return;
   }
 
+  const candidate = exec.candidateDecision;
+  const diff =
+    candidate != null
+      ? summarizeDecisionDiff(input.baselineDecision, candidate)
+      : { skipped: true as const, reason: "no_candidateDecision" };
+
+  await persist(
+    {
+      httpStatus: exec.httpStatus,
+      response: {
+        httpOk: exec.httpOk,
+        candidateDecision: candidate ?? null,
+        candidateInterpretation: exec.candidateInterpretation ?? null,
+        diff,
+        shadowCustomerApplied: Boolean(exec.merged && exec.httpOk)
+      }
+    },
+    exec.outboundBody
+  );
+}
+
+/**
+ * Una sola llamada a waseller-crew: si responde con `candidateDecision.draftReply` válido, reemplaza la decisión
+ * interna (OpenAI/self-hosted) **antes** del verificador y guardrails. Requiere `LLM_SHADOW_COMPARE_URL` y
+ * `WASELLER_CREW_PRIMARY=true`. No lanza hacia arriba.
+ */
+export async function tryWasellerCrewPrimaryReplacement(
+  input: ShadowCompareInput
+): Promise<{ decision: LlmDecisionV1; outboundBody: Record<string, unknown> } | null> {
+  if (!isWasellerCrewPrimaryEnabled()) return null;
+  const url = String(process.env.LLM_SHADOW_COMPARE_URL ?? "").trim();
+  if (!url) return null;
+
+  const timeoutMs = Math.max(
+    1000,
+    Math.min(120_000, Number(process.env.LLM_SHADOW_COMPARE_TIMEOUT_MS ?? 30_000))
+  );
+  const shadowSecret = readShadowCompareSecret();
+  const authorizationSent = shadowSecret.length > 0;
+
+  const exec = await executeShadowCompareRequest(input);
+  if (!exec) return null;
+
+  await persistCrewPrimaryTrace(input, exec, url, timeoutMs, authorizationSent);
+
+  if (!exec.merged || !exec.httpOk) return null;
+  return { decision: exec.merged, outboundBody: exec.outboundBody };
+}
+
+/**
+ * Si `LLM_SHADOW_COMPARE_URL` está definida, envía el baseline a un servicio externo (p. ej. CrewAI)
+ * y persiste el resultado en `LlmTrace` con `traceKind: "shadow_compare"`.
+ * No lanza: errores de red o de persistencia se ignoran para no afectar el camino principal.
+ */
+export async function logShadowExternalCompareIfConfigured(input: ShadowCompareInput): Promise<void> {
+  if (!String(process.env.LLM_SHADOW_COMPARE_URL ?? "").trim()) return;
+  if (isWasellerCrewPrimaryEnabled()) {
+    // `tryWasellerCrewPrimaryReplacement` ya hizo POST al mismo endpoint con el mismo `correlationId`.
+    return;
+  }
   try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers,
-      signal: controller.signal,
-      body: JSON.stringify(outboundBody)
-    });
-    const raw = await res.text();
-    let json: unknown;
-    try {
-      json = raw ? (JSON.parse(raw) as unknown) : {};
-    } catch {
-      await persist(
-        {
-          httpStatus: res.status,
-          error: "invalid_json_body",
-          response: { rawSnippet: raw.slice(0, 800) }
-        },
-        outboundBody
-      );
-      return;
-    }
-
-    const parsed = parseShadowCompareHttpResponse(json);
-    if (!parsed.ok) {
-      await persist(
-        {
-          httpStatus: res.status,
-          error: parsed.error,
-          response: { issues: parsed.issues ?? [] }
-        },
-        outboundBody
-      );
-      return;
-    }
-
-    const candidate = parsed.value.candidateDecision;
-    const diff =
-      candidate !== undefined
-        ? summarizeDecisionDiff(input.baselineDecision, candidate)
-        : { skipped: true as const, reason: "no_candidateDecision" };
-
-    await persist(
-      {
-        httpStatus: res.status,
-        response: {
-          httpOk: res.ok,
-          candidateDecision: candidate ?? null,
-          candidateInterpretation: parsed.value.candidateInterpretation ?? null,
-          diff
-        }
-      },
-      outboundBody
-    );
-  } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    await persist(
-      {
-        error: message,
-        response: { aborted: message.includes("abort") }
-      },
-      outboundBody
-    );
-  } finally {
-    clearTimeout(timer);
+    const exec = await executeShadowCompareRequest(input);
+    if (!exec) return;
+    await persistShadowCompareTelemetry(input, exec);
+  } catch {
+    // noop
   }
 }

@@ -32,7 +32,8 @@ import {
 } from "./services/conversation-recent-messages.service";
 import {
   buildCrewTenantBriefFromProfile,
-  logShadowExternalCompareIfConfigured,
+  executeShadowCompareRequest,
+  persistShadowCompareTelemetry,
   resolveCrewPrimaryEffectiveConfidenceThreshold,
   resolveProductIdForTenantVariant,
   tryWasellerCrewPrimaryReplacement
@@ -1215,7 +1216,7 @@ export const leadWorker = new Worker<LeadProcessingJobV1>(
               new Set([...(baselineDecision.qualityFlags ?? []), ...templateGuarded.flags])
             )
           };
-          void logShadowExternalCompareIfConfigured({
+          const shadowInput = {
             tenantId,
             leadId,
             conversationId: job.data.conversationId ?? undefined,
@@ -1230,7 +1231,23 @@ export const leadWorker = new Worker<LeadProcessingJobV1>(
             tenantBusinessCategory: tenantKnowledge.profile.businessCategory,
             stockTableProductId,
             tenantBrief: crewTenantBrief
-          }).catch(() => undefined);
+          };
+          const shadowExec = await executeShadowCompareRequest(shadowInput);
+          if (shadowExec) {
+            await persistShadowCompareTelemetry(shadowInput, shadowExec).catch(() => undefined);
+            if (shadowExec.merged && shadowExec.httpOk) {
+              const grShadow = applyReplyGuardrails(
+                shadowExec.merged.draftReply,
+                guardrailFallbackMessage,
+                incomingRaw,
+                shadowExec.merged.confidence,
+                confidenceThreshold
+              );
+              if (!grShadow.blocked) {
+                message = grShadow.message;
+              }
+            }
+          }
         }
       }
     }

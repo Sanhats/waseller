@@ -5,13 +5,62 @@ export type ConversationTurnSnippet = {
   message: string;
 };
 
-const normalizeSnippet = (value: string): string =>
+export const normalizeSnippet = (value: string): string =>
   value
     .trim()
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/\s+/g, " ");
+
+/** Turno mínimo para waseller-crew (misma forma que `ShadowCompareRecentMessageV1`). */
+export type CrewRecentTurn = {
+  direction: "incoming" | "outgoing";
+  message: string;
+};
+
+/**
+ * Garantiza que, si el último turno es un incoming, el hilo incluya el **último outgoing real**
+ * persistido en `messages` (no solo `bot_response_events`). Así cada POST shadow-compare puede
+ * detectar eco / duplicado respecto del texto que el cliente ya recibió por WhatsApp.
+ */
+export async function injectLastOutgoingMessageForCrew(
+  tenantId: string,
+  phone: string,
+  chronological: CrewRecentTurn[]
+): Promise<CrewRecentTurn[]> {
+  const phoneTrim = String(phone ?? "").trim();
+  if (!tenantId || !phoneTrim) return chronological;
+
+  const chrono = chronological.filter((m) => String(m?.message ?? "").trim());
+  if (chrono.length === 0) return chronological;
+
+  let lastOutgoingText = "";
+  try {
+    const row = await prisma.message.findFirst({
+      where: { tenantId, phone: phoneTrim, direction: "outgoing" },
+      orderBy: { createdAt: "desc" },
+      select: { message: true }
+    });
+    lastOutgoingText = String(row?.message ?? "").trim();
+  } catch {
+    return chronological;
+  }
+  if (!lastOutgoingText) return chronological;
+
+  const last = chrono[chrono.length - 1];
+  if (last.direction !== "incoming") return chrono;
+
+  const before = chrono.slice(0, -1);
+  const outgoingNorm = normalizeSnippet(lastOutgoingText);
+  const alreadyPresent = before.some(
+    (m) => m.direction === "outgoing" && normalizeSnippet(m.message) === outgoingNorm
+  );
+  if (alreadyPresent) return chrono;
+
+  const trimmed = [...before, { direction: "outgoing" as const, message: lastOutgoingText }, last].slice(-8);
+  return trimmed;
+}
 
 /**
  * El `Message` saliente se persiste en `sender.worker` después del envío; el orquestador

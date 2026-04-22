@@ -31,8 +31,10 @@ import {
 } from "./services/conversation-recent-messages.service";
 import {
   buildCrewTenantBriefFromProfile,
+  executeShadowCompareRequest,
   extractInterpretationProductId,
-  logShadowExternalCompareIfConfigured,
+  isWasellerCrewPrimaryEnabled,
+  persistShadowCompareTelemetry,
   resolveCrewPrimaryEffectiveConfidenceThreshold,
   resolveProductIdForTenantVariant,
   tryWasellerCrewPrimaryReplacement
@@ -271,7 +273,7 @@ export const conversationOrchestratorWorker = new Worker<LlmOrchestrationJobV1>(
             .toLowerCase()
             .includes(String(llmDecision.entities.productName).toLowerCase())
       );
-      const effectiveDecision: LlmDecisionV1 = {
+      let effectiveDecision: LlmDecisionV1 = {
         ...llmDecision,
         draftReply: guardrails.message,
         nextAction: recommendedAction,
@@ -301,6 +303,61 @@ export const conversationOrchestratorWorker = new Worker<LlmOrchestrationJobV1>(
           ])
         ]
       };
+
+      if (shadowMode && !crewPrimaryApplied && !isWasellerCrewPrimaryEnabled()) {
+        const shadowInput = {
+          tenantId,
+          leadId,
+          conversationId,
+          messageId,
+          correlationId,
+          dedupeKey,
+          phone,
+          incomingText,
+          interpretation: interpreted,
+          baselineDecision: effectiveDecision,
+          recentMessages: recentChronologicalForCrew,
+          tenantBusinessCategory: tenantKnowledge.profile.businessCategory,
+          stockTableProductId,
+          stockTableRagProductIds: ragProductIdsForCrew.length > 0 ? ragProductIdsForCrew : null,
+          tenantBrief: crewTenantBrief
+        };
+        const shadowExec = await executeShadowCompareRequest(shadowInput);
+        if (shadowExec) {
+          await persistShadowCompareTelemetry(shadowInput, shadowExec).catch(() => undefined);
+          if (shadowExec.merged && shadowExec.httpOk) {
+            const grShadow = applyReplyGuardrails(
+              shadowExec.merged.draftReply,
+              guardrailFallbackMessage,
+              incomingText,
+              shadowExec.merged.confidence,
+              effectiveConfidenceThreshold
+            );
+            if (!grShadow.blocked) {
+              effectiveDecision = {
+                ...effectiveDecision,
+                draftReply: grShadow.message,
+                intent: shadowExec.merged.intent ?? effectiveDecision.intent,
+                confidence: shadowExec.merged.confidence,
+                reason: shadowExec.merged.reason ?? effectiveDecision.reason,
+                source: shadowExec.merged.source,
+                provider: shadowExec.merged.provider,
+                model: shadowExec.merged.model,
+                entities: shadowExec.merged.entities ?? effectiveDecision.entities,
+                qualityFlags: Array.from(
+                  new Set([
+                    ...(effectiveDecision.qualityFlags ?? []),
+                    ...(shadowExec.merged.qualityFlags ?? []),
+                    ...grShadow.flags,
+                    "shadow_compare_customer_applied"
+                  ])
+                )
+              };
+            }
+          }
+        }
+      }
+
       const activeOffer = buildActiveOfferSnapshot({
         existing: job.data.activeOffer ?? null,
         productName:
@@ -399,7 +456,10 @@ export const conversationOrchestratorWorker = new Worker<LlmOrchestrationJobV1>(
             conversationDiagnostics: {
               baselineEchoesLastOutgoing,
               recentMessageTurns: recentMessages.length,
-              crewPrimaryApplied
+              crewPrimaryApplied,
+              shadowCompareCustomerApplied: effectiveDecision.qualityFlags?.includes(
+                "shadow_compare_customer_applied"
+              )
             }
           },
           response: effectiveDecision,
@@ -409,25 +469,6 @@ export const conversationOrchestratorWorker = new Worker<LlmOrchestrationJobV1>(
           handoffRequired: effectiveDecision.handoffRequired
         }
       });
-      if (shadowMode && !crewPrimaryApplied) {
-        void logShadowExternalCompareIfConfigured({
-          tenantId,
-          leadId,
-          conversationId,
-          messageId,
-          correlationId,
-          dedupeKey,
-          phone,
-          incomingText,
-          interpretation: interpreted,
-          baselineDecision: effectiveDecision,
-          recentMessages: recentChronologicalForCrew,
-          tenantBusinessCategory: tenantKnowledge.profile.businessCategory,
-          stockTableProductId,
-          stockTableRagProductIds: ragProductIdsForCrew.length > 0 ? ragProductIdsForCrew : null,
-          tenantBrief: crewTenantBrief
-        }).catch(() => undefined);
-      }
       await prisma.llmTrace.create({
         data: {
           tenantId,
