@@ -23,6 +23,8 @@ type OnboardingStatus = {
   tenantName: string;
   allCompleted: boolean;
   completionPercent: number;
+  tenantKnowledgePersisted?: boolean;
+  crewCommercialContextComplete?: boolean;
   whatsapp: {
     tenantWhatsappNumber: string | null;
     sessionStatus:
@@ -93,8 +95,8 @@ function SetupCard({
 }
 
 /**
- * Flujo de configuración del negocio (WhatsApp, Mercado Pago, contexto, catálogo).
- * Pensado para la ruta /ops (Negocio). Cuando todo está completo, muestra el asistente de contexto debajo.
+ * Flujo de configuración del negocio (WhatsApp, Mercado Pago, contexto + crew, catálogo).
+ * Pensado para la ruta /ops (Negocio). El estado “completo” viene de `allCompleted` en el backend (cuatro pasos).
  */
 export function BusinessOnboarding() {
   const [status, setStatus] = useState<OnboardingStatus | null>(null);
@@ -221,14 +223,14 @@ export function BusinessOnboarding() {
     };
   }, [qrImageUrl]);
 
-  const waDone = status?.whatsapp.sessionStatus === "connected";
-  const mpDone = status?.mercadoPago.status === "connected";
-  const businessStep = status?.steps.find(
-    (s) => s.key === "configure_business",
-  );
-  const businessDone = Boolean(businessStep?.completed);
+  const stepDone = (key: string) =>
+    Boolean(status?.steps.find((s) => s.key === key)?.completed);
+  const waDone = stepDone("connect_whatsapp");
+  const mpDone = stepDone("connect_mercadopago");
+  const businessDone = stepDone("configure_business");
+  const catalogDone = stepDone("create_catalog");
+  const businessStep = status?.steps.find((s) => s.key === "configure_business");
   const catalogStep = status?.steps.find((s) => s.key === "create_catalog");
-  const catalogDone = Boolean(catalogStep?.completed);
   const completedCount = status?.steps.filter((s) => s.completed).length ?? 0;
   const totalSteps = status?.steps.length ?? 4;
 
@@ -240,9 +242,8 @@ export function BusinessOnboarding() {
   const showCatalog = Boolean(
     status && waDone && mpDone && businessDone && !catalogDone,
   );
-  const showAllDone = Boolean(
-    status && waDone && mpDone && businessDone && catalogDone,
-  );
+  /** Una sola fuente de verdad con el backend: no se muestra “completo” hasta los cuatro pasos. */
+  const showAllDone = Boolean(status?.allCompleted);
 
   const connectWhatsapp = async () => {
     const auth = authContext();
@@ -518,8 +519,20 @@ export function BusinessOnboarding() {
           <SetupCard
             stepLabel={`Paso 3 de ${totalSteps}`}
             title="Contexto de la tienda"
-            description={`Rubro, medios de pago y variantes del catálogo. El nombre “${status?.tenantName ?? "tu negocio"}” viene del registro. Los envíos los coordinás por WhatsApp con cada cliente.`}
+            description={`Rubro, pagos, variantes y un bloque para el asistente (tono + entregas) que se envía a waseller-crew. El nombre “${status?.tenantName ?? "tu negocio"}” se usa por defecto si no cargás otro.`}
           >
+            {status?.tenantKnowledgePersisted === true &&
+            status?.crewCommercialContextComplete === false ? (
+              <p
+                className="rounded-md border border-[var(--color-warning)]/40 bg-[var(--color-warning-bg)] px-3 py-2 text-body text-[var(--color-text)]"
+                role="status"
+              >
+                El onboarding sigue abierto en este paso: ya hay datos guardados, pero falta{" "}
+                <strong className="font-semibold">tono</strong> y{" "}
+                <strong className="font-semibold">entregas</strong> en el paso &quot;Asistente&quot; del formulario
+                para cerrarlo y que el crew reciba el contexto completo.
+              </p>
+            ) : null}
             <div className="min-w-0 max-w-full overflow-x-auto">
               <BusinessContextWizard
                 variant="embedded"
@@ -562,8 +575,8 @@ export function BusinessOnboarding() {
                     Configuración inicial completa
                   </h2>
                   <p className="text-body text-muted-ui">
-                    WhatsApp, Mercado Pago, contexto de la tienda y catálogo
-                    están listos. Podés operar desde Leads y Conversaciones.
+                    Los cuatro pasos están completos (incluido tono y entregas para el asistente). Podés operar desde
+                    Leads y Conversaciones.
                   </p>
                   <div className="flex min-w-0 flex-wrap gap-3 pt-2">
                     <Link

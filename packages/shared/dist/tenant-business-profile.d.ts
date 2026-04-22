@@ -40,4 +40,6 @@ export type TenantBusinessProfile = {
 };
 export declare const DEFAULT_TENANT_BUSINESS_PROFILE: TenantBusinessProfile;
 export declare const BUSINESS_PRESETS: Record<BusinessCategory, Partial<TenantBusinessProfile>>;
+/** Mínimo para enviar `tenantBrief` útil a waseller-crew (tono + logística/entregas en texto). */
+export declare function isTenantCrewCommercialContextComplete(profile: TenantBusinessProfile): boolean;
 export declare const normalizeTenantBusinessProfile: (raw: unknown) => TenantBusinessProfile;

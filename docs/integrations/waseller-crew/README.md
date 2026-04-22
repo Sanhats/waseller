@@ -61,7 +61,7 @@ Detalle completo v1.1: [`CONTRATO_V1_1.md`](./CONTRATO_V1_1.md). Resumen:
 | `correlationId`, `messageId` | `string` | Opcionales. |
 | `conversationId` | `string` | Opcional (si el job trae conversación). |
 | `recentMessages` | `{ direction, message }[]` | Opcional; hasta **8** mensajes, orden cronológico (más antiguo primero). |
-| `stockTable`, `businessProfileSlug`, `inventoryNarrowingNote` | ver `CONTRATO_V1_1.md` §1 | Opcionales v1.1; el crew usa `extra="ignore"` para campos desconocidos. |
+| `stockTable`, `businessProfileSlug`, `tenantBrief`, `tenantCommercialContext`, `inventoryNarrowingNote` | ver `CONTRATO_V1_1.md` §1 | Opcionales v1.1; el crew usa `extra="ignore"` para campos desconocidos. `tenantCommercialContext` acompaña al overlay `tenant_prompts/<slug>.txt`. |
 
 #### `ConversationInterpretationV1` (resumen)
 

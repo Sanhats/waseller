@@ -21,6 +21,7 @@
     "nextAction": "reply_only",
     "source": "openai"
   },
+  "businessProfileSlug": "muebles_deco",
   "tenantBrief": {
     "businessName": "Mi tienda demo",
     "businessCategory": "hogar_deco",
@@ -31,6 +32,7 @@
     "shipping": { "methods": ["envio_moto", "retiro_local"], "zones": ["CABA", "GBA Norte"], "sameDay": false },
     "policy": { "reservationTtlMinutes": 60, "supportHours": "Lun–Sáb 9–18", "notes": "Cambios con ticket dentro de 7 días.", "allowExchange": true, "allowReturns": false }
   },
+  "tenantCommercialContext": "Nombre del negocio: Mi tienda demo\nCategoría (Waseller): hogar_deco\nEtiquetas: catalogo_whatsapp\nTono sugerido: voseo_informal\nEntregas / logística: Envíos CABA en 48 h; retiro gratis en Av. Siempre Viva 123.\nMedios de pago: link_pago, efectivo_retiro\nAlias transferencia: configurado (valor no enviado en API)\nEnvíos: métodos: envio_moto, retiro_local; zonas: CABA, GBA Norte\nReserva (TTL min): 60\nHorario atención: Lun–Sáb 9–18\nNotas políticas: Cambios con ticket dentro de 7 días.\nCambios: sí | Devoluciones: no",
   "baselineDecision": {
     "intent": "consultar_precio",
     "leadStage": "consideration",

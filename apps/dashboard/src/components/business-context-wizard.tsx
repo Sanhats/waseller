@@ -22,6 +22,7 @@ type TenantKnowledgeOverview = {
   knowledge: Record<string, unknown>;
   tenantName?: string;
   persisted?: boolean;
+  crewCommercialContextComplete?: boolean;
 };
 
 export type BusinessContextWizardProps = {
@@ -46,6 +47,10 @@ type TenantKnowledgeForm = {
   policyNotes: string;
   allowExchange: boolean;
   allowReturns: boolean;
+  /** Si queda vacío, el backend usa el nombre del tenant. */
+  businessPublicName: string;
+  tone: string;
+  deliveryInfo: string;
 };
 
 type MercadoPagoStatus = {
@@ -69,6 +74,15 @@ const PAYMENT_METHOD_OPTIONS: Array<{ id: AllowedPaymentId; label: string }> = [
   { id: "efectivo_retiro", label: "Efectivo" }
 ];
 const VARIANT_OPTIONS = ["talle", "color", "modelo", "capacidad", "material"];
+
+/** Mínimo de caracteres en entregas/logística para considerar completo el contexto del crew. */
+const CREW_MIN_DELIVERY_LEN = 15;
+
+const TONE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "voseo_informal", label: "Voseo informal (cercano)" },
+  { value: "formal_usted", label: "Formal (usted)" },
+  { value: "neutral_profesional", label: "Neutral / profesional" }
+];
 
 const splitCsv = (value: string): string[] =>
   String(value ?? "")
@@ -96,12 +110,23 @@ const DEFAULT_FORM: TenantKnowledgeForm = {
   supportHours: "",
   policyNotes: "",
   allowExchange: true,
-  allowReturns: false
+  allowReturns: false,
+  businessPublicName: "",
+  tone: "",
+  deliveryInfo: ""
 };
 
-type WizardStep = 1 | 2;
+type WizardStep = 1 | 2 | 3;
 
-const STEP_INDEX: Record<WizardStep, string> = { 1: "1", 2: "2" };
+const STEP_INDEX: Record<WizardStep, string> = { 1: "1", 2: "2", 3: "3" };
+
+function firstWizardStepFromForm(f: TenantKnowledgeForm): WizardStep {
+  if (!f.businessCategory) return 1;
+  const payments = splitCsv(f.paymentMethodsCsv);
+  const variants = splitCsv(f.variantDimensionsCsv);
+  if (payments.length === 0 || variants.length === 0) return 2;
+  return 3;
+}
 
 function InfoTip({ text }: { text: string }) {
   return (
@@ -164,12 +189,23 @@ const formFromKnowledge = (knowledge: Record<string, unknown>): TenantKnowledgeF
     supportHours: String(policy.supportHours ?? ""),
     policyNotes: String(policy.notes ?? ""),
     allowExchange: Boolean(policy.allowExchange ?? true),
-    allowReturns: Boolean(policy.allowReturns ?? false)
+    allowReturns: Boolean(policy.allowReturns ?? false),
+    businessPublicName: String(knowledge.businessName ?? "").trim(),
+    tone: String(knowledge.tone ?? (knowledge.communicationTone as string | undefined) ?? "").trim(),
+    deliveryInfo: String(
+      knowledge.deliveryInfo ??
+        (knowledge.deliverySummary as string | undefined) ??
+        (knowledge.shippingNotes as string | undefined) ??
+        ""
+    ).trim()
   };
 };
 
 const knowledgeFromForm = (form: TenantKnowledgeForm): Record<string, unknown> => ({
   businessCategory: form.businessCategory,
+  businessName: form.businessPublicName.trim() || undefined,
+  tone: form.tone.trim() || undefined,
+  deliveryInfo: form.deliveryInfo.trim() || undefined,
   businessLabels: splitCsv(form.businessLabelsCsv),
   payment: {
     methods: Array.from(
@@ -256,7 +292,17 @@ export function BusinessContextWizard({
         const presetsBody = (await presetsRes.json()) as { categories: TenantPresetOption[] };
         const mercadoPagoBody = (await mercadoPagoRes.json()) as MercadoPagoStatus;
 
-        setForm(formFromKnowledge((knowledgeBody.knowledge ?? {}) as Record<string, unknown>));
+        const knowledgeRecord = (knowledgeBody.knowledge ?? {}) as Record<string, unknown>;
+        const nextForm = formFromKnowledge(knowledgeRecord);
+        if (!String(nextForm.businessPublicName ?? "").trim() && knowledgeBody.tenantName) {
+          nextForm.businessPublicName = String(knowledgeBody.tenantName).trim();
+        }
+        setForm(nextForm);
+        setCurrentStep(
+          knowledgeBody.persisted === true
+            ? firstWizardStepFromForm(nextForm)
+            : 1
+        );
         setPresets(Array.isArray(presetsBody.categories) ? presetsBody.categories : []);
         setMercadoPago(mercadoPagoBody);
       } catch (err) {
@@ -298,6 +344,22 @@ export function BusinessContextWizard({
   const save = async () => {
     const auth = getAuth();
     if (!auth) return;
+    const blockers = [
+      ...stepValidationErrors[1],
+      ...stepValidationErrors[2],
+      ...stepValidationErrors[3]
+    ];
+    if (blockers.length > 0) {
+      setMessage(blockers.join(" "));
+      setCurrentStep(
+        stepValidationErrors[1].length
+          ? 1
+          : stepValidationErrors[2].length
+            ? 2
+            : 3
+      );
+      return;
+    }
     setSaving(true);
     setMessage("");
     try {
@@ -323,9 +385,16 @@ export function BusinessContextWizard({
   const applyPreset = (presetId: TenantPresetOption["id"]) => {
     const preset = presets.find((item) => item.id === presetId);
     if (!preset) return;
-    const next = formFromKnowledge(preset.profile);
-    next.businessCategory = presetId;
-    setForm(next);
+    setForm((prev) => {
+      const next = formFromKnowledge(preset.profile);
+      next.businessCategory = presetId;
+      next.businessPublicName = prev.businessPublicName;
+      next.tone = prev.tone;
+      next.deliveryInfo = prev.deliveryInfo;
+      next.supportHours = prev.supportHours;
+      next.policyNotes = prev.policyNotes;
+      return next;
+    });
     setMessage(`Preset aplicado: ${preset.label}`);
   };
 
@@ -385,7 +454,8 @@ export function BusinessContextWizard({
 
   const steps: Array<{ id: WizardStep; title: string }> = [
     { id: 1, title: "Rubro" },
-    { id: 2, title: "Tienda" }
+    { id: 2, title: "Tienda" },
+    { id: 3, title: "Asistente" }
   ];
   const progressPercent = Math.round((currentStep / steps.length) * 100);
   const selectedPayments = splitCsv(form.paymentMethodsCsv);
@@ -396,6 +466,14 @@ export function BusinessContextWizard({
     2: [
       ...(selectedPayments.length === 0 ? ["Seleccioná al menos un medio de pago."] : []),
       ...(selectedVariants.length === 0 ? ["Seleccioná al menos una variante de producto."] : [])
+    ],
+    3: [
+      ...(form.tone.trim() ? [] : ["Elegí el tono de las respuestas del asistente."]),
+      ...(form.deliveryInfo.trim().length >= CREW_MIN_DELIVERY_LEN
+        ? []
+        : [
+            `Describí entregas, retiros o envíos en al menos ${CREW_MIN_DELIVERY_LEN} caracteres (zonas, plazos, costos orientativos).`
+          ])
     ]
   };
 
@@ -417,7 +495,8 @@ export function BusinessContextWizard({
             <div className="min-w-0">
               <h1 className="text-title">Contexto de la tienda</h1>
               <p className="mt-2 max-w-2xl text-body text-muted-ui">
-                Rubro, medios de pago y variantes del catálogo. El nombre del negocio viene del registro.
+                Rubro, pagos, variantes y un bloque para el asistente (waseller-crew): tono y entregas se envían como
+                contexto comercial en cada evaluación.
               </p>
             </div>
             <Button type="button" onClick={() => void save()} disabled={saving} loading={saving} className="shrink-0">
@@ -451,9 +530,15 @@ export function BusinessContextWizard({
                 key={step.id}
                 type="button"
                 onClick={() => {
-                  if (step.id > currentStep && !canGoToStep(currentStep)) {
-                    setMessage(stepValidationErrors[currentStep].join(" "));
-                    return;
+                  if (step.id > currentStep) {
+                    for (let s = currentStep; s < step.id; s++) {
+                      const ws = s as WizardStep;
+                      if (stepValidationErrors[ws].length > 0) {
+                        setMessage(stepValidationErrors[ws].join(" "));
+                        setCurrentStep(ws);
+                        return;
+                      }
+                    }
                   }
                   setCurrentStep(step.id);
                 }}
@@ -537,7 +622,7 @@ export function BusinessContextWizard({
               </h2>
               <p className="mt-2 text-body text-muted-ui">
                 Mercado Pago y efectivo. El cobro con MP se confirma por webhook; el efectivo lo marcás vos desde la
-                conversación. Los envíos se acuerdan por WhatsApp (no se configuran acá).
+                conversación. En el paso siguiente cargás tono y entregas para el asistente (waseller-crew).
               </p>
 
               <div className="mt-5">
@@ -637,6 +722,116 @@ export function BusinessContextWizard({
             </section>
           ) : null}
 
+          {currentStep === 3 ? (
+            <section className="rounded-lg border border-border bg-surface p-4 shadow-sm ring-1 ring-black/[0.02] md:p-6">
+              <h2 className="flex items-center text-section">
+                Contexto para el asistente
+                <InfoTip text="Waseller envía tono, entregas y políticas al servicio waseller-crew (shadow compare) para alinear respuestas con tu negocio." />
+              </h2>
+              <p className="mt-2 text-body text-muted-ui">
+                Completá estos campos para que el asistente tenga el mismo contexto comercial que ves en operación.
+              </p>
+
+              <div className="mt-5">
+                <label className="text-label-ui font-semibold text-[var(--color-text)]" htmlFor="ws-business-public-name">
+                  Nombre público del negocio
+                </label>
+                <p className="mt-1 text-body text-muted-ui">
+                  Opcional: si lo dejás vacío se usa el nombre del tenant. Se incluye en el resumen comercial del crew.
+                </p>
+                <input
+                  id="ws-business-public-name"
+                  type="text"
+                  value={form.businessPublicName}
+                  onChange={(e) => setForm((f) => ({ ...f, businessPublicName: e.target.value }))}
+                  className={cn(
+                    "mt-1.5 w-full rounded-md border border-border bg-canvas px-3 py-2 text-body text-[var(--color-text)] shadow-sm",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                  )}
+                  autoComplete="organization"
+                />
+              </div>
+
+              <div className="mt-5">
+                <label className="text-label-ui font-semibold text-[var(--color-text)]" htmlFor="ws-tone">
+                  Tono de las respuestas
+                </label>
+                <select
+                  id="ws-tone"
+                  value={form.tone}
+                  onChange={(e) => setForm((f) => ({ ...f, tone: e.target.value }))}
+                  className={cn(
+                    "mt-1.5 w-full rounded-md border border-border bg-canvas px-3 py-2 text-body text-[var(--color-text)] shadow-sm",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                  )}
+                >
+                  <option value="">Elegí una opción…</option>
+                  {TONE_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="mt-5">
+                <label className="text-label-ui font-semibold text-[var(--color-text)]" htmlFor="ws-delivery">
+                  Entregas, retiros o envíos
+                </label>
+                <p className="mt-1 text-body text-muted-ui">
+                  Texto libre (zonas, plazos, costos orientativos, horarios de retiro). Mínimo {CREW_MIN_DELIVERY_LEN}{" "}
+                  caracteres.
+                </p>
+                <textarea
+                  id="ws-delivery"
+                  value={form.deliveryInfo}
+                  onChange={(e) => setForm((f) => ({ ...f, deliveryInfo: e.target.value }))}
+                  rows={5}
+                  className={cn(
+                    "mt-1.5 w-full resize-y rounded-md border border-border bg-canvas px-3 py-2 text-body text-[var(--color-text)] shadow-sm",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                  )}
+                  placeholder="Ej.: Envíos a CABA y GBA en 48 h. Retiro gratis en Av. Corrientes 1230 de lun a vie 10–18 h."
+                />
+              </div>
+
+              <div className="mt-5 grid min-w-0 gap-4 sm:grid-cols-2">
+                <div className="min-w-0 sm:col-span-2">
+                  <label className="text-label-ui font-semibold text-[var(--color-text)]" htmlFor="ws-support-hours">
+                    Horarios de atención (opcional)
+                  </label>
+                  <input
+                    id="ws-support-hours"
+                    type="text"
+                    value={form.supportHours}
+                    onChange={(e) => setForm((f) => ({ ...f, supportHours: e.target.value }))}
+                    className={cn(
+                      "mt-1.5 w-full rounded-md border border-border bg-canvas px-3 py-2 text-body text-[var(--color-text)] shadow-sm",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                    )}
+                    placeholder="Ej.: Lun a vie 9–18 h"
+                  />
+                </div>
+                <div className="min-w-0 sm:col-span-2">
+                  <label className="text-label-ui font-semibold text-[var(--color-text)]" htmlFor="ws-policy-notes">
+                    Notas de política o cambios (opcional)
+                  </label>
+                  <textarea
+                    id="ws-policy-notes"
+                    value={form.policyNotes}
+                    onChange={(e) => setForm((f) => ({ ...f, policyNotes: e.target.value }))}
+                    rows={3}
+                    className={cn(
+                      "mt-1.5 w-full resize-y rounded-md border border-border bg-canvas px-3 py-2 text-body text-[var(--color-text)] shadow-sm",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                    )}
+                    placeholder="Ej.: Cambios con ticket dentro de los 10 días; no aplica en productos sellados."
+                  />
+                </div>
+              </div>
+            </section>
+          ) : null}
+
           {stepValidationErrors[currentStep].length > 0 ? (
             <div
               className="mt-3 rounded-md border border-error bg-error-bg px-3 py-2 text-body text-error"
@@ -668,8 +863,21 @@ export function BusinessContextWizard({
               >
                 Siguiente
               </Button>
+            ) : currentStep === 2 ? (
+              <Button
+                type="button"
+                onClick={() => {
+                  if (!canGoToStep(2)) {
+                    setMessage(stepValidationErrors[2].join(" "));
+                    return;
+                  }
+                  setCurrentStep(3);
+                }}
+              >
+                Siguiente
+              </Button>
             ) : (
-              <Button type="button" onClick={() => void save()} disabled={saving || !canGoToStep(2)} loading={saving}>
+              <Button type="button" onClick={() => void save()} disabled={saving || !canGoToStep(3)} loading={saving}>
                 Guardar y finalizar
               </Button>
             )}
@@ -691,9 +899,21 @@ export function BusinessContextWizard({
               <dt className="text-label-ui text-muted-ui">Variantes</dt>
               <dd className="mt-0.5 font-medium tabular-nums">{selectedVariants.length}</dd>
             </div>
+            <div>
+              <dt className="text-label-ui text-muted-ui">Tono (crew)</dt>
+              <dd className="mt-0.5 font-medium">
+                {form.tone ? TONE_OPTIONS.find((o) => o.value === form.tone)?.label ?? form.tone : "—"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-label-ui text-muted-ui">Entregas</dt>
+              <dd className="mt-0.5 font-medium tabular-nums">
+                {form.deliveryInfo.trim().length >= CREW_MIN_DELIVERY_LEN ? "Listo" : "Pendiente"}
+              </dd>
+            </div>
           </dl>
           <p className="mt-4 border-t border-border pt-4 text-label-ui text-muted-ui">
-            Completá cada paso en orden; podés volver atrás para corregir antes de guardar.
+            Completá los tres pasos en orden; podés volver atrás para corregir antes de guardar.
           </p>
         </aside>
       </div>

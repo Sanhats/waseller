@@ -102,6 +102,54 @@ function crewTenantBriefHasSignal(b) {
         return true;
     return false;
 }
+/**
+ * Texto plano para overlay junto a `tenant_prompts/<businessProfileSlug>.txt` en waseller-crew.
+ * Misma fuente que `tenantBrief` (objeto estructurado); el crew puede preferir este campo para inyectar en el prompt.
+ */
+function buildTenantCommercialContextFromBrief(b) {
+    const lines = [];
+    if (b.businessName)
+        lines.push(`Nombre del negocio: ${b.businessName}`);
+    if (b.businessCategory)
+        lines.push(`Categoría (Waseller): ${b.businessCategory}`);
+    if (b.businessLabels?.length)
+        lines.push(`Etiquetas: ${b.businessLabels.join(", ")}`);
+    if (b.tone)
+        lines.push(`Tono sugerido: ${b.tone}`);
+    if (b.deliveryInfo)
+        lines.push(`Entregas / logística: ${b.deliveryInfo}`);
+    if (b.payment?.methods?.length) {
+        lines.push(`Medios de pago: ${b.payment.methods.join(", ")}`);
+        if (b.payment.acceptsInstallments)
+            lines.push("Cuotas: sí");
+        if (b.payment.transferAliasConfigured)
+            lines.push("Alias transferencia: configurado (valor no enviado en API)");
+    }
+    if (b.shipping) {
+        const bits = [];
+        if (b.shipping.methods.length)
+            bits.push(`métodos: ${b.shipping.methods.join(", ")}`);
+        if (b.shipping.zones.length)
+            bits.push(`zonas: ${b.shipping.zones.join(", ")}`);
+        if (b.shipping.sameDay)
+            bits.push("mismo día: sí");
+        if (bits.length)
+            lines.push(`Envíos: ${bits.join("; ")}`);
+    }
+    if (b.policy) {
+        const p = b.policy;
+        if (p.reservationTtlMinutes != null)
+            lines.push(`Reserva (TTL min): ${p.reservationTtlMinutes}`);
+        if (p.supportHours)
+            lines.push(`Horario atención: ${p.supportHours}`);
+        if (p.notes)
+            lines.push(`Notas políticas: ${p.notes}`);
+        lines.push(`Cambios: ${p.allowExchange ? "sí" : "no"} | Devoluciones: ${p.allowReturns ? "sí" : "no"}`);
+    }
+    if (b.knowledgeUpdatedAt)
+        lines.push(`Perfil actualizado (ISO): ${b.knowledgeUpdatedAt}`);
+    return lines.join("\n");
+}
 /** Reduce tokens en waseller-crew: truncar textos y quitar campos pesados del JSON HTTP. */
 function slimInterpretationForCrewHttp(i) {
     const maxRef = readNumericEnv("LLM_SHADOW_COMPARE_MAX_REFERENCES", 8);
@@ -464,7 +512,13 @@ async function assembleShadowCompareOutboundBody(input) {
         payload.businessProfileSlug = crewSlug;
     }
     if (input.tenantBrief && crewTenantBriefHasSignal(input.tenantBrief)) {
-        payload.tenantBrief = slimCrewTenantBriefForHttp(input.tenantBrief);
+        const slimBrief = slimCrewTenantBriefForHttp(input.tenantBrief);
+        payload.tenantBrief = slimBrief;
+        const commercialLines = buildTenantCommercialContextFromBrief(slimBrief);
+        const maxCommercial = readNumericEnv("LLM_SHADOW_COMPARE_MAX_TENANT_COMMERCIAL_CONTEXT_CHARS", 1400);
+        if (commercialLines.trim().length > 0) {
+            payload.tenantCommercialContext = clampStr(commercialLines, maxCommercial);
+        }
     }
     return payload;
 }

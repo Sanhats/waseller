@@ -28,6 +28,7 @@ Todos **opcionales**. Tipos alineados a uso en workers / Prisma (strings UUID do
 | `inventoryNarrowingNote` | `string` | Opcional | Waseller envía **siempre** una nota en español que explica el alcance: producto único, multi-producto RAG, sin tabla por falta de contexto, o conjunto vacío tras filtros. waseller-crew la usa en el bloque de misión (`extra="ignore"` sigue aplicando a campos desconocidos). |
 | `businessProfileSlug` | `string` | Opcional | Patrón seguro `[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}`. Waseller parte de `tenant_knowledge.business_category` y aplica **mapeo** a slugs del crew cuando hace falta (p. ej. `hogar_deco` → `muebles_deco`); valores como `indumentaria_calzado` o `repuestos_lubricentro` se envían tal cual si ya coinciden con el crew. |
 | `tenantBrief` | `object` | Opcional | Resumen del tenant para el agente: `businessName`, `businessCategory`, `businessLabels`, `tone`, `deliveryInfo`, `knowledgeUpdatedAt` (ISO), `payment` (métodos, `acceptsInstallments`, `transferAliasConfigured`), `shipping` (métodos, `zones`, `sameDay`), `policy` (reservas, horarios, notas, cambios/devoluciones). **Pydantic `extra="ignore"`** en crew: si el servicio aún no lo usa, no rompe. Definición TypeScript: `CrewTenantBriefV1` en `shadow-compare.service.ts`. |
+| `tenantCommercialContext` | `string` | Opcional | Texto plano (español) con el mismo contenido comercial que `tenantBrief`, pensado para **inyectar junto** al overlay `tenant_prompts/<businessProfileSlug>.txt` en waseller-crew. Waseller lo genera automáticamente cuando hay `tenantBrief` con señal; tope `LLM_SHADOW_COMPARE_MAX_TENANT_COMMERCIAL_CONTEXT_CHARS` (default **1400**). |
 
 **No** se cambia en v1.1: `schemaVersion`, `kind`, `tenantId`, `leadId`, `incomingText`, `interpretation`, `baselineDecision` (siguen como hoy).
 
@@ -59,6 +60,7 @@ Todos **opcionales**. Tipos alineados a uso en workers / Prisma (strings UUID do
 | `LLM_SHADOW_COMPARE_MAX_STOCK_ATTR_VALUE_CHARS` | Opcional | Tope por valor de atributo (default **80**). |
 | `LLM_SHADOW_COMPARE_INCLUDE_STOCK_IMAGE_URL` | Opcional | Si es `true`/`1`/`yes`, incluye `imageUrl` en filas de stock (por defecto **no**, para ahorrar tokens). |
 | `LLM_SHADOW_COMPARE_MAX_TENANT_BRIEF_*` | Opcional | Límites de caracteres / listas para el objeto `tenantBrief` (nombre, delivery, notas de política, tono, labels; ver código en `slimCrewTenantBriefForHttp`). |
+| `LLM_SHADOW_COMPARE_MAX_TENANT_COMMERCIAL_CONTEXT_CHARS` | Opcional | Tope de `tenantCommercialContext` (default **1400**). |
 | `WASELLER_CREW_PRIMARY` | Opcional | `true`/`1`/`yes`: el crew **reemplaza** la decisión interna antes del verificador (misma URL que shadow). |
 | `CREW_PRIMARY_RELAX_GUARDRAILS` | Opcional | Default **true** cuando primary aplicó: baja el umbral efectivo de confianza para `applyReplyGuardrails` y `requiresHuman` (ver `CREW_PRIMARY_GUARDRAIL_CONFIDENCE_FLOOR`). |
 | `CREW_PRIMARY_GUARDRAIL_CONFIDENCE_FLOOR` | Opcional | Suelo mínimo (default **0.55**) usado junto al `llmConfidenceThreshold` del tenant cuando `CREW_PRIMARY_RELAX_GUARDRAILS` está activo. |

@@ -16,6 +16,8 @@ export class OnboardingController {
     tenantName: string;
     allCompleted: boolean;
     completionPercent: number;
+    tenantKnowledgePersisted: boolean;
+    crewCommercialContextComplete: boolean;
     whatsapp: {
       tenantWhatsappNumber: string | null;
       sessionStatus: "connecting" | "connected" | "disconnected" | "qr_required" | "not_connected";

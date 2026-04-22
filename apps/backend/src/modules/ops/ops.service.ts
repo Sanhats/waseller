@@ -12,6 +12,7 @@ import {
   BusinessCategory,
   DEFAULT_TENANT_BUSINESS_PROFILE,
   TenantBusinessProfile,
+  isTenantCrewCommercialContextComplete,
   normalizeTenantBusinessProfile
 } from "../../../../../packages/shared/src";
 
@@ -487,6 +488,7 @@ export class OpsService {
     tenantId: string;
     tenantName: string;
     persisted: boolean;
+    crewCommercialContextComplete: boolean;
     knowledge: TenantBusinessProfile;
   }> {
     const tenant = await prisma.tenant.findUnique({
@@ -516,6 +518,7 @@ export class OpsService {
           tenantId,
           tenantName,
           persisted: true,
+          crewCommercialContextComplete: isTenantCrewCommercialContextComplete(knowledge),
           knowledge
         };
       }
@@ -530,6 +533,7 @@ export class OpsService {
       tenantId,
       tenantName,
       persisted: false,
+      crewCommercialContextComplete: isTenantCrewCommercialContextComplete(fallback),
       knowledge: fallback
     };
   }
@@ -549,14 +553,17 @@ export class OpsService {
       select: { name: true }
     });
     const tenantName = String(tenant?.name ?? "").trim();
-    const source =
+    const rawKnowledge =
       input.knowledge && typeof input.knowledge === "object"
-        ? {
-            ...input.knowledge,
-            ...(input.presetCategory ? { businessCategory: input.presetCategory } : {}),
-            businessName: tenantName || undefined
-          }
-        : input.presetCategory
+        ? (input.knowledge as Record<string, unknown>)
+        : undefined;
+    const source = rawKnowledge
+      ? {
+          ...rawKnowledge,
+          ...(input.presetCategory ? { businessCategory: input.presetCategory } : {}),
+          businessName: String(rawKnowledge.businessName ?? "").trim() || tenantName || undefined
+        }
+      : input.presetCategory
           ? {
               ...DEFAULT_TENANT_KNOWLEDGE,
               ...BUSINESS_PRESETS[input.presetCategory],

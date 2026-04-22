@@ -1,6 +1,6 @@
 import { BadGatewayException, BadRequestException, ConflictException, Injectable } from "@nestjs/common";
 import { prisma } from "../../../../../packages/db/src";
-import { getWhatsappServiceBaseUrl } from "@waseller/shared";
+import { getWhatsappServiceBaseUrl, isTenantCrewCommercialContextComplete } from "@waseller/shared";
 import { MercadoPagoService } from "../mercado-pago/mercado-pago.service";
 import { OpsService } from "../ops/ops.service";
 
@@ -226,6 +226,10 @@ export class OnboardingService {
     tenantName: string;
     allCompleted: boolean;
     completionPercent: number;
+    /** Hay fila en `tenant_knowledge` (puede faltar tono/entregas para el crew). */
+    tenantKnowledgePersisted: boolean;
+    /** Perfil listo para `tenantBrief` del crew (tono + entregas). */
+    crewCommercialContextComplete: boolean;
     steps: OnboardingStep[];
     whatsapp: WhatsappConnectionState;
     mercadoPago: MercadoPagoConnectionState;
@@ -239,8 +243,15 @@ export class OnboardingService {
     const tenantName = tenantKnowledge.tenantName;
     const whatsappConnected = whatsapp.sessionStatus === "connected";
     const mercadoPagoConnected = mercadoPago.status === "connected";
-    const businessProfileSaved = tenantKnowledge.persisted;
+    const tenantKnowledgePersisted = tenantKnowledge.persisted;
+    const crewCommercialContextComplete = isTenantCrewCommercialContextComplete(tenantKnowledge.knowledge);
+    const businessProfileSaved = tenantKnowledgePersisted && crewCommercialContextComplete;
     const catalogReady = productsCount >= 3;
+    const businessStepMetric = !tenantKnowledgePersisted
+      ? "Pendiente"
+      : !crewCommercialContextComplete
+        ? "Incompleto: tono y entregas"
+        : "Guardado";
 
     const steps: OnboardingStep[] = [
       {
@@ -262,10 +273,11 @@ export class OnboardingService {
       {
         key: "configure_business",
         title: "Contexto de la tienda",
-        description: "Rubro, medios de pago y variantes del catálogo (envíos se acuerdan por WhatsApp).",
+        description:
+          "Rubro, pagos, variantes y datos para el asistente (tono + entregas): se envían a waseller-crew como contexto comercial.",
         completed: businessProfileSaved,
         href: "/",
-        metric: businessProfileSaved ? "Guardado" : "Pendiente"
+        metric: businessStepMetric
       },
       {
         key: "create_catalog",
@@ -279,13 +291,15 @@ export class OnboardingService {
 
     const completedCount = steps.filter((step) => step.completed).length;
     const completionPercent = Math.round((completedCount / steps.length) * 100);
-    const allCompleted = completedCount === steps.length;
+    const allCompleted = steps.every((step) => step.completed);
 
     return {
       generatedAt: new Date().toISOString(),
       tenantName,
       allCompleted,
       completionPercent,
+      tenantKnowledgePersisted,
+      crewCommercialContextComplete,
       steps,
       whatsapp,
       mercadoPago

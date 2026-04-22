@@ -167,6 +167,14 @@ export const BUSINESS_PRESETS: Record<BusinessCategory, Partial<TenantBusinessPr
   }
 };
 
+/** Mínimo para enviar `tenantBrief` útil a waseller-crew (tono + logística/entregas en texto). */
+export function isTenantCrewCommercialContextComplete(profile: TenantBusinessProfile): boolean {
+  return (
+    String(profile.tone ?? "").trim().length > 0 &&
+    String(profile.deliveryInfo ?? "").trim().length > 0
+  );
+}
+
 export const normalizeTenantBusinessProfile = (raw: unknown): TenantBusinessProfile => {
   const input = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   const paymentSource =
