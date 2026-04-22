@@ -214,7 +214,10 @@ export const conversationOrchestratorWorker = new Worker<LlmOrchestrationJobV1>(
         tenantBusinessCategory: tenantKnowledge.profile.businessCategory,
         stockTableProductId,
         stockTableRagProductIds: ragProductIdsForCrew.length > 0 ? ragProductIdsForCrew : null,
-        tenantBrief: crewTenantBrief
+        tenantBrief: crewTenantBrief,
+        activeOffer: job.data.activeOffer ?? null,
+        memoryFacts: job.data.memoryFacts ?? {},
+        conversationStage: job.data.conversationStage ?? interpreted.conversationStage
       }).catch(() => null);
       if (crewPrimary) {
         llmDecision = crewPrimary.decision;
@@ -320,7 +323,10 @@ export const conversationOrchestratorWorker = new Worker<LlmOrchestrationJobV1>(
           tenantBusinessCategory: tenantKnowledge.profile.businessCategory,
           stockTableProductId,
           stockTableRagProductIds: ragProductIdsForCrew.length > 0 ? ragProductIdsForCrew : null,
-          tenantBrief: crewTenantBrief
+          tenantBrief: crewTenantBrief,
+          activeOffer: job.data.activeOffer ?? null,
+          memoryFacts: job.data.memoryFacts ?? {},
+          conversationStage: job.data.conversationStage ?? interpreted.conversationStage
         };
         const shadowExec = await executeShadowCompareRequest(shadowInput);
         if (shadowExec) {

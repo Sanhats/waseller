@@ -1181,7 +1181,9 @@ export const leadWorker = new Worker<LeadProcessingJobV1>(
           recentMessages: recentChronologicalForCrew,
           tenantBusinessCategory: tenantKnowledge.profile.businessCategory,
           stockTableProductId,
-          tenantBrief: crewTenantBrief
+          tenantBrief: crewTenantBrief,
+          activeOffer: job.data.activeOffer ?? null,
+          conversationStage: job.data.conversationStage ?? interpretation.conversationStage
         }).catch(() => null);
         if (crewPrimary) {
           const crewPrimaryThreshold = resolveCrewPrimaryEffectiveConfidenceThreshold(
@@ -1230,7 +1232,9 @@ export const leadWorker = new Worker<LeadProcessingJobV1>(
             recentMessages: recentChronologicalForCrew,
             tenantBusinessCategory: tenantKnowledge.profile.businessCategory,
             stockTableProductId,
-            tenantBrief: crewTenantBrief
+            tenantBrief: crewTenantBrief,
+            activeOffer: job.data.activeOffer ?? null,
+            conversationStage: job.data.conversationStage ?? interpretation.conversationStage
           };
           const shadowExec = await executeShadowCompareRequest(shadowInput);
           if (shadowExec) {

@@ -3,8 +3,10 @@ import {
   JOB_SCHEMA_VERSION,
   parseShadowCompareHttpResponse,
   summarizeDecisionDiff,
+  type ActiveOfferV1,
   type ConversationInterpretationV1,
   type ConversationReferenceV1,
+  type ConversationStageV1,
   type LlmDecisionV1,
   type ShadowCompareCandidateDecision,
   type ValidationIssue
@@ -192,6 +194,102 @@ function buildTenantCommercialContextFromBrief(b: CrewTenantBriefV1): string {
   return lines.join("\n");
 }
 
+function summarizeActiveOfferForCrew(offer: ActiveOfferV1 | null | undefined): string | undefined {
+  if (!offer) return undefined;
+  const parts: string[] = [];
+  if (offer.productName) parts.push(`Producto: ${offer.productName}`);
+  if (offer.variantId) parts.push(`variantId: ${offer.variantId}`);
+  if (offer.attributes && Object.keys(offer.attributes).length > 0) {
+    const attrs = Object.entries(offer.attributes)
+      .map(([k, v]) => `${k}=${v}`)
+      .join(", ");
+    parts.push(`Atributos: ${attrs}`.slice(0, 420));
+  }
+  if (offer.price != null && Number.isFinite(Number(offer.price))) parts.push(`Precio ref.: ${offer.price}`);
+  if (offer.availableStock != null && Number.isFinite(Number(offer.availableStock))) {
+    parts.push(`Stock ref.: ${offer.availableStock}`);
+  }
+  if (offer.expectedCustomerAction?.trim()) {
+    parts.push(`Acción esperada del cliente: ${offer.expectedCustomerAction.trim()}`);
+  }
+  if (offer.alternativeVariants?.length) {
+    parts.push(`Alternativas con stock: ${offer.alternativeVariants.length}`);
+  }
+  const s = parts.join(" · ");
+  return s.length > 0 ? s : undefined;
+}
+
+function slimMemoryFactsForCrewDigest(
+  facts: Record<string, unknown>,
+  maxKeys: number,
+  maxVal: number
+): Record<string, string | number | boolean | null> {
+  const out: Record<string, string | number | boolean | null> = {};
+  let c = 0;
+  for (const [k, v] of Object.entries(facts ?? {})) {
+    if (c++ >= maxKeys) break;
+    const key = clampStr(k, 72);
+    if (!key) continue;
+    if (v === null || typeof v === "number" || typeof v === "boolean") {
+      out[key] = v;
+    } else if (typeof v === "string") {
+      out[key] = clampStr(v, maxVal);
+    } else if (typeof v === "object") {
+      out[key] = clampStr(JSON.stringify(v), maxVal);
+    }
+  }
+  return out;
+}
+
+function deriveClosingGapsForCrew(
+  i: ConversationInterpretationV1,
+  offer: ActiveOfferV1 | null | undefined,
+  baseline: LlmDecisionV1
+): string[] {
+  const gaps = new Set<string>();
+  for (const m of i.missingFields ?? []) {
+    const s = String(m).trim();
+    if (s) gaps.add(`Pendiente: ${s}`);
+  }
+  if (offer?.expectedCustomerAction?.trim()) {
+    gaps.add(`Cliente: ${offer.expectedCustomerAction.trim()}`);
+  }
+  if (offer && (!offer.variantId || !String(offer.variantId).trim()) && (i.missingFields?.length ?? 0) > 0) {
+    gaps.add("Confirmar variante / combinación para cotizar");
+  }
+  if (baseline.requiresHuman) gaps.add("Baseline: requiresHuman");
+  if (baseline.handoffRequired) gaps.add("Baseline: handoffRequired");
+  const na = String(baseline.nextAction ?? "").trim();
+  const ra = String(baseline.recommendedAction ?? "").trim();
+  if (na && ra && na !== ra) {
+    gaps.add(`Política: nextAction=${na} vs recommendedAction=${ra}`);
+  }
+  return Array.from(gaps);
+}
+
+function buildRichInterpretationForShadowCompare(input: ShadowCompareInput): ConversationInterpretationV1 {
+  const i = input.interpretation;
+  const stage = (input.conversationStage ?? i.conversationStage) as ConversationStageV1 | undefined;
+  const digest = summarizeActiveOfferForCrew(input.activeOffer ?? null);
+  const gaps = deriveClosingGapsForCrew(i, input.activeOffer ?? null, input.baselineDecision);
+  const maxMemKeys = Math.max(4, Math.min(32, Number(process.env.LLM_SHADOW_COMPARE_MAX_MEMORY_FACT_KEYS ?? 18)));
+  const maxMemVal = Math.max(80, Math.min(600, Number(process.env.LLM_SHADOW_COMPARE_MAX_MEMORY_FACT_VALUE_CHARS ?? 280)));
+  const mem =
+    input.memoryFacts && Object.keys(input.memoryFacts).length > 0
+      ? slimMemoryFactsForCrewDigest(input.memoryFacts, maxMemKeys, maxMemVal)
+      : undefined;
+  const ra = String(input.baselineDecision.recommendedAction ?? "").trim();
+  return {
+    ...i,
+    conversationStage: stage ?? i.conversationStage,
+    activeOfferDigest: digest,
+    closingGaps: gaps.length > 0 ? gaps : undefined,
+    memoryFactsDigest: mem && Object.keys(mem).length > 0 ? mem : undefined,
+    baselineLeadStage: input.baselineDecision.leadStage,
+    baselineRecommendedAction: ra || undefined
+  };
+}
+
 /** Reduce tokens en waseller-crew: truncar textos y quitar campos pesados del JSON HTTP. */
 function slimInterpretationForCrewHttp(i: ConversationInterpretationV1): ConversationInterpretationV1 {
   const maxRef = readNumericEnv("LLM_SHADOW_COMPARE_MAX_REFERENCES", 8);
@@ -199,6 +297,11 @@ function slimInterpretationForCrewHttp(i: ConversationInterpretationV1): Convers
   const maxEntityStr = readNumericEnv("LLM_SHADOW_COMPARE_MAX_ENTITY_VALUE_CHARS", 320);
   const maxMissing = readNumericEnv("LLM_SHADOW_COMPARE_MAX_MISSING_FIELDS", 14);
   const maxEntityKeys = readNumericEnv("LLM_SHADOW_COMPARE_MAX_ENTITY_KEYS", 28);
+  const maxOfferDigest = readNumericEnv("LLM_SHADOW_COMPARE_MAX_ACTIVE_OFFER_DIGEST_CHARS", 560);
+  const maxClosing = readNumericEnv("LLM_SHADOW_COMPARE_MAX_CLOSING_GAPS", 12);
+  const maxClosingItem = readNumericEnv("LLM_SHADOW_COMPARE_MAX_CLOSING_GAP_ITEM_CHARS", 200);
+  const maxMemDigestKeys = readNumericEnv("LLM_SHADOW_COMPARE_MAX_MEMORY_DIGEST_KEYS", 20);
+  const maxMemDigestVal = readNumericEnv("LLM_SHADOW_COMPARE_MAX_MEMORY_DIGEST_VALUE_CHARS", 260);
 
   const entities: ConversationInterpretationV1["entities"] = {};
   let ek = 0;
@@ -233,13 +336,45 @@ function slimInterpretationForCrewHttp(i: ConversationInterpretationV1): Convers
         : r.metadata
   }));
 
-  return {
+  const out: ConversationInterpretationV1 = {
     ...i,
     entities,
     references,
     notes: i.notes?.slice(0, maxNotes),
     missingFields: (i.missingFields ?? []).slice(0, maxMissing)
   };
+  if (i.activeOfferDigest?.trim()) {
+    out.activeOfferDigest = clampStr(i.activeOfferDigest, maxOfferDigest);
+  } else {
+    delete out.activeOfferDigest;
+  }
+  if (i.closingGaps?.length) {
+    out.closingGaps = i.closingGaps
+      .slice(0, maxClosing)
+      .map((g) => clampStr(String(g), maxClosingItem))
+      .filter(Boolean);
+  } else {
+    delete out.closingGaps;
+  }
+  if (i.memoryFactsDigest && typeof i.memoryFactsDigest === "object") {
+    const slimmed = slimMemoryFactsForCrewDigest(
+      i.memoryFactsDigest as Record<string, unknown>,
+      maxMemDigestKeys,
+      maxMemDigestVal
+    );
+    if (Object.keys(slimmed).length > 0) out.memoryFactsDigest = slimmed;
+    else delete out.memoryFactsDigest;
+  } else {
+    delete out.memoryFactsDigest;
+  }
+  if (i.baselineLeadStage) out.baselineLeadStage = i.baselineLeadStage;
+  else delete out.baselineLeadStage;
+  if (i.baselineRecommendedAction?.trim()) {
+    out.baselineRecommendedAction = clampStr(i.baselineRecommendedAction, 200);
+  } else {
+    delete out.baselineRecommendedAction;
+  }
+  return out;
 }
 
 function slimDecisionEntities(entities: LlmDecisionV1["entities"]): LlmDecisionV1["entities"] {
@@ -541,6 +676,12 @@ export type ShadowCompareInput = {
   stockTableRagProductIds?: string[] | null;
   /** Resumen comercial del tenant (tono, envíos, políticas) para waseller-crew. */
   tenantBrief?: CrewTenantBriefV1 | null;
+  /** Oferta activa (orquestador / lead) para enriquecer `interpretation` en el POST. */
+  activeOffer?: ActiveOfferV1 | null;
+  /** Hechos de memoria (solo orquestador) para digest en `interpretation`. */
+  memoryFacts?: Record<string, unknown>;
+  /** Etapa del pipeline Waseller (refuerza `interpretation.conversationStage` si falta). */
+  conversationStage?: ConversationStageV1;
 };
 
 const readShadowCompareSecret = (): string =>
@@ -657,7 +798,7 @@ export async function assembleShadowCompareOutboundBody(input: ShadowCompareInpu
     tenantId: inputResolved.tenantId,
     leadId: inputResolved.leadId,
     incomingText: clampStr(inputResolved.incomingText, maxIncoming),
-    interpretation: slimInterpretationForCrewHttp(inputResolved.interpretation),
+    interpretation: slimInterpretationForCrewHttp(buildRichInterpretationForShadowCompare(inputResolved)),
     baselineDecision: slimBaselineForCrewHttp(inputResolved.baselineDecision)
   };
   const phone = String(inputResolved.phone ?? "").trim();

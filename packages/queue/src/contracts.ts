@@ -77,6 +77,16 @@ export type ConversationInterpretationV1 = {
   nextAction: ConversationNextActionV1;
   source: "rules" | "openai";
   notes?: string[];
+  /** Resumen de oferta activa (solo payload hacia waseller-crew / shadow-compare). */
+  activeOfferDigest?: string;
+  /** Qué falta para avanzar el embudo (hints cortos). */
+  closingGaps?: string[];
+  /** Hechos de memoria serializados (solo contexto crew). */
+  memoryFactsDigest?: Record<string, string | number | boolean | null>;
+  /** Etapa comercial del baseline Waseller al armar el POST. */
+  baselineLeadStage?: "discovery" | "consideration" | "decision" | "handoff";
+  /** `recommendedAction` del `LlmDecisionV1` baseline (texto). */
+  baselineRecommendedAction?: string;
 };
 
 export type LeadProcessingJobV1 = {
