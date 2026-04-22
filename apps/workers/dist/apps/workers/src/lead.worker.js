@@ -971,6 +971,8 @@ exports.leadWorker = new bullmq_1.Worker(src_1.QueueNames.leadProcessing, async 
         expectedCustomerAction
     });
     /** Ruta directa (message-processor → lead): sin `llmDecision` del orquestador; aquí aplicamos waseller-crew como en el orquestador. */
+    let appliedExternalCrewDecision = null;
+    let appliedExternalRoute = null;
     if (!job.data.llmDecision) {
         const incomingRaw = String(job.data.incomingMessage ?? "").trim();
         if (incomingRaw.length > 0) {
@@ -1041,6 +1043,8 @@ exports.leadWorker = new bullmq_1.Worker(src_1.QueueNames.leadProcessing, async 
                 if (!gr.blocked) {
                     message = gr.message;
                     crewPrimaryApplied = true;
+                    appliedExternalCrewDecision = crewPrimary.decision;
+                    appliedExternalRoute = "lead_crew_primary";
                 }
             }
             if (shadowMode && !crewPrimaryApplied) {
@@ -1077,9 +1081,42 @@ exports.leadWorker = new bullmq_1.Worker(src_1.QueueNames.leadProcessing, async 
                         const grShadow = (0, conversation_policy_service_1.applyReplyGuardrails)(shadowExec.merged.draftReply, guardrailFallbackMessage, incomingRaw, shadowExec.merged.confidence, confidenceThreshold);
                         if (!grShadow.blocked) {
                             message = grShadow.message;
+                            if (shadowExec.merged) {
+                                appliedExternalCrewDecision = shadowExec.merged;
+                                appliedExternalRoute = "lead_shadow_compare";
+                            }
                         }
                     }
                 }
+            }
+            if (appliedExternalCrewDecision && (0, conversation_policy_service_1.decisionRequestsHumanHandoff)(appliedExternalCrewDecision)) {
+                const existingConversation = await src_2.prisma.conversation.findFirst({
+                    where: { tenantId, phone },
+                    orderBy: { updatedAt: "desc" },
+                    select: { id: true }
+                });
+                if (existingConversation) {
+                    await src_2.prisma.conversation.update({
+                        where: { id: existingConversation.id },
+                        data: {
+                            state: "manual_paused",
+                            lastMessage: (await templateService.getTemplate(tenantId, "orchestrator_auto_handoff_summary")) ||
+                                "Derivación automática a asesor por baja confianza o necesidad de atención humana."
+                        }
+                    });
+                }
+            }
+            if (appliedExternalCrewDecision && appliedExternalRoute) {
+                (0, conversation_policy_service_1.logAppliedLlmActions)({
+                    tenantId,
+                    leadId,
+                    route: appliedExternalRoute,
+                    nextAction: String(appliedExternalCrewDecision.nextAction),
+                    recommendedAction: String(appliedExternalCrewDecision.recommendedAction),
+                    handoffRequired: Boolean(appliedExternalCrewDecision.handoffRequired),
+                    provider: appliedExternalCrewDecision.provider,
+                    correlationId: job.data.correlationId
+                });
             }
         }
     }
@@ -1095,7 +1132,10 @@ exports.leadWorker = new bullmq_1.Worker(src_1.QueueNames.leadProcessing, async 
         priority: numericPriority,
         metadata: {
             source: "bot",
-            nextBestAction: job.data.llmDecision?.recommendedAction
+            nextBestAction: job.data.llmDecision?.recommendedAction ??
+                (appliedExternalCrewDecision && appliedExternalRoute
+                    ? appliedExternalCrewDecision.recommendedAction
+                    : undefined)
         }
     }, {
         priority: numericPriority,

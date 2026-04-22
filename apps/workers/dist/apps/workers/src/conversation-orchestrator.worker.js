@@ -189,7 +189,9 @@ exports.conversationOrchestratorWorker = new bullmq_1.Worker(src_2.QueueNames.ll
         const guardrails = (0, conversation_policy_service_1.applyReplyGuardrails)(llmDecision.draftReply, guardrailFallbackMessage, incomingText, llmDecision.confidence, effectiveConfidenceThreshold);
         const policyBand = resolvePolicyBand(llmDecision.confidence);
         const shadowMode = (job.data.executionMode ?? "active") === "shadow";
+        const wantsHandoffFromDecision = (0, conversation_policy_service_1.decisionRequestsHumanHandoff)(llmDecision);
         const requiresHuman = Boolean(llmDecision.requiresHuman) ||
+            wantsHandoffFromDecision ||
             llmDecision.confidence < effectiveConfidenceThreshold ||
             verifierFailed;
         const policyResolution = (0, conversation_policy_service_1.resolvePolicyAction)({
@@ -227,7 +229,7 @@ exports.conversationOrchestratorWorker = new bullmq_1.Worker(src_2.QueueNames.ll
             },
             verification,
             recommendedAction: recommendedAction,
-            handoffRequired: llmDecision.handoffRequired || guardrails.blocked || requiresHuman,
+            handoffRequired: llmDecision.handoffRequired || wantsHandoffFromDecision || guardrails.blocked || requiresHuman,
             qualityFlags: [
                 ...new Set([
                     ...(llmDecision.qualityFlags ?? []),
@@ -265,19 +267,25 @@ exports.conversationOrchestratorWorker = new bullmq_1.Worker(src_2.QueueNames.ll
                 if (shadowExec.merged && shadowExec.httpOk) {
                     const grShadow = (0, conversation_policy_service_1.applyReplyGuardrails)(shadowExec.merged.draftReply, guardrailFallbackMessage, incomingText, shadowExec.merged.confidence, effectiveConfidenceThreshold);
                     if (!grShadow.blocked) {
+                        const mergedFromShadow = shadowExec.merged;
+                        const shadowHandoff = (0, conversation_policy_service_1.decisionRequestsHumanHandoff)(mergedFromShadow);
                         effectiveDecision = {
                             ...effectiveDecision,
                             draftReply: grShadow.message,
-                            intent: shadowExec.merged.intent ?? effectiveDecision.intent,
-                            confidence: shadowExec.merged.confidence,
-                            reason: shadowExec.merged.reason ?? effectiveDecision.reason,
-                            source: shadowExec.merged.source,
-                            provider: shadowExec.merged.provider,
-                            model: shadowExec.merged.model,
-                            entities: shadowExec.merged.entities ?? effectiveDecision.entities,
+                            intent: mergedFromShadow.intent ?? effectiveDecision.intent,
+                            confidence: mergedFromShadow.confidence,
+                            reason: mergedFromShadow.reason ?? effectiveDecision.reason,
+                            source: mergedFromShadow.source,
+                            provider: mergedFromShadow.provider,
+                            model: mergedFromShadow.model,
+                            entities: mergedFromShadow.entities ?? effectiveDecision.entities,
+                            nextAction: mergedFromShadow.nextAction ?? effectiveDecision.nextAction,
+                            recommendedAction: mergedFromShadow.recommendedAction ?? effectiveDecision.recommendedAction,
+                            requiresHuman: Boolean(effectiveDecision.requiresHuman || shadowHandoff),
+                            handoffRequired: Boolean(effectiveDecision.handoffRequired || shadowHandoff),
                             qualityFlags: Array.from(new Set([
                                 ...(effectiveDecision.qualityFlags ?? []),
-                                ...(shadowExec.merged.qualityFlags ?? []),
+                                ...(mergedFromShadow.qualityFlags ?? []),
                                 ...grShadow.flags,
                                 "shadow_compare_customer_applied"
                             ]))
@@ -285,6 +293,12 @@ exports.conversationOrchestratorWorker = new bullmq_1.Worker(src_2.QueueNames.ll
                     }
                 }
             }
+        }
+        if ((0, conversation_policy_service_1.decisionRequestsHumanHandoff)(effectiveDecision) && effectiveDecision.policy) {
+            effectiveDecision = {
+                ...effectiveDecision,
+                policy: { ...effectiveDecision.policy, executedAction: "handoff_human" }
+            };
         }
         const activeOffer = (0, conversation_policy_service_1.buildActiveOfferSnapshot)({
             existing: job.data.activeOffer ?? null,
@@ -446,6 +460,17 @@ exports.conversationOrchestratorWorker = new bullmq_1.Worker(src_2.QueueNames.ll
         };
         await src_2.leadProcessingQueue.add("lead-processed-v1", leadJob, {
             jobId: `lead_${leadJob.dedupeKey}`
+        });
+        (0, conversation_policy_service_1.logAppliedLlmActions)({
+            tenantId,
+            leadId,
+            route: "orchestrator",
+            nextAction: String(effectiveDecision.nextAction),
+            recommendedAction: String(effectiveDecision.recommendedAction),
+            executedAction: effectiveDecision.policy?.executedAction,
+            handoffRequired: effectiveDecision.handoffRequired,
+            provider: effectiveDecision.provider,
+            correlationId
         });
         orchestratorMetrics.onEnqueued();
         const nextScore = (0, src_3.leadStageToScore)(effectiveDecision.leadStage);

@@ -8,6 +8,55 @@ import {
 
 const SENSITIVE_ACTIONS = new Set<ConversationNextActionV1>(["reserve_stock", "share_payment_link", "close_lead"]);
 
+const HANDOFF_NEXT_ACTIONS = new Set<ConversationNextActionV1>(["handoff_human", "manual_review"]);
+
+/** Crew / LLM piden derivación a humano (no tratar solo como texto de venta). */
+export const decisionRequestsHumanHandoff = (decision: {
+  nextAction?: ConversationNextActionV1 | string;
+  recommendedAction?: string;
+}): boolean => {
+  const na = decision.nextAction as ConversationNextActionV1 | undefined;
+  if (na && HANDOFF_NEXT_ACTIONS.has(na)) return true;
+  const ra = String(decision.recommendedAction ?? "").trim();
+  return ra === "handoff_human" || ra === "manual_review";
+};
+
+/**
+ * Telemetría JSON en stdout (Railway / agregadores). `WASELLER_LLM_ACTION_LOG`: `0` off, `handoff` (default) solo derivaciones, `all` cada turno.
+ */
+export function logAppliedLlmActions(input: {
+  tenantId: string;
+  leadId: string;
+  route: "orchestrator" | "lead_crew_primary" | "lead_shadow_compare";
+  nextAction: string;
+  recommendedAction: string;
+  executedAction?: string;
+  handoffRequired?: boolean;
+  provider?: string;
+  correlationId?: string;
+}): void {
+  const mode = String(process.env.WASELLER_LLM_ACTION_LOG ?? "handoff").trim().toLowerCase();
+  if (mode === "0" || mode === "false" || mode === "no") return;
+  const handoff =
+    input.nextAction === "handoff_human" ||
+    input.nextAction === "manual_review" ||
+    input.recommendedAction === "handoff_human" ||
+    input.recommendedAction === "manual_review" ||
+    Boolean(input.handoffRequired);
+  if (mode !== "all" && !handoff) return;
+  try {
+    console.log(
+      JSON.stringify({
+        event: "waseller_llm_actions",
+        ts: new Date().toISOString(),
+        ...input
+      })
+    );
+  } catch {
+    // noop
+  }
+}
+
 export const normalizeConversationText = (value: string): string =>
   String(value ?? "")
     .toLowerCase()
@@ -99,6 +148,19 @@ export const resolvePolicyAction = (input: {
   let recommendedAction = (input.interpretation?.nextAction ??
     input.decision.nextAction ??
     "reply_only") as ConversationNextActionV1;
+
+  // Prioridad explícita: si la decisión aplicada (p. ej. waseller-crew) pide derivación, no dejar que
+  // `interpretation.nextAction` (suelo rules/reply_only) la pise.
+  if (decisionRequestsHumanHandoff(input.decision)) {
+    const fromDecision =
+      input.decision.nextAction && HANDOFF_NEXT_ACTIONS.has(input.decision.nextAction as ConversationNextActionV1)
+        ? (input.decision.nextAction as ConversationNextActionV1)
+        : String(input.decision.recommendedAction ?? "").trim() === "manual_review"
+          ? "manual_review"
+          : "handoff_human";
+    recommendedAction = fromDecision;
+    flags.push("crew_handoff_priority");
+  }
 
   if ((input.forbiddenActions ?? []).includes(recommendedAction)) {
     recommendedAction = "ask_clarification";

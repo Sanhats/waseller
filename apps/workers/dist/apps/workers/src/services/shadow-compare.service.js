@@ -649,6 +649,20 @@ function mergeCrewCandidateIntoLlmDecision(baseline, candidate) {
     const draft = typeof candidate.draftReply === "string" ? candidate.draftReply.trim() : "";
     if (draft.length < 2)
         return null;
+    const recStr = typeof candidate.recommendedAction === "string" && candidate.recommendedAction.trim().length > 0
+        ? candidate.recommendedAction.trim()
+        : "";
+    let mergedNext = candidate.nextAction ?? baseline.nextAction;
+    if ((recStr === "handoff_human" || recStr === "manual_review") &&
+        mergedNext !== "handoff_human" &&
+        mergedNext !== "manual_review") {
+        mergedNext = recStr;
+    }
+    const mergedRec = recStr || baseline.recommendedAction;
+    const wantsHandoff = mergedNext === "handoff_human" ||
+        mergedNext === "manual_review" ||
+        mergedRec === "handoff_human" ||
+        mergedRec === "manual_review";
     return {
         ...baseline,
         draftReply: draft,
@@ -658,10 +672,10 @@ function mergeCrewCandidateIntoLlmDecision(baseline, candidate) {
         confidence: typeof candidate.confidence === "number" && Number.isFinite(candidate.confidence)
             ? candidate.confidence
             : baseline.confidence,
-        nextAction: candidate.nextAction ?? baseline.nextAction,
-        recommendedAction: typeof candidate.recommendedAction === "string" && candidate.recommendedAction.trim().length > 0
-            ? candidate.recommendedAction.trim()
-            : baseline.recommendedAction,
+        nextAction: mergedNext,
+        recommendedAction: mergedRec,
+        requiresHuman: Boolean(baseline.requiresHuman || wantsHandoff),
+        handoffRequired: Boolean(baseline.handoffRequired || wantsHandoff),
         reason: typeof candidate.reason === "string" && candidate.reason.trim().length > 0
             ? candidate.reason.trim()
             : baseline.reason,

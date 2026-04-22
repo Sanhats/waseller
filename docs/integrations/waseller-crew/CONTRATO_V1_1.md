@@ -213,6 +213,15 @@ Mismo núcleo que arriba **más** campos opcionales (ejemplo ilustrativo):
 | **waseller-crew** | **Hecho (repo crew):** `ShadowCompareRequest` con `tenantBrief`, `etapa`, `activeOffer`, `memoryFacts` + prompts (`_sales_and_stock_rules`, `_waseller_negotiation_context_block`); `docs/CONTRATO_HTTP_V1_1.md` + `docs/integrations/waseller-crew/README.md` + `docs/GUIA_INTEGRACION_WASELLER_MAIN.md`; fixture `fixtures/request.mesa_colores.json`; test `test_mesa_colores_fixture_parses_and_posts` (Pydantic + POST **200** + `draftReply` con stub). **Mejora continua:** ver **§8**. |
 | **Ops** | Mismo valor en `LLM_SHADOW_COMPARE_SECRET` (workers) y `SHADOW_COMPARE_SECRET` (crew); `LLM_SHADOW_COMPARE_TIMEOUT_MS` acorde al tamaño de `stockTable`; prod con `SHADOW_COMPARE_REQUIRE_AUTH=true`. Tráfico **2xx** tras deploy: smoke mesa→colores + logs workers/crew. |
 
+### 5.1. `handoff_human` / `manual_review` (Waseller main)
+
+Si **waseller-crew** devuelve `candidateDecision.nextAction` o `recommendedAction` en **`handoff_human`** / **`manual_review`**, los workers:
+
+- **Priorizan** esa derivación frente a `interpretation.nextAction` típico `reply_only` (`resolvePolicyAction` + flag `crew_handoff_priority` en merge).
+- Marcan **`requiresHuman` / `handoffRequired`** al fusionar la candidata (`mergeCrewCandidateIntoLlmDecision`).
+- **Orquestador:** pausan la conversación (`conversation.state = manual_paused`) si `effectiveDecision.handoffRequired` (igual que antes, pero ahora también por decisión del crew).
+- **Lead directo** (crew primary o shadow sin `llmDecision`): tras aplicar el `draftReply`, si la decisión externa pide handoff → **misma pausa** + telemetría JSON (`logAppliedLlmActions`). Variable **`WASELLER_LLM_ACTION_LOG`**: `handoff` (default), `all`, `0` off.
+
 ---
 
 ## 6. Tareas opcionales en el monorepo (si lo piden después)

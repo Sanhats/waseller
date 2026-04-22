@@ -22,6 +22,8 @@ import { OpenAiInterpreterService } from "./services/openai-interpreter.service"
 import {
   applyReplyGuardrails,
   buildActiveOfferSnapshot,
+  decisionRequestsHumanHandoff,
+  logAppliedLlmActions,
   resolveExpectedCustomerAction,
   resolvePolicyAction
 } from "./services/conversation-policy.service";
@@ -254,8 +256,10 @@ export const conversationOrchestratorWorker = new Worker<LlmOrchestrationJobV1>(
       );
       const policyBand = resolvePolicyBand(llmDecision.confidence);
       const shadowMode = (job.data.executionMode ?? "active") === "shadow";
+      const wantsHandoffFromDecision = decisionRequestsHumanHandoff(llmDecision);
       const requiresHuman =
         Boolean(llmDecision.requiresHuman) ||
+        wantsHandoffFromDecision ||
         llmDecision.confidence < effectiveConfidenceThreshold ||
         verifierFailed;
       const policyResolution = resolvePolicyAction({
@@ -295,7 +299,8 @@ export const conversationOrchestratorWorker = new Worker<LlmOrchestrationJobV1>(
         },
         verification,
         recommendedAction: recommendedAction,
-        handoffRequired: llmDecision.handoffRequired || guardrails.blocked || requiresHuman,
+        handoffRequired:
+          llmDecision.handoffRequired || wantsHandoffFromDecision || guardrails.blocked || requiresHuman,
         qualityFlags: [
           ...new Set([
             ...(llmDecision.qualityFlags ?? []),
@@ -340,20 +345,26 @@ export const conversationOrchestratorWorker = new Worker<LlmOrchestrationJobV1>(
               effectiveConfidenceThreshold
             );
             if (!grShadow.blocked) {
+              const mergedFromShadow = shadowExec.merged;
+              const shadowHandoff = decisionRequestsHumanHandoff(mergedFromShadow);
               effectiveDecision = {
                 ...effectiveDecision,
                 draftReply: grShadow.message,
-                intent: shadowExec.merged.intent ?? effectiveDecision.intent,
-                confidence: shadowExec.merged.confidence,
-                reason: shadowExec.merged.reason ?? effectiveDecision.reason,
-                source: shadowExec.merged.source,
-                provider: shadowExec.merged.provider,
-                model: shadowExec.merged.model,
-                entities: shadowExec.merged.entities ?? effectiveDecision.entities,
+                intent: mergedFromShadow.intent ?? effectiveDecision.intent,
+                confidence: mergedFromShadow.confidence,
+                reason: mergedFromShadow.reason ?? effectiveDecision.reason,
+                source: mergedFromShadow.source,
+                provider: mergedFromShadow.provider,
+                model: mergedFromShadow.model,
+                entities: mergedFromShadow.entities ?? effectiveDecision.entities,
+                nextAction: mergedFromShadow.nextAction ?? effectiveDecision.nextAction,
+                recommendedAction: mergedFromShadow.recommendedAction ?? effectiveDecision.recommendedAction,
+                requiresHuman: Boolean(effectiveDecision.requiresHuman || shadowHandoff),
+                handoffRequired: Boolean(effectiveDecision.handoffRequired || shadowHandoff),
                 qualityFlags: Array.from(
                   new Set([
                     ...(effectiveDecision.qualityFlags ?? []),
-                    ...(shadowExec.merged.qualityFlags ?? []),
+                    ...(mergedFromShadow.qualityFlags ?? []),
                     ...grShadow.flags,
                     "shadow_compare_customer_applied"
                   ])
@@ -362,6 +373,13 @@ export const conversationOrchestratorWorker = new Worker<LlmOrchestrationJobV1>(
             }
           }
         }
+      }
+
+      if (decisionRequestsHumanHandoff(effectiveDecision) && effectiveDecision.policy) {
+        effectiveDecision = {
+          ...effectiveDecision,
+          policy: { ...effectiveDecision.policy, executedAction: "handoff_human" }
+        };
       }
 
       const activeOffer = buildActiveOfferSnapshot({
@@ -539,6 +557,17 @@ export const conversationOrchestratorWorker = new Worker<LlmOrchestrationJobV1>(
       };
       await leadProcessingQueue.add("lead-processed-v1", leadJob, {
         jobId: `lead_${leadJob.dedupeKey}`
+      });
+      logAppliedLlmActions({
+        tenantId,
+        leadId,
+        route: "orchestrator",
+        nextAction: String(effectiveDecision.nextAction),
+        recommendedAction: String(effectiveDecision.recommendedAction),
+        executedAction: effectiveDecision.policy?.executedAction,
+        handoffRequired: effectiveDecision.handoffRequired,
+        provider: effectiveDecision.provider,
+        correlationId
       });
       orchestratorMetrics.onEnqueued();
 

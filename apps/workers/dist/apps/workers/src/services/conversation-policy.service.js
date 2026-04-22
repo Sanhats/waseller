@@ -1,7 +1,43 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.applyReplyGuardrails = exports.resolvePolicyAction = exports.buildActiveOfferSnapshot = exports.resolveStageFromContext = exports.resolveExpectedCustomerAction = exports.normalizeConversationText = void 0;
+exports.applyReplyGuardrails = exports.resolvePolicyAction = exports.buildActiveOfferSnapshot = exports.resolveStageFromContext = exports.resolveExpectedCustomerAction = exports.normalizeConversationText = exports.decisionRequestsHumanHandoff = void 0;
+exports.logAppliedLlmActions = logAppliedLlmActions;
 const SENSITIVE_ACTIONS = new Set(["reserve_stock", "share_payment_link", "close_lead"]);
+const HANDOFF_NEXT_ACTIONS = new Set(["handoff_human", "manual_review"]);
+/** Crew / LLM piden derivación a humano (no tratar solo como texto de venta). */
+const decisionRequestsHumanHandoff = (decision) => {
+    const na = decision.nextAction;
+    if (na && HANDOFF_NEXT_ACTIONS.has(na))
+        return true;
+    const ra = String(decision.recommendedAction ?? "").trim();
+    return ra === "handoff_human" || ra === "manual_review";
+};
+exports.decisionRequestsHumanHandoff = decisionRequestsHumanHandoff;
+/**
+ * Telemetría JSON en stdout (Railway / agregadores). `WASELLER_LLM_ACTION_LOG`: `0` off, `handoff` (default) solo derivaciones, `all` cada turno.
+ */
+function logAppliedLlmActions(input) {
+    const mode = String(process.env.WASELLER_LLM_ACTION_LOG ?? "handoff").trim().toLowerCase();
+    if (mode === "0" || mode === "false" || mode === "no")
+        return;
+    const handoff = input.nextAction === "handoff_human" ||
+        input.nextAction === "manual_review" ||
+        input.recommendedAction === "handoff_human" ||
+        input.recommendedAction === "manual_review" ||
+        Boolean(input.handoffRequired);
+    if (mode !== "all" && !handoff)
+        return;
+    try {
+        console.log(JSON.stringify({
+            event: "waseller_llm_actions",
+            ts: new Date().toISOString(),
+            ...input
+        }));
+    }
+    catch {
+        // noop
+    }
+}
 const normalizeConversationText = (value) => String(value ?? "")
     .toLowerCase()
     .normalize("NFD")
@@ -70,6 +106,17 @@ const resolvePolicyAction = (input) => {
     let recommendedAction = (input.interpretation?.nextAction ??
         input.decision.nextAction ??
         "reply_only");
+    // Prioridad explícita: si la decisión aplicada (p. ej. waseller-crew) pide derivación, no dejar que
+    // `interpretation.nextAction` (suelo rules/reply_only) la pise.
+    if ((0, exports.decisionRequestsHumanHandoff)(input.decision)) {
+        const fromDecision = input.decision.nextAction && HANDOFF_NEXT_ACTIONS.has(input.decision.nextAction)
+            ? input.decision.nextAction
+            : String(input.decision.recommendedAction ?? "").trim() === "manual_review"
+                ? "manual_review"
+                : "handoff_human";
+        recommendedAction = fromDecision;
+        flags.push("crew_handoff_priority");
+    }
     if ((input.forbiddenActions ?? []).includes(recommendedAction)) {
         recommendedAction = "ask_clarification";
         flags.push("rubro_forbidden_action");
