@@ -29,14 +29,21 @@ class TenantKnowledgeService {
         }
         return base;
     }
-    async get(tenantId) {
+    /**
+     * Carga `tenant_knowledge` + nombre del tenant; expone `knowledgeUpdatedAt` para telemetría o payloads externos.
+     */
+    async load(tenantId) {
         const now = Date.now();
         const cached = this.cache.get(tenantId);
         if (cached && cached.expiresAt > now)
             return cached.value;
         try {
             const rows = (await src_1.prisma.$queryRaw `
-        select profile, business_category as "businessCategory", business_labels as "businessLabels"
+        select
+          profile,
+          business_category as "businessCategory",
+          business_labels as "businessLabels",
+          updated_at as "knowledgeUpdatedAt"
         from public.tenant_knowledge
         where tenant_id::text = ${tenantId}
         limit 1
@@ -56,8 +63,10 @@ class TenantKnowledgeService {
                 ...value,
                 businessName: value.businessName?.trim() || tenantName || undefined
             };
-            this.cache.set(tenantId, { expiresAt: now + CACHE_MS, value: merged });
-            return merged;
+            const knowledgeUpdatedAt = rows[0]?.knowledgeUpdatedAt instanceof Date ? rows[0].knowledgeUpdatedAt.toISOString() : undefined;
+            const payload = { profile: merged, knowledgeUpdatedAt };
+            this.cache.set(tenantId, { expiresAt: now + CACHE_MS, value: payload });
+            return payload;
         }
         catch {
             const tenant = await src_1.prisma.tenant.findUnique({
@@ -65,18 +74,24 @@ class TenantKnowledgeService {
                 select: { name: true }
             });
             const tenantName = String(tenant?.name ?? "").trim();
-            const fallback = (0, src_2.normalizeTenantBusinessProfile)({
+            const fallbackProfile = (0, src_2.normalizeTenantBusinessProfile)({
                 businessName: tenantName || undefined
             });
-            this.cache.set(tenantId, { expiresAt: now + CACHE_MS, value: fallback });
-            return fallback;
+            const payload = { profile: fallbackProfile };
+            this.cache.set(tenantId, { expiresAt: now + CACHE_MS, value: payload });
+            return payload;
         }
     }
+    async get(tenantId) {
+        const { profile } = await this.load(tenantId);
+        return profile;
+    }
     async getWithRulePack(tenantId) {
-        const profile = await this.get(tenantId);
+        const { profile, knowledgeUpdatedAt } = await this.load(tenantId);
         return {
             profile,
-            rulePack: this.resolveRulePack(profile)
+            rulePack: this.resolveRulePack(profile),
+            knowledgeUpdatedAt
         };
     }
 }

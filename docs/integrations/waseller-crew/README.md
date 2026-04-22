@@ -8,7 +8,7 @@ Esta carpeta en Waseller contiene todo el paquete para el **otro repo**:
 | [`pyproject.toml.example`](./pyproject.toml.example) | Copiar como `pyproject.toml` y ajustar nombre/versions de `crewai`. |
 | [`.env.example`](./.env.example) | Variables del servicio Python. |
 | [`fixtures/request.example.json`](./fixtures/request.example.json) | Body mínimo (v1). |
-| [`fixtures/request.v1_1.example.json`](./fixtures/request.v1_1.example.json) | Body con opcionales v1.1 (`phone`, ids, `recentMessages`). |
+| [`fixtures/request.v1_1.example.json`](./fixtures/request.v1_1.example.json) | Body con opcionales v1.1 (`phone`, ids, `recentMessages`, `tenantBrief`, …). |
 | [`IMPLEMENTACION_MINIMA.md`](./IMPLEMENTACION_MINIMA.md) | Esqueleto FastAPI + stub `run_crew()` y `curl` de prueba. |
 | [`CONTRATO_V1_1.md`](./CONTRATO_V1_1.md) | Propuesta coordinada: body opcional + Bearer + ejemplos JSON (para PR en Waseller y alinear waseller-crew). |
 

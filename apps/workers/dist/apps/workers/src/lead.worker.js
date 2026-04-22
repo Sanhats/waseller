@@ -997,6 +997,9 @@ exports.leadWorker = new bullmq_1.Worker(src_1.QueueNames.leadProcessing, async 
             const guardrailFallbackMessage = (await templateService.getTemplate(tenantId, "orchestrator_guardrail_handoff")) ||
                 "Quiero asegurarme de darte la mejor respuesta. Te paso con un asesor para confirmar los detalles y ayudarte a cerrar la compra.";
             const tenantKnowledge = await tenantKnowledgeService.getWithRulePack(tenantId);
+            const crewTenantBrief = (0, shadow_compare_service_1.buildCrewTenantBriefFromProfile)(tenantKnowledge.profile, {
+                knowledgeUpdatedAt: tenantKnowledge.knowledgeUpdatedAt
+            });
             const baselineDecision = buildLeadTemplateBaselineDecision(job.data, message, interpretation);
             let stockTableProductId = null;
             const vidForCrew = effectiveVariantId?.trim();
@@ -1026,10 +1029,12 @@ exports.leadWorker = new bullmq_1.Worker(src_1.QueueNames.leadProcessing, async 
                 baselineDecision,
                 recentMessages: recentChronologicalForCrew,
                 tenantBusinessCategory: tenantKnowledge.profile.businessCategory,
-                stockTableProductId
+                stockTableProductId,
+                tenantBrief: crewTenantBrief
             }).catch(() => null);
             if (crewPrimary) {
-                const gr = (0, conversation_policy_service_1.applyReplyGuardrails)(crewPrimary.decision.draftReply, message, incomingRaw, crewPrimary.decision.confidence, confidenceThreshold);
+                const crewPrimaryThreshold = (0, shadow_compare_service_1.resolveCrewPrimaryEffectiveConfidenceThreshold)(confidenceThreshold, true);
+                const gr = (0, conversation_policy_service_1.applyReplyGuardrails)(crewPrimary.decision.draftReply, message, incomingRaw, crewPrimary.decision.confidence, crewPrimaryThreshold);
                 if (!gr.blocked) {
                     message = gr.message;
                     crewPrimaryApplied = true;
@@ -1056,7 +1061,8 @@ exports.leadWorker = new bullmq_1.Worker(src_1.QueueNames.leadProcessing, async 
                     baselineDecision: shadowBaseline,
                     recentMessages: recentChronologicalForCrew,
                     tenantBusinessCategory: tenantKnowledge.profile.businessCategory,
-                    stockTableProductId
+                    stockTableProductId,
+                    tenantBrief: crewTenantBrief
                 }).catch(() => undefined);
             }
         }

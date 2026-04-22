@@ -30,8 +30,10 @@ import {
   replySimilarity
 } from "./services/conversation-recent-messages.service";
 import {
+  buildCrewTenantBriefFromProfile,
   extractInterpretationProductId,
   logShadowExternalCompareIfConfigured,
+  resolveCrewPrimaryEffectiveConfidenceThreshold,
   resolveProductIdForTenantVariant,
   tryWasellerCrewPrimaryReplacement
 } from "./services/shadow-compare.service";
@@ -192,6 +194,9 @@ export const conversationOrchestratorWorker = new Worker<LlmOrchestrationJobV1>(
         }
       }
       let crewPrimaryApplied = false;
+      const crewTenantBrief = buildCrewTenantBriefFromProfile(tenantKnowledge.profile, {
+        knowledgeUpdatedAt: tenantKnowledge.knowledgeUpdatedAt
+      });
       const crewPrimary = await tryWasellerCrewPrimaryReplacement({
         tenantId,
         leadId,
@@ -206,7 +211,8 @@ export const conversationOrchestratorWorker = new Worker<LlmOrchestrationJobV1>(
         recentMessages: recentChronologicalForCrew,
         tenantBusinessCategory: tenantKnowledge.profile.businessCategory,
         stockTableProductId,
-        stockTableRagProductIds: ragProductIdsForCrew.length > 0 ? ragProductIdsForCrew : null
+        stockTableRagProductIds: ragProductIdsForCrew.length > 0 ? ragProductIdsForCrew : null,
+        tenantBrief: crewTenantBrief
       }).catch(() => null);
       if (crewPrimary) {
         llmDecision = crewPrimary.decision;
@@ -230,18 +236,22 @@ export const conversationOrchestratorWorker = new Worker<LlmOrchestrationJobV1>(
       const guardrailFallbackMessage =
         (await templateService.getTemplate(tenantId, "orchestrator_guardrail_handoff")) ||
         "Quiero asegurarme de darte la mejor respuesta. Te paso con un asesor para confirmar los detalles y ayudarte a cerrar la compra.";
+      const effectiveConfidenceThreshold = resolveCrewPrimaryEffectiveConfidenceThreshold(
+        confidenceThreshold,
+        crewPrimaryApplied
+      );
       const guardrails = applyReplyGuardrails(
         llmDecision.draftReply,
         guardrailFallbackMessage,
         incomingText,
         llmDecision.confidence,
-        confidenceThreshold
+        effectiveConfidenceThreshold
       );
       const policyBand = resolvePolicyBand(llmDecision.confidence);
       const shadowMode = (job.data.executionMode ?? "active") === "shadow";
       const requiresHuman =
         Boolean(llmDecision.requiresHuman) ||
-        llmDecision.confidence < confidenceThreshold ||
+        llmDecision.confidence < effectiveConfidenceThreshold ||
         verifierFailed;
       const policyResolution = resolvePolicyAction({
         interpretation: interpreted,
@@ -414,7 +424,8 @@ export const conversationOrchestratorWorker = new Worker<LlmOrchestrationJobV1>(
           recentMessages: recentChronologicalForCrew,
           tenantBusinessCategory: tenantKnowledge.profile.businessCategory,
           stockTableProductId,
-          stockTableRagProductIds: ragProductIdsForCrew.length > 0 ? ragProductIdsForCrew : null
+          stockTableRagProductIds: ragProductIdsForCrew.length > 0 ? ragProductIdsForCrew : null,
+          tenantBrief: crewTenantBrief
         }).catch(() => undefined);
       }
       await prisma.llmTrace.create({

@@ -10,8 +10,14 @@ export type RubroRulePack = {
   requiredAxes: string[];
 };
 
+export type TenantKnowledgeLoadResult = {
+  profile: TenantBusinessProfile;
+  /** Última escritura en `tenant_knowledge` (si hay fila). */
+  knowledgeUpdatedAt?: string;
+};
+
 export class TenantKnowledgeService {
-  private cache = new Map<string, { expiresAt: number; value: TenantBusinessProfile }>();
+  private cache = new Map<string, { expiresAt: number; value: TenantKnowledgeLoadResult }>();
 
   private resolveRulePack(profile: TenantBusinessProfile): RubroRulePack {
     const base: RubroRulePack = {
@@ -37,18 +43,30 @@ export class TenantKnowledgeService {
     return base;
   }
 
-  async get(tenantId: string): Promise<TenantBusinessProfile> {
+  /**
+   * Carga `tenant_knowledge` + nombre del tenant; expone `knowledgeUpdatedAt` para telemetría o payloads externos.
+   */
+  async load(tenantId: string): Promise<TenantKnowledgeLoadResult> {
     const now = Date.now();
     const cached = this.cache.get(tenantId);
     if (cached && cached.expiresAt > now) return cached.value;
 
     try {
       const rows = (await (prisma as any).$queryRaw`
-        select profile, business_category as "businessCategory", business_labels as "businessLabels"
+        select
+          profile,
+          business_category as "businessCategory",
+          business_labels as "businessLabels",
+          updated_at as "knowledgeUpdatedAt"
         from public.tenant_knowledge
         where tenant_id::text = ${tenantId}
         limit 1
-      `) as Array<{ profile: unknown; businessCategory: string; businessLabels: string[] }>;
+      `) as Array<{
+        profile: unknown;
+        businessCategory: string;
+        businessLabels: string[];
+        knowledgeUpdatedAt?: Date;
+      }>;
       const profile = rows[0]?.profile;
       const value = normalizeTenantBusinessProfile({
         ...(profile && typeof profile === "object" ? (profile as Record<string, unknown>) : {}),
@@ -64,27 +82,41 @@ export class TenantKnowledgeService {
         ...value,
         businessName: value.businessName?.trim() || tenantName || undefined
       };
-      this.cache.set(tenantId, { expiresAt: now + CACHE_MS, value: merged });
-      return merged;
+      const knowledgeUpdatedAt =
+        rows[0]?.knowledgeUpdatedAt instanceof Date ? rows[0].knowledgeUpdatedAt.toISOString() : undefined;
+      const payload: TenantKnowledgeLoadResult = { profile: merged, knowledgeUpdatedAt };
+      this.cache.set(tenantId, { expiresAt: now + CACHE_MS, value: payload });
+      return payload;
     } catch {
       const tenant = await prisma.tenant.findUnique({
         where: { id: tenantId },
         select: { name: true }
       });
       const tenantName = String(tenant?.name ?? "").trim();
-      const fallback = normalizeTenantBusinessProfile({
+      const fallbackProfile = normalizeTenantBusinessProfile({
         businessName: tenantName || undefined
       });
-      this.cache.set(tenantId, { expiresAt: now + CACHE_MS, value: fallback });
-      return fallback;
+      const payload: TenantKnowledgeLoadResult = { profile: fallbackProfile };
+      this.cache.set(tenantId, { expiresAt: now + CACHE_MS, value: payload });
+      return payload;
     }
   }
 
-  async getWithRulePack(tenantId: string): Promise<{ profile: TenantBusinessProfile; rulePack: RubroRulePack }> {
-    const profile = await this.get(tenantId);
+  async get(tenantId: string): Promise<TenantBusinessProfile> {
+    const { profile } = await this.load(tenantId);
+    return profile;
+  }
+
+  async getWithRulePack(tenantId: string): Promise<{
+    profile: TenantBusinessProfile;
+    rulePack: RubroRulePack;
+    knowledgeUpdatedAt?: string;
+  }> {
+    const { profile, knowledgeUpdatedAt } = await this.load(tenantId);
     return {
       profile,
-      rulePack: this.resolveRulePack(profile)
+      rulePack: this.resolveRulePack(profile),
+      knowledgeUpdatedAt
     };
   }
 }

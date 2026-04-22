@@ -159,7 +159,14 @@ const normalizeTenantBusinessProfile = (raw) => {
             allowExchange: asBoolean(policy.allowExchange, presetPolicy.allowExchange ?? exports.DEFAULT_TENANT_BUSINESS_PROFILE.policy.allowExchange),
             allowReturns: asBoolean(policy.allowReturns, presetPolicy.allowReturns ?? exports.DEFAULT_TENANT_BUSINESS_PROFILE.policy.allowReturns)
         },
-        businessName: String(input.businessName ?? "").trim() || undefined
+        businessName: String(input.businessName ?? "").trim() || undefined,
+        tone: String(input.tone ?? input.communicationTone ?? "").trim() || undefined,
+        deliveryInfo: (() => {
+            const raw = String(input.deliveryInfo ?? input.deliverySummary ?? input.shippingNotes ?? "").trim();
+            if (!raw)
+                return undefined;
+            return raw.length > 2000 ? `${raw.slice(0, 2000)}…` : raw;
+        })()
     };
 };
 exports.normalizeTenantBusinessProfile = normalizeTenantBusinessProfile;

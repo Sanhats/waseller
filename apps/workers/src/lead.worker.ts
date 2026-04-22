@@ -31,7 +31,9 @@ import {
   replySimilarity
 } from "./services/conversation-recent-messages.service";
 import {
+  buildCrewTenantBriefFromProfile,
   logShadowExternalCompareIfConfigured,
+  resolveCrewPrimaryEffectiveConfidenceThreshold,
   resolveProductIdForTenantVariant,
   tryWasellerCrewPrimaryReplacement
 } from "./services/shadow-compare.service";
@@ -1147,6 +1149,9 @@ export const leadWorker = new Worker<LeadProcessingJobV1>(
           (await templateService.getTemplate(tenantId, "orchestrator_guardrail_handoff")) ||
           "Quiero asegurarme de darte la mejor respuesta. Te paso con un asesor para confirmar los detalles y ayudarte a cerrar la compra.";
         const tenantKnowledge = await tenantKnowledgeService.getWithRulePack(tenantId);
+        const crewTenantBrief = buildCrewTenantBriefFromProfile(tenantKnowledge.profile, {
+          knowledgeUpdatedAt: tenantKnowledge.knowledgeUpdatedAt
+        });
         const baselineDecision = buildLeadTemplateBaselineDecision(job.data, message, interpretation);
         let stockTableProductId: string | null = null;
         const vidForCrew = effectiveVariantId?.trim();
@@ -1174,15 +1179,20 @@ export const leadWorker = new Worker<LeadProcessingJobV1>(
           baselineDecision,
           recentMessages: recentChronologicalForCrew,
           tenantBusinessCategory: tenantKnowledge.profile.businessCategory,
-          stockTableProductId
+          stockTableProductId,
+          tenantBrief: crewTenantBrief
         }).catch(() => null);
         if (crewPrimary) {
+          const crewPrimaryThreshold = resolveCrewPrimaryEffectiveConfidenceThreshold(
+            confidenceThreshold,
+            true
+          );
           const gr = applyReplyGuardrails(
             crewPrimary.decision.draftReply,
             message,
             incomingRaw,
             crewPrimary.decision.confidence,
-            confidenceThreshold
+            crewPrimaryThreshold
           );
           if (!gr.blocked) {
             message = gr.message;
@@ -1218,7 +1228,8 @@ export const leadWorker = new Worker<LeadProcessingJobV1>(
             baselineDecision: shadowBaseline,
             recentMessages: recentChronologicalForCrew,
             tenantBusinessCategory: tenantKnowledge.profile.businessCategory,
-            stockTableProductId
+            stockTableProductId,
+            tenantBrief: crewTenantBrief
           }).catch(() => undefined);
         }
       }

@@ -8,6 +8,15 @@ export type TenantBusinessProfile = {
     version: number;
     /** Nombre público del negocio (suele coincidir con el nombre del tenant en el registro). */
     businessName?: string;
+    /**
+     * Tono sugerido para respuestas (p. ej. `voseo_informal`, `formal_usted`). Opcional en `tenant_knowledge.profile`.
+     * Lo consumen workers / waseller-crew para alinear el estilo.
+     */
+    tone?: string;
+    /**
+     * Texto libre de entregas: zonas, plazos, costos orientativos (sin datos sensibles). Opcional en `profile`.
+     */
+    deliveryInfo?: string;
     businessCategory: BusinessCategory;
     businessLabels: string[];
     payment: {

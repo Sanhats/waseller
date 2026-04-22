@@ -9,11 +9,83 @@ import {
   type ShadowCompareCandidateDecision
 } from "../../../../packages/queue/src";
 import { toCrewBusinessProfileSlug } from "../../../../packages/shared/src/crew-business-profile-slug";
+import type { TenantBusinessProfile } from "../../../../packages/shared/src/tenant-business-profile";
 
 export type ShadowCompareRecentMessageV1 = {
   direction: "incoming" | "outgoing";
   message: string;
 };
+
+/**
+ * Resumen del tenant para waseller-crew (`tenantBrief` en el POST). Campos opcionales; el crew usa `extra="ignore"` si no los implementa aún.
+ */
+export type CrewTenantBriefV1 = {
+  businessName?: string;
+  businessCategory?: string;
+  businessLabels?: string[];
+  tone?: string;
+  deliveryInfo?: string;
+  /** ISO 8601; última actualización de `tenant_knowledge` en Waseller. */
+  knowledgeUpdatedAt?: string;
+  payment?: {
+    methods: string[];
+    acceptsInstallments?: boolean;
+    /** No se envía el alias; solo si está configurado. */
+    transferAliasConfigured?: boolean;
+  };
+  shipping?: { methods: string[]; zones: string[]; sameDay: boolean };
+  policy?: {
+    reservationTtlMinutes?: number;
+    supportHours?: string;
+    notes?: string;
+    allowExchange?: boolean;
+    allowReturns?: boolean;
+  };
+};
+
+/** Construye el bloque enviado a waseller-crew a partir del perfil normalizado (sin secretos). */
+export function buildCrewTenantBriefFromProfile(
+  profile: TenantBusinessProfile,
+  meta?: { knowledgeUpdatedAt?: string }
+): CrewTenantBriefV1 {
+  const brief: CrewTenantBriefV1 = {
+    businessName: profile.businessName,
+    businessCategory: profile.businessCategory,
+    businessLabels: profile.businessLabels?.length ? [...profile.businessLabels] : undefined,
+    tone: profile.tone,
+    deliveryInfo: profile.deliveryInfo,
+    knowledgeUpdatedAt: meta?.knowledgeUpdatedAt,
+    payment: {
+      methods: [...(profile.payment?.methods ?? [])],
+      acceptsInstallments: profile.payment?.acceptsInstallments,
+      transferAliasConfigured: Boolean(String(profile.payment?.transferAlias ?? "").trim())
+    },
+    shipping: {
+      methods: [...(profile.shipping?.methods ?? [])],
+      zones: [...(profile.shipping?.zones ?? [])],
+      sameDay: Boolean(profile.shipping?.sameDay)
+    },
+    policy: {
+      reservationTtlMinutes: profile.policy?.reservationTtlMinutes,
+      supportHours: profile.policy?.supportHours,
+      notes: profile.policy?.notes,
+      allowExchange: profile.policy?.allowExchange,
+      allowReturns: profile.policy?.allowReturns
+    }
+  };
+  if (brief.payment?.methods?.length === 0 && !brief.payment?.acceptsInstallments && !brief.payment?.transferAliasConfigured) {
+    delete brief.payment;
+  }
+  if (
+    brief.shipping &&
+    brief.shipping.methods.length === 0 &&
+    brief.shipping.zones.length === 0 &&
+    !brief.shipping.sameDay
+  ) {
+    delete brief.shipping;
+  }
+  return brief;
+}
 
 /** Misma forma que `GET /products` / tabla de stock del dashboard (`StockProductVariantRow`). */
 export type ShadowCompareStockRowV1 = {
@@ -42,6 +114,46 @@ function clampStr(s: string, max: number): string {
   const t = String(s ?? "");
   if (t.length <= max) return t;
   return `${t.slice(0, max)}…`;
+}
+
+function slimCrewTenantBriefForHttp(b: CrewTenantBriefV1): CrewTenantBriefV1 {
+  const maxName = readNumericEnv("LLM_SHADOW_COMPARE_MAX_TENANT_BRIEF_NAME_CHARS", 120);
+  const maxDelivery = readNumericEnv("LLM_SHADOW_COMPARE_MAX_TENANT_BRIEF_DELIVERY_CHARS", 900);
+  const maxNotes = readNumericEnv("LLM_SHADOW_COMPARE_MAX_TENANT_BRIEF_POLICY_NOTES_CHARS", 480);
+  const maxHours = readNumericEnv("LLM_SHADOW_COMPARE_MAX_TENANT_BRIEF_SUPPORT_HOURS_CHARS", 160);
+  const maxTone = readNumericEnv("LLM_SHADOW_COMPARE_MAX_TENANT_BRIEF_TONE_CHARS", 48);
+  const maxLabels = readNumericEnv("LLM_SHADOW_COMPARE_MAX_TENANT_BRIEF_LABELS", 16);
+  const out: CrewTenantBriefV1 = {
+    ...b,
+    businessName: b.businessName ? clampStr(b.businessName, maxName) : undefined,
+    tone: b.tone ? clampStr(b.tone, maxTone) : undefined,
+    deliveryInfo: b.deliveryInfo ? clampStr(b.deliveryInfo, maxDelivery) : undefined,
+    businessLabels: b.businessLabels?.slice(0, maxLabels)
+  };
+  if (b.policy) {
+    out.policy = {
+      ...b.policy,
+      supportHours: b.policy.supportHours ? clampStr(b.policy.supportHours, maxHours) : undefined,
+      notes: b.policy.notes ? clampStr(b.policy.notes, maxNotes) : undefined
+    };
+  }
+  if (b.shipping?.zones?.length) {
+    out.shipping = {
+      ...b.shipping,
+      zones: b.shipping.zones.slice(0, 12).map((z) => clampStr(z, 80))
+    };
+  }
+  return out;
+}
+
+function crewTenantBriefHasSignal(b: CrewTenantBriefV1): boolean {
+  if (b.businessName || b.businessCategory || b.tone || b.deliveryInfo || b.knowledgeUpdatedAt) return true;
+  if (b.businessLabels && b.businessLabels.length > 0) return true;
+  if (b.payment?.methods?.length) return true;
+  if (b.payment?.transferAliasConfigured || b.payment?.acceptsInstallments) return true;
+  if (b.shipping && (b.shipping.methods.length > 0 || b.shipping.zones.length > 0 || b.shipping.sameDay)) return true;
+  if (b.policy && Object.keys(b.policy).length > 0) return true;
+  return false;
 }
 
 /** Reduce tokens en waseller-crew: truncar textos y quitar campos pesados del JSON HTTP. */
@@ -391,6 +503,8 @@ export type ShadowCompareInput = {
    * Productos candidatos (p. ej. RAG por nombre) cuando no hay `stockTableProductId`: hasta 8 IDs, máx. filas según `LLM_SHADOW_COMPARE_STOCK_RAG_ROW_LIMIT` (default 30).
    */
   stockTableRagProductIds?: string[] | null;
+  /** Resumen comercial del tenant (tono, envíos, políticas) para waseller-crew. */
+  tenantBrief?: CrewTenantBriefV1 | null;
 };
 
 const readShadowCompareSecret = (): string =>
@@ -398,6 +512,22 @@ const readShadowCompareSecret = (): string =>
 
 const isWasellerCrewPrimaryEnabled = (): boolean =>
   /^(1|true|yes)$/i.test(String(process.env.WASELLER_CREW_PRIMARY ?? "").trim());
+
+/**
+ * Suelo más bajo de confianza cuando el `draftReply` viene de waseller-crew (primary), para no bloquear
+ * guardrails / `requiresHuman` con el mismo umbral que el LLM interno.
+ */
+export function resolveCrewPrimaryEffectiveConfidenceThreshold(
+  tenantConfidenceThreshold: number,
+  crewPrimaryApplied: boolean
+): number {
+  const relax =
+    crewPrimaryApplied &&
+    /^(1|true|yes)$/i.test(String(process.env.CREW_PRIMARY_RELAX_GUARDRAILS ?? "true").trim());
+  if (!relax) return tenantConfidenceThreshold;
+  const floor = Math.max(0.35, Math.min(0.95, Number(process.env.CREW_PRIMARY_GUARDRAIL_CONFIDENCE_FLOOR ?? 0.55)));
+  return Math.min(tenantConfidenceThreshold, floor);
+}
 
 function mergeCrewCandidateIntoLlmDecision(
   baseline: LlmDecisionV1,
@@ -491,6 +621,9 @@ export async function assembleShadowCompareOutboundBody(input: ShadowCompareInpu
   const crewSlug = toCrewBusinessProfileSlug(String(input.tenantBusinessCategory ?? ""));
   if (crewSlug) {
     payload.businessProfileSlug = crewSlug;
+  }
+  if (input.tenantBrief && crewTenantBriefHasSignal(input.tenantBrief)) {
+    payload.tenantBrief = slimCrewTenantBriefForHttp(input.tenantBrief);
   }
   return payload;
 }

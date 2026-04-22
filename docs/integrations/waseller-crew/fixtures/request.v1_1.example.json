@@ -21,6 +21,16 @@
     "nextAction": "reply_only",
     "source": "openai"
   },
+  "tenantBrief": {
+    "businessName": "Mi tienda demo",
+    "businessCategory": "hogar_deco",
+    "businessLabels": ["catalogo_whatsapp"],
+    "tone": "voseo_informal",
+    "deliveryInfo": "Envíos CABA en 48 h; retiro gratis en Av. Siempre Viva 123.",
+    "payment": { "methods": ["link_pago", "efectivo_retiro"], "acceptsInstallments": false, "transferAliasConfigured": true },
+    "shipping": { "methods": ["envio_moto", "retiro_local"], "zones": ["CABA", "GBA Norte"], "sameDay": false },
+    "policy": { "reservationTtlMinutes": 60, "supportHours": "Lun–Sáb 9–18", "notes": "Cambios con ticket dentro de 7 días.", "allowExchange": true, "allowReturns": false }
+  },
   "baselineDecision": {
     "intent": "consultar_precio",
     "leadStage": "consideration",

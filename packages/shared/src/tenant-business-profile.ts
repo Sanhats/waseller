@@ -19,6 +19,15 @@ export type TenantBusinessProfile = {
   version: number;
   /** Nombre público del negocio (suele coincidir con el nombre del tenant en el registro). */
   businessName?: string;
+  /**
+   * Tono sugerido para respuestas (p. ej. `voseo_informal`, `formal_usted`). Opcional en `tenant_knowledge.profile`.
+   * Lo consumen workers / waseller-crew para alinear el estilo.
+   */
+  tone?: string;
+  /**
+   * Texto libre de entregas: zonas, plazos, costos orientativos (sin datos sensibles). Opcional en `profile`.
+   */
+  deliveryInfo?: string;
   businessCategory: BusinessCategory;
   businessLabels: string[];
   payment: {
@@ -235,6 +244,14 @@ export const normalizeTenantBusinessProfile = (raw: unknown): TenantBusinessProf
         presetPolicy.allowReturns ?? DEFAULT_TENANT_BUSINESS_PROFILE.policy.allowReturns
       )
     },
-    businessName: String(input.businessName ?? "").trim() || undefined
+    businessName: String(input.businessName ?? "").trim() || undefined,
+    tone: String(input.tone ?? input.communicationTone ?? "").trim() || undefined,
+    deliveryInfo: (() => {
+      const raw = String(
+        input.deliveryInfo ?? input.deliverySummary ?? input.shippingNotes ?? ""
+      ).trim();
+      if (!raw) return undefined;
+      return raw.length > 2000 ? `${raw.slice(0, 2000)}…` : raw;
+    })()
   };
 };
