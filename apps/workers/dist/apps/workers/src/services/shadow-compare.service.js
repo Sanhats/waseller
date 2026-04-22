@@ -1,14 +1,18 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.isWasellerCrewOrchestrateFirstEnabled = exports.isWasellerCrewPrimaryEnabled = void 0;
 exports.buildCrewTenantBriefFromProfile = buildCrewTenantBriefFromProfile;
 exports.extractInterpretationProductId = extractInterpretationProductId;
 exports.resolveProductIdForTenantVariant = resolveProductIdForTenantVariant;
 exports.resolveCrewPrimaryEffectiveConfidenceThreshold = resolveCrewPrimaryEffectiveConfidenceThreshold;
 exports.assembleShadowCompareOutboundBody = assembleShadowCompareOutboundBody;
+exports.executeShadowCompareRequest = executeShadowCompareRequest;
+exports.persistShadowCompareTelemetry = persistShadowCompareTelemetry;
 exports.tryWasellerCrewPrimaryReplacement = tryWasellerCrewPrimaryReplacement;
 exports.logShadowExternalCompareIfConfigured = logShadowExternalCompareIfConfigured;
 const src_1 = require("../../../../packages/db/src");
 const src_2 = require("../../../../packages/queue/src");
+const conversation_recent_messages_service_1 = require("./conversation-recent-messages.service");
 const crew_business_profile_slug_1 = require("../../../../packages/shared/src/crew-business-profile-slug");
 /** Construye el bloque enviado a waseller-crew a partir del perfil normalizado (sin secretos). */
 function buildCrewTenantBriefFromProfile(profile, meta) {
@@ -150,6 +154,171 @@ function buildTenantCommercialContextFromBrief(b) {
         lines.push(`Perfil actualizado (ISO): ${b.knowledgeUpdatedAt}`);
     return lines.join("\n");
 }
+function activeOfferHasSignal(offer) {
+    if (!offer)
+        return false;
+    return Boolean((offer.productName && offer.productName.trim()) ||
+        (offer.variantId && String(offer.variantId).trim()) ||
+        (offer.attributes && Object.keys(offer.attributes).length > 0) ||
+        offer.price != null ||
+        offer.availableStock != null ||
+        (offer.alternativeVariants && offer.alternativeVariants.length > 0) ||
+        (offer.expectedCustomerAction && offer.expectedCustomerAction.trim()));
+}
+/** Objeto `activeOffer` en raíz del POST (paridad con waseller-crew / ShadowCompareRequest). */
+function slimActiveOfferForCrewRoot(offer) {
+    const out = {};
+    if (offer.productName?.trim())
+        out.productName = clampStr(offer.productName.trim(), 200);
+    if (offer.variantId?.trim())
+        out.variantId = String(offer.variantId).trim();
+    if (offer.attributes && Object.keys(offer.attributes).length > 0) {
+        const attrs = {};
+        let ak = 0;
+        for (const [k, v] of Object.entries(offer.attributes)) {
+            if (ak++ >= 16)
+                break;
+            attrs[clampStr(k, 40)] = clampStr(String(v), 120);
+        }
+        out.attributes = attrs;
+    }
+    if (offer.price != null && Number.isFinite(Number(offer.price)))
+        out.price = Number(offer.price);
+    if (offer.availableStock != null && Number.isFinite(Number(offer.availableStock))) {
+        out.availableStock = Number(offer.availableStock);
+    }
+    if (offer.expectedCustomerAction?.trim()) {
+        out.expectedCustomerAction = clampStr(offer.expectedCustomerAction.trim(), 280);
+    }
+    if (offer.alternativeVariants?.length) {
+        out.alternativeVariants = offer.alternativeVariants.slice(0, 12).map((av) => ({
+            variantId: av.variantId?.trim() ? String(av.variantId).trim() : null,
+            attributes: Object.fromEntries(Object.entries(av.attributes ?? {})
+                .slice(0, 8)
+                .map(([k, vv]) => [clampStr(k, 40), clampStr(String(vv), 80)])),
+            availableStock: av.availableStock != null && Number.isFinite(Number(av.availableStock))
+                ? Number(av.availableStock)
+                : null
+        }));
+    }
+    return out;
+}
+/** Hasta 40 líneas ≤400 caracteres (contrato crew); entrada: hechos en memoria del lead. */
+function memoryFactsRecordToStringArray(facts, maxLines, maxLineLen) {
+    const out = [];
+    for (const [k, v] of Object.entries(facts ?? {})) {
+        if (out.length >= maxLines)
+            break;
+        const key = clampStr(k, 80).trim();
+        if (!key)
+            continue;
+        let val;
+        if (v === null || typeof v === "number" || typeof v === "boolean")
+            val = String(v);
+        else if (typeof v === "string")
+            val = v;
+        else
+            val = JSON.stringify(v);
+        const line = clampStr(`${key}: ${val}`, maxLineLen);
+        if (line.trim())
+            out.push(line);
+    }
+    return out;
+}
+function summarizeActiveOfferForCrew(offer) {
+    if (!offer)
+        return undefined;
+    const parts = [];
+    if (offer.productName)
+        parts.push(`Producto: ${offer.productName}`);
+    if (offer.variantId)
+        parts.push(`variantId: ${offer.variantId}`);
+    if (offer.attributes && Object.keys(offer.attributes).length > 0) {
+        const attrs = Object.entries(offer.attributes)
+            .map(([k, v]) => `${k}=${v}`)
+            .join(", ");
+        parts.push(`Atributos: ${attrs}`.slice(0, 420));
+    }
+    if (offer.price != null && Number.isFinite(Number(offer.price)))
+        parts.push(`Precio ref.: ${offer.price}`);
+    if (offer.availableStock != null && Number.isFinite(Number(offer.availableStock))) {
+        parts.push(`Stock ref.: ${offer.availableStock}`);
+    }
+    if (offer.expectedCustomerAction?.trim()) {
+        parts.push(`Acción esperada del cliente: ${offer.expectedCustomerAction.trim()}`);
+    }
+    if (offer.alternativeVariants?.length) {
+        parts.push(`Alternativas con stock: ${offer.alternativeVariants.length}`);
+    }
+    const s = parts.join(" · ");
+    return s.length > 0 ? s : undefined;
+}
+function slimMemoryFactsForCrewDigest(facts, maxKeys, maxVal) {
+    const out = {};
+    let c = 0;
+    for (const [k, v] of Object.entries(facts ?? {})) {
+        if (c++ >= maxKeys)
+            break;
+        const key = clampStr(k, 72);
+        if (!key)
+            continue;
+        if (v === null || typeof v === "number" || typeof v === "boolean") {
+            out[key] = v;
+        }
+        else if (typeof v === "string") {
+            out[key] = clampStr(v, maxVal);
+        }
+        else if (typeof v === "object") {
+            out[key] = clampStr(JSON.stringify(v), maxVal);
+        }
+    }
+    return out;
+}
+function deriveClosingGapsForCrew(i, offer, baseline) {
+    const gaps = new Set();
+    for (const m of i.missingFields ?? []) {
+        const s = String(m).trim();
+        if (s)
+            gaps.add(`Pendiente: ${s}`);
+    }
+    if (offer?.expectedCustomerAction?.trim()) {
+        gaps.add(`Cliente: ${offer.expectedCustomerAction.trim()}`);
+    }
+    if (offer && (!offer.variantId || !String(offer.variantId).trim()) && (i.missingFields?.length ?? 0) > 0) {
+        gaps.add("Confirmar variante / combinación para cotizar");
+    }
+    if (baseline.requiresHuman)
+        gaps.add("Baseline: requiresHuman");
+    if (baseline.handoffRequired)
+        gaps.add("Baseline: handoffRequired");
+    const na = String(baseline.nextAction ?? "").trim();
+    const ra = String(baseline.recommendedAction ?? "").trim();
+    if (na && ra && na !== ra) {
+        gaps.add(`Política: nextAction=${na} vs recommendedAction=${ra}`);
+    }
+    return Array.from(gaps);
+}
+function buildRichInterpretationForShadowCompare(input) {
+    const i = input.interpretation;
+    const stage = (input.conversationStage ?? i.conversationStage);
+    const digest = summarizeActiveOfferForCrew(input.activeOffer ?? null);
+    const gaps = deriveClosingGapsForCrew(i, input.activeOffer ?? null, input.baselineDecision);
+    const maxMemKeys = Math.max(4, Math.min(32, Number(process.env.LLM_SHADOW_COMPARE_MAX_MEMORY_FACT_KEYS ?? 18)));
+    const maxMemVal = Math.max(80, Math.min(600, Number(process.env.LLM_SHADOW_COMPARE_MAX_MEMORY_FACT_VALUE_CHARS ?? 280)));
+    const mem = input.memoryFacts && Object.keys(input.memoryFacts).length > 0
+        ? slimMemoryFactsForCrewDigest(input.memoryFacts, maxMemKeys, maxMemVal)
+        : undefined;
+    const ra = String(input.baselineDecision.recommendedAction ?? "").trim();
+    return {
+        ...i,
+        conversationStage: stage ?? i.conversationStage,
+        activeOfferDigest: digest,
+        closingGaps: gaps.length > 0 ? gaps : undefined,
+        memoryFactsDigest: mem && Object.keys(mem).length > 0 ? mem : undefined,
+        baselineLeadStage: input.baselineDecision.leadStage,
+        baselineRecommendedAction: ra || undefined
+    };
+}
 /** Reduce tokens en waseller-crew: truncar textos y quitar campos pesados del JSON HTTP. */
 function slimInterpretationForCrewHttp(i) {
     const maxRef = readNumericEnv("LLM_SHADOW_COMPARE_MAX_REFERENCES", 8);
@@ -157,6 +326,11 @@ function slimInterpretationForCrewHttp(i) {
     const maxEntityStr = readNumericEnv("LLM_SHADOW_COMPARE_MAX_ENTITY_VALUE_CHARS", 320);
     const maxMissing = readNumericEnv("LLM_SHADOW_COMPARE_MAX_MISSING_FIELDS", 14);
     const maxEntityKeys = readNumericEnv("LLM_SHADOW_COMPARE_MAX_ENTITY_KEYS", 28);
+    const maxOfferDigest = readNumericEnv("LLM_SHADOW_COMPARE_MAX_ACTIVE_OFFER_DIGEST_CHARS", 560);
+    const maxClosing = readNumericEnv("LLM_SHADOW_COMPARE_MAX_CLOSING_GAPS", 12);
+    const maxClosingItem = readNumericEnv("LLM_SHADOW_COMPARE_MAX_CLOSING_GAP_ITEM_CHARS", 200);
+    const maxMemDigestKeys = readNumericEnv("LLM_SHADOW_COMPARE_MAX_MEMORY_DIGEST_KEYS", 20);
+    const maxMemDigestVal = readNumericEnv("LLM_SHADOW_COMPARE_MAX_MEMORY_DIGEST_VALUE_CHARS", 260);
     const entities = {};
     let ek = 0;
     for (const [k, v] of Object.entries(i.entities ?? {})) {
@@ -186,13 +360,49 @@ function slimInterpretationForCrewHttp(i) {
             ? Object.fromEntries(Object.entries(r.metadata).slice(0, 8))
             : r.metadata
     }));
-    return {
+    const out = {
         ...i,
         entities,
         references,
         notes: i.notes?.slice(0, maxNotes),
         missingFields: (i.missingFields ?? []).slice(0, maxMissing)
     };
+    if (i.activeOfferDigest?.trim()) {
+        out.activeOfferDigest = clampStr(i.activeOfferDigest, maxOfferDigest);
+    }
+    else {
+        delete out.activeOfferDigest;
+    }
+    if (i.closingGaps?.length) {
+        out.closingGaps = i.closingGaps
+            .slice(0, maxClosing)
+            .map((g) => clampStr(String(g), maxClosingItem))
+            .filter(Boolean);
+    }
+    else {
+        delete out.closingGaps;
+    }
+    if (i.memoryFactsDigest && typeof i.memoryFactsDigest === "object") {
+        const slimmed = slimMemoryFactsForCrewDigest(i.memoryFactsDigest, maxMemDigestKeys, maxMemDigestVal);
+        if (Object.keys(slimmed).length > 0)
+            out.memoryFactsDigest = slimmed;
+        else
+            delete out.memoryFactsDigest;
+    }
+    else {
+        delete out.memoryFactsDigest;
+    }
+    if (i.baselineLeadStage)
+        out.baselineLeadStage = i.baselineLeadStage;
+    else
+        delete out.baselineLeadStage;
+    if (i.baselineRecommendedAction?.trim()) {
+        out.baselineRecommendedAction = clampStr(i.baselineRecommendedAction, 200);
+    }
+    else {
+        delete out.baselineRecommendedAction;
+    }
+    return out;
 }
 function slimDecisionEntities(entities) {
     const out = {};
@@ -417,6 +627,10 @@ async function resolveProductIdForTenantVariant(tenantId, variantId) {
 }
 const readShadowCompareSecret = () => String(process.env.LLM_SHADOW_COMPARE_SECRET ?? process.env.SHADOW_COMPARE_SECRET ?? "").trim();
 const isWasellerCrewPrimaryEnabled = () => /^(1|true|yes)$/i.test(String(process.env.WASELLER_CREW_PRIMARY ?? "").trim());
+exports.isWasellerCrewPrimaryEnabled = isWasellerCrewPrimaryEnabled;
+/** Si es true, el message-processor envía el turno al orquestador aunque antes iría solo al lead (p. ej. variante ya resuelta). */
+const isWasellerCrewOrchestrateFirstEnabled = () => /^(1|true|yes)$/i.test(String(process.env.WASELLER_CREW_ORCHESTRATE_FIRST ?? "").trim());
+exports.isWasellerCrewOrchestrateFirstEnabled = isWasellerCrewOrchestrateFirstEnabled;
 /**
  * Suelo más bajo de confianza cuando el `draftReply` viene de waseller-crew (primary), para no bloquear
  * guardrails / `requiresHuman` con el mismo umbral que el LLM interno.
@@ -459,9 +673,11 @@ function mergeCrewCandidateIntoLlmDecision(baseline, candidate) {
 }
 /** Cuerpo JSON del POST shadow-compare (mismo contrato para comparar o para modo primary). */
 async function assembleShadowCompareOutboundBody(input) {
+    const recentForPayload = await (0, conversation_recent_messages_service_1.injectLastOutgoingMessageForCrew)(input.tenantId, String(input.phone ?? "").trim(), (input.recentMessages ?? []));
+    const inputResolved = { ...input, recentMessages: recentForPayload };
     let stockLoad = { rows: [], scope: "none", ragProductIdsTried: [] };
     try {
-        stockLoad = await loadStockTableBundle(input.tenantId, input.stockTableProductId ?? null, input.stockTableRagProductIds ?? null);
+        stockLoad = await loadStockTableBundle(inputResolved.tenantId, inputResolved.stockTableProductId ?? null, inputResolved.stockTableRagProductIds ?? null);
     }
     catch {
         stockLoad = { rows: [], scope: "none", ragProductIdsTried: [] };
@@ -471,7 +687,7 @@ async function assembleShadowCompareOutboundBody(input) {
     const inventoryNarrowingNote = buildInventoryNarrowingNote({
         scope: stockLoad.scope,
         rowCount: stockTable.length,
-        stockTableProductId: input.stockTableProductId,
+        stockTableProductId: inputResolved.stockTableProductId,
         ragProductIdsTried: stockLoad.ragProductIdsTried,
         ragRowCap
     });
@@ -480,23 +696,25 @@ async function assembleShadowCompareOutboundBody(input) {
     const payload = {
         schemaVersion: src_2.JOB_SCHEMA_VERSION,
         kind: "waseller.shadow_compare.v1",
-        tenantId: input.tenantId,
-        leadId: input.leadId,
-        incomingText: clampStr(input.incomingText, maxIncoming),
-        interpretation: slimInterpretationForCrewHttp(input.interpretation),
-        baselineDecision: slimBaselineForCrewHttp(input.baselineDecision)
+        tenantId: inputResolved.tenantId,
+        leadId: inputResolved.leadId,
+        incomingText: clampStr(inputResolved.incomingText, maxIncoming),
+        interpretation: slimInterpretationForCrewHttp(buildRichInterpretationForShadowCompare(inputResolved)),
+        baselineDecision: slimBaselineForCrewHttp(inputResolved.baselineDecision)
     };
-    const phone = String(input.phone ?? "").trim();
+    const phone = String(inputResolved.phone ?? "").trim();
     if (phone)
         payload.phone = phone;
-    if (input.correlationId.trim())
-        payload.correlationId = input.correlationId;
-    if (input.messageId.trim())
-        payload.messageId = input.messageId;
-    if (input.conversationId !== undefined && input.conversationId !== null && String(input.conversationId).trim()) {
-        payload.conversationId = input.conversationId;
+    if (inputResolved.correlationId.trim())
+        payload.correlationId = inputResolved.correlationId;
+    if (inputResolved.messageId.trim())
+        payload.messageId = inputResolved.messageId;
+    if (inputResolved.conversationId !== undefined &&
+        inputResolved.conversationId !== null &&
+        String(inputResolved.conversationId).trim()) {
+        payload.conversationId = inputResolved.conversationId;
     }
-    const recent = input.recentMessages?.filter((m) => m.message?.trim()) ?? [];
+    const recent = inputResolved.recentMessages?.filter((m) => m.message?.trim()) ?? [];
     if (recent.length > 0) {
         payload.recentMessages = recent.slice(-8).map((m) => ({
             direction: m.direction,
@@ -507,12 +725,12 @@ async function assembleShadowCompareOutboundBody(input) {
         payload.stockTable = slimStockRowsForCrewHttp(stockTable);
     }
     payload.inventoryNarrowingNote = inventoryNarrowingNote;
-    const crewSlug = (0, crew_business_profile_slug_1.toCrewBusinessProfileSlug)(String(input.tenantBusinessCategory ?? ""));
+    const crewSlug = (0, crew_business_profile_slug_1.toCrewBusinessProfileSlug)(String(inputResolved.tenantBusinessCategory ?? ""));
     if (crewSlug) {
         payload.businessProfileSlug = crewSlug;
     }
-    if (input.tenantBrief && crewTenantBriefHasSignal(input.tenantBrief)) {
-        const slimBrief = slimCrewTenantBriefForHttp(input.tenantBrief);
+    if (inputResolved.tenantBrief && crewTenantBriefHasSignal(inputResolved.tenantBrief)) {
+        const slimBrief = slimCrewTenantBriefForHttp(inputResolved.tenantBrief);
         payload.tenantBrief = slimBrief;
         const commercialLines = buildTenantCommercialContextFromBrief(slimBrief);
         const maxCommercial = readNumericEnv("LLM_SHADOW_COMPARE_MAX_TENANT_COMMERCIAL_CONTEXT_CHARS", 1400);
@@ -520,16 +738,28 @@ async function assembleShadowCompareOutboundBody(input) {
             payload.tenantCommercialContext = clampStr(commercialLines, maxCommercial);
         }
     }
+    const stage = (inputResolved.conversationStage ??
+        inputResolved.interpretation.conversationStage);
+    if (stage && String(stage).trim()) {
+        payload.etapa = clampStr(String(stage), 500);
+    }
+    if (inputResolved.activeOffer && activeOfferHasSignal(inputResolved.activeOffer)) {
+        payload.activeOffer = slimActiveOfferForCrewRoot(inputResolved.activeOffer);
+    }
+    const maxMemLines = Math.max(1, Math.min(40, Number(process.env.LLM_SHADOW_COMPARE_MAX_MEMORY_FACT_LINES ?? 40)));
+    const maxMemLineChars = Math.max(80, Math.min(400, Number(process.env.LLM_SHADOW_COMPARE_MAX_MEMORY_FACT_LINE_CHARS ?? 400)));
+    if (inputResolved.memoryFacts && Object.keys(inputResolved.memoryFacts).length > 0) {
+        const lines = memoryFactsRecordToStringArray(inputResolved.memoryFacts, maxMemLines, maxMemLineChars);
+        if (lines.length > 0)
+            payload.memoryFacts = lines;
+    }
     return payload;
 }
 /**
- * Una sola llamada a waseller-crew: si responde con `candidateDecision.draftReply` válido, reemplaza la decisión
- * interna (OpenAI/self-hosted) **antes** del verificador y guardrails. Requiere `LLM_SHADOW_COMPARE_URL` y
- * `WASELLER_CREW_PRIMARY=true`. No lanza hacia arriba.
+ * POST único a `LLM_SHADOW_COMPARE_URL`. No persiste trazas; usalo y luego `persistShadowCompareTelemetry`
+ * o la traza `crew_primary` en `tryWasellerCrewPrimaryReplacement`.
  */
-async function tryWasellerCrewPrimaryReplacement(input) {
-    if (!isWasellerCrewPrimaryEnabled())
-        return null;
+async function executeShadowCompareRequest(input) {
     const url = String(process.env.LLM_SHADOW_COMPARE_URL ?? "").trim();
     if (!url)
         return null;
@@ -543,6 +773,72 @@ async function tryWasellerCrewPrimaryReplacement(input) {
     if (authorizationSent) {
         headers.Authorization = `Bearer ${shadowSecret}`;
     }
+    try {
+        const res = await fetch(url, {
+            method: "POST",
+            headers,
+            signal: controller.signal,
+            body: JSON.stringify(outboundBody)
+        });
+        const raw = await res.text();
+        let json;
+        try {
+            json = raw ? JSON.parse(raw) : {};
+        }
+        catch {
+            return {
+                outboundBody,
+                httpStatus: res.status,
+                httpOk: false,
+                merged: null,
+                parseOk: false,
+                jsonInvalid: true,
+                rawSnippet: raw.slice(0, 800)
+            };
+        }
+        const parsed = (0, src_2.parseShadowCompareHttpResponse)(json);
+        if (!parsed.ok) {
+            return {
+                outboundBody,
+                httpStatus: res.status,
+                httpOk: res.ok,
+                merged: null,
+                parseOk: false,
+                parseError: parsed.error,
+                issues: parsed.issues,
+                jsonInvalid: false
+            };
+        }
+        const merged = mergeCrewCandidateIntoLlmDecision(input.baselineDecision, parsed.value.candidateDecision);
+        const httpOk = res.ok;
+        return {
+            outboundBody,
+            httpStatus: res.status,
+            httpOk,
+            merged: merged && httpOk ? merged : null,
+            candidateDecision: parsed.value.candidateDecision ?? null,
+            candidateInterpretation: parsed.value.candidateInterpretation,
+            parseOk: true,
+            jsonInvalid: false
+        };
+    }
+    catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        return {
+            outboundBody,
+            httpStatus: 0,
+            httpOk: false,
+            merged: null,
+            parseOk: false,
+            jsonInvalid: false,
+            networkError: message
+        };
+    }
+    finally {
+        clearTimeout(timer);
+    }
+}
+async function persistCrewPrimaryTrace(input, exec, url, timeoutMs, authorizationSent) {
     const persistCrew = async (response, error) => {
         try {
             await src_1.prisma.llmTrace.create({
@@ -560,7 +856,7 @@ async function tryWasellerCrewPrimaryReplacement(input) {
                         url,
                         timeoutMs,
                         authorizationSent,
-                        body: outboundBody
+                        body: exec.outboundBody
                     },
                     response,
                     promptTokens: null,
@@ -575,77 +871,45 @@ async function tryWasellerCrewPrimaryReplacement(input) {
             // noop
         }
     };
-    try {
-        const res = await fetch(url, {
-            method: "POST",
-            headers,
-            signal: controller.signal,
-            body: JSON.stringify(outboundBody)
-        });
-        const raw = await res.text();
-        let json;
-        try {
-            json = raw ? JSON.parse(raw) : {};
-        }
-        catch {
-            await persistCrew({ httpStatus: res.status, rawSnippet: raw.slice(0, 800) }, "invalid_json_body");
-            return null;
-        }
-        const parsed = (0, src_2.parseShadowCompareHttpResponse)(json);
-        if (!parsed.ok) {
-            await persistCrew({
-                httpStatus: res.status,
-                issues: parsed.issues ?? []
-            }, parsed.error);
-            return null;
-        }
-        const merged = mergeCrewCandidateIntoLlmDecision(input.baselineDecision, parsed.value.candidateDecision);
-        if (!merged || !res.ok) {
-            await persistCrew({
-                httpStatus: res.status,
-                httpOk: res.ok,
-                candidateDecision: parsed.value.candidateDecision ?? null,
-                skipped: merged ? false : "no_mergeable_candidate"
-            }, !res.ok ? `http_${res.status}` : "no_mergeable_candidate");
-            return null;
-        }
+    if (exec.networkError) {
+        await persistCrew({ aborted: exec.networkError.includes("abort"), detail: exec.networkError }, exec.networkError);
+        return;
+    }
+    if (exec.jsonInvalid) {
+        await persistCrew({ httpStatus: exec.httpStatus, rawSnippet: exec.rawSnippet }, "invalid_json_body");
+        return;
+    }
+    if (!exec.parseOk) {
         await persistCrew({
-            httpStatus: res.status,
-            httpOk: res.ok,
-            candidateDecision: parsed.value.candidateDecision ?? null,
-            applied: true
-        });
-        return { decision: merged, outboundBody };
+            httpStatus: exec.httpStatus,
+            issues: exec.issues ?? []
+        }, exec.parseError);
+        return;
     }
-    catch (e) {
-        const message = e instanceof Error ? e.message : String(e);
-        await persistCrew({ aborted: message.includes("abort"), detail: message }, message);
-        return null;
+    if (!exec.merged || !exec.httpOk) {
+        await persistCrew({
+            httpStatus: exec.httpStatus,
+            httpOk: exec.httpOk,
+            candidateDecision: exec.candidateDecision ?? null,
+            skipped: exec.merged ? false : "no_mergeable_candidate"
+        }, !exec.httpOk ? `http_${exec.httpStatus}` : "no_mergeable_candidate");
+        return;
     }
-    finally {
-        clearTimeout(timer);
-    }
+    await persistCrew({
+        httpStatus: exec.httpStatus,
+        httpOk: true,
+        candidateDecision: exec.candidateDecision ?? null,
+        applied: true
+    });
 }
 /**
- * Si `LLM_SHADOW_COMPARE_URL` está definida, envía el baseline a un servicio externo (p. ej. CrewAI)
- * y persiste el resultado en `LlmTrace` con `traceKind: "shadow_compare"`.
- * No lanza: errores de red o de persistencia se ignoran para no afectar el camino principal.
+ * Persiste `traceKind: "shadow_compare"` (misma forma que el log histórico).
  */
-async function logShadowExternalCompareIfConfigured(input) {
+async function persistShadowCompareTelemetry(input, exec) {
     const url = String(process.env.LLM_SHADOW_COMPARE_URL ?? "").trim();
-    if (!url)
-        return;
-    if (isWasellerCrewPrimaryEnabled()) {
-        // `tryWasellerCrewPrimaryReplacement` ya hizo POST al mismo endpoint con el mismo `correlationId`.
-        // Evitar segundo POST y telemetría duplicada en waseller-crew (la traza `crew_primary` en `llm_traces` alcanza).
-        return;
-    }
     const timeoutMs = Math.max(1000, Math.min(120_000, Number(process.env.LLM_SHADOW_COMPARE_TIMEOUT_MS ?? 30_000)));
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
     const shadowSecret = readShadowCompareSecret();
     const authorizationSent = shadowSecret.length > 0;
-    const outboundBody = await assembleShadowCompareOutboundBody(input);
     const persist = async (body, outboundBody) => {
         try {
             await src_1.prisma.llmTrace.create({
@@ -675,64 +939,88 @@ async function logShadowExternalCompareIfConfigured(input) {
             });
         }
         catch {
-            // No bloquear orquestación si el esquema de DB difiere o falla escritura.
+            // noop
         }
     };
-    const headers = { "content-type": "application/json" };
-    if (authorizationSent) {
-        headers.Authorization = `Bearer ${shadowSecret}`;
+    if (exec.networkError) {
+        await persist({
+            error: exec.networkError,
+            response: { aborted: exec.networkError.includes("abort") }
+        }, exec.outboundBody);
+        return;
+    }
+    if (exec.jsonInvalid) {
+        await persist({
+            httpStatus: exec.httpStatus,
+            error: "invalid_json_body",
+            response: { rawSnippet: exec.rawSnippet ?? "" }
+        }, exec.outboundBody);
+        return;
+    }
+    if (!exec.parseOk) {
+        await persist({
+            httpStatus: exec.httpStatus,
+            error: exec.parseError,
+            response: { issues: exec.issues ?? [] }
+        }, exec.outboundBody);
+        return;
+    }
+    const candidate = exec.candidateDecision;
+    const diff = candidate != null
+        ? (0, src_2.summarizeDecisionDiff)(input.baselineDecision, candidate)
+        : { skipped: true, reason: "no_candidateDecision" };
+    await persist({
+        httpStatus: exec.httpStatus,
+        response: {
+            httpOk: exec.httpOk,
+            candidateDecision: candidate ?? null,
+            candidateInterpretation: exec.candidateInterpretation ?? null,
+            diff,
+            shadowCustomerApplied: Boolean(exec.merged && exec.httpOk)
+        }
+    }, exec.outboundBody);
+}
+/**
+ * Una sola llamada a waseller-crew: si responde con `candidateDecision.draftReply` válido, reemplaza la decisión
+ * interna (OpenAI/self-hosted) **antes** del verificador y guardrails. Requiere `LLM_SHADOW_COMPARE_URL` y
+ * `WASELLER_CREW_PRIMARY=true`. No lanza hacia arriba.
+ */
+async function tryWasellerCrewPrimaryReplacement(input) {
+    if (!(0, exports.isWasellerCrewPrimaryEnabled)())
+        return null;
+    const url = String(process.env.LLM_SHADOW_COMPARE_URL ?? "").trim();
+    if (!url)
+        return null;
+    const timeoutMs = Math.max(1000, Math.min(120_000, Number(process.env.LLM_SHADOW_COMPARE_TIMEOUT_MS ?? 30_000)));
+    const shadowSecret = readShadowCompareSecret();
+    const authorizationSent = shadowSecret.length > 0;
+    const exec = await executeShadowCompareRequest(input);
+    if (!exec)
+        return null;
+    await persistCrewPrimaryTrace(input, exec, url, timeoutMs, authorizationSent);
+    if (!exec.merged || !exec.httpOk)
+        return null;
+    return { decision: exec.merged, outboundBody: exec.outboundBody };
+}
+/**
+ * Si `LLM_SHADOW_COMPARE_URL` está definida, envía el baseline a un servicio externo (p. ej. CrewAI)
+ * y persiste el resultado en `LlmTrace` con `traceKind: "shadow_compare"`.
+ * No lanza: errores de red o de persistencia se ignoran para no afectar el camino principal.
+ */
+async function logShadowExternalCompareIfConfigured(input) {
+    if (!String(process.env.LLM_SHADOW_COMPARE_URL ?? "").trim())
+        return;
+    if ((0, exports.isWasellerCrewPrimaryEnabled)()) {
+        // `tryWasellerCrewPrimaryReplacement` ya hizo POST al mismo endpoint con el mismo `correlationId`.
+        return;
     }
     try {
-        const res = await fetch(url, {
-            method: "POST",
-            headers,
-            signal: controller.signal,
-            body: JSON.stringify(outboundBody)
-        });
-        const raw = await res.text();
-        let json;
-        try {
-            json = raw ? JSON.parse(raw) : {};
-        }
-        catch {
-            await persist({
-                httpStatus: res.status,
-                error: "invalid_json_body",
-                response: { rawSnippet: raw.slice(0, 800) }
-            }, outboundBody);
+        const exec = await executeShadowCompareRequest(input);
+        if (!exec)
             return;
-        }
-        const parsed = (0, src_2.parseShadowCompareHttpResponse)(json);
-        if (!parsed.ok) {
-            await persist({
-                httpStatus: res.status,
-                error: parsed.error,
-                response: { issues: parsed.issues ?? [] }
-            }, outboundBody);
-            return;
-        }
-        const candidate = parsed.value.candidateDecision;
-        const diff = candidate !== undefined
-            ? (0, src_2.summarizeDecisionDiff)(input.baselineDecision, candidate)
-            : { skipped: true, reason: "no_candidateDecision" };
-        await persist({
-            httpStatus: res.status,
-            response: {
-                httpOk: res.ok,
-                candidateDecision: candidate ?? null,
-                candidateInterpretation: parsed.value.candidateInterpretation ?? null,
-                diff
-            }
-        }, outboundBody);
+        await persistShadowCompareTelemetry(input, exec);
     }
-    catch (e) {
-        const message = e instanceof Error ? e.message : String(e);
-        await persist({
-            error: message,
-            response: { aborted: message.includes("abort") }
-        }, outboundBody);
-    }
-    finally {
-        clearTimeout(timer);
+    catch {
+        // noop
     }
 }

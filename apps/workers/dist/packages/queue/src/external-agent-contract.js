@@ -163,6 +163,26 @@ function parseExternalConversationInterpretation(input) {
     if (input.notes !== undefined && (!Array.isArray(input.notes) || !input.notes.every((n) => typeof n === "string"))) {
         issues.push({ path: "notes", message: "string[] expected" });
     }
+    if (input.activeOfferDigest !== undefined &&
+        (typeof input.activeOfferDigest !== "string" || input.activeOfferDigest.length > 2000)) {
+        issues.push({ path: "activeOfferDigest", message: "string expected (max 2000)" });
+    }
+    if (input.closingGaps !== undefined &&
+        (!Array.isArray(input.closingGaps) || !input.closingGaps.every((x) => typeof x === "string"))) {
+        issues.push({ path: "closingGaps", message: "string[] expected" });
+    }
+    if (input.memoryFactsDigest !== undefined && !isRecord(input.memoryFactsDigest)) {
+        issues.push({ path: "memoryFactsDigest", message: "object expected" });
+    }
+    if (input.baselineLeadStage !== undefined &&
+        (typeof input.baselineLeadStage !== "string" ||
+            !["discovery", "consideration", "decision", "handoff"].includes(input.baselineLeadStage))) {
+        issues.push({ path: "baselineLeadStage", message: "invalid lead stage" });
+    }
+    if (input.baselineRecommendedAction !== undefined &&
+        (typeof input.baselineRecommendedAction !== "string" || input.baselineRecommendedAction.length > 400)) {
+        issues.push({ path: "baselineRecommendedAction", message: "string expected" });
+    }
     if (issues.length > 0 || !entities || !references || !Array.isArray(input.missingFields)) {
         return { ok: false, error: issues.map((i) => `${i.path}: ${i.message}`).join("; "), issues };
     }
@@ -180,6 +200,31 @@ function parseExternalConversationInterpretation(input) {
     }
     if (Array.isArray(input.notes))
         value.notes = input.notes;
+    if (typeof input.activeOfferDigest === "string" && input.activeOfferDigest.length <= 2000) {
+        value.activeOfferDigest = input.activeOfferDigest;
+    }
+    if (Array.isArray(input.closingGaps) && input.closingGaps.every((x) => typeof x === "string")) {
+        value.closingGaps = input.closingGaps;
+    }
+    if (isRecord(input.memoryFactsDigest)) {
+        const md = {};
+        for (const [k, v] of Object.entries(input.memoryFactsDigest)) {
+            if (typeof k !== "string" || k.length > 64)
+                continue;
+            if (v === null || typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
+                md[k] = v;
+            }
+        }
+        if (Object.keys(md).length > 0)
+            value.memoryFactsDigest = md;
+    }
+    if (typeof input.baselineLeadStage === "string" &&
+        ["discovery", "consideration", "decision", "handoff"].includes(input.baselineLeadStage)) {
+        value.baselineLeadStage = input.baselineLeadStage;
+    }
+    if (typeof input.baselineRecommendedAction === "string" && input.baselineRecommendedAction.length <= 400) {
+        value.baselineRecommendedAction = input.baselineRecommendedAction;
+    }
     return { ok: true, value };
 }
 function parseVerification(raw, path, issues) {
@@ -499,7 +544,17 @@ exports.conversationInterpretationV1JsonSchema = {
         missingFields: { type: "array", items: { type: "string" } },
         nextAction: { type: "string", enum: [...NEXT_ACTION_SET] },
         source: { type: "string", enum: [...INTERP_SOURCES] },
-        notes: { type: "array", items: { type: "string" } }
+        notes: { type: "array", items: { type: "string" } },
+        activeOfferDigest: { type: "string", maxLength: 2000 },
+        closingGaps: { type: "array", items: { type: "string", maxLength: 220 } },
+        memoryFactsDigest: {
+            type: "object",
+            additionalProperties: {
+                oneOf: [{ type: "string" }, { type: "number" }, { type: "boolean" }, { type: "null" }]
+            }
+        },
+        baselineLeadStage: { type: "string", enum: [...LEAD_STAGE_SET] },
+        baselineRecommendedAction: { type: "string", maxLength: 400 }
     }
 };
 /**

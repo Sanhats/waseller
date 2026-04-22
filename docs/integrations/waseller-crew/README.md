@@ -9,6 +9,7 @@ Esta carpeta en Waseller contiene todo el paquete para el **otro repo**:
 | [`.env.example`](./.env.example) | Variables del servicio Python. |
 | [`fixtures/request.example.json`](./fixtures/request.example.json) | Body mínimo (v1). |
 | [`fixtures/request.v1_1.example.json`](./fixtures/request.v1_1.example.json) | Body con opcionales v1.1 (`phone`, ids, `recentMessages`, `tenantBrief`, …). |
+| [`fixtures/request.mesa_colores.json`](./fixtures/request.mesa_colores.json) | Diálogo **mesa → «¿Qué colores tenés?»** (`recentMessages`, `activeOffer`, `memoryFacts`, `etapa`, `stockTable`, …) para smoke / alinear con el test del repo **waseller-crew**. |
 | [`IMPLEMENTACION_MINIMA.md`](./IMPLEMENTACION_MINIMA.md) | Esqueleto FastAPI + stub `run_crew()` y `curl` de prueba. |
 | [`CONTRATO_V1_1.md`](./CONTRATO_V1_1.md) | Propuesta coordinada: body opcional + Bearer + ejemplos JSON (para PR en Waseller y alinear waseller-crew). |
 
@@ -18,7 +19,8 @@ Este documento es **autocontenido** para implementar el microservicio con **`uv`
 
 - `LLM_SHADOW_COMPARE_URL` apunta a tu URL (HTTPS en producción).
 - **`WASELLER_CREW_PRIMARY=true`** (opcional): el crew **sustituye** la decisión interna en el orquestador (misma URL y contrato); no se envía un POST adicional solo para comparar en ese turno. Ver `CONTRATO_V1_1.md`.
-- El job de orquestación va en **`executionMode: "shadow"`** (ver `LlmRolloutService` / tenant).
+- **`WASELLER_CREW_ORCHESTRATE_FIRST=true`** (opcional): con LLM habilitado y `LLM_SHADOW_COMPARE_URL` + primary, el **message-processor** manda también los turnos con variante resuelta al **orquestador** (intérprete + RAG + crew), no solo al lead. Ver `CONTRATO_V1_1.md` §2 y `message-processor.worker.ts`.
+- El job de orquestación va en **`executionMode: "shadow"`** o **`active`** (ver `LlmRolloutService` / tenant / `LLM_SHADOW_MODE`).
 
 Referencia en Waseller:
 
@@ -46,7 +48,7 @@ Referencia en Waseller:
 - **POST** a la URL exacta configurada en `LLM_SHADOW_COMPARE_URL` (puede ser `https://host/shadow-compare` o la raíz si así lo configurás).
 - **Content-Type:** `application/json`
 - **Authorization (opcional):** si en workers está definido **`LLM_SHADOW_COMPARE_SECRET`** o **`SHADOW_COMPARE_SECRET`** (no vacío), Waseller envía `Authorization: Bearer <secret>`. El valor debe coincidir con **`SHADOW_COMPARE_SECRET`** en waseller-crew.
-- **Timeout del cliente Waseller:** `LLM_SHADOW_COMPARE_TIMEOUT_MS` (default **8000** ms, máximo 120000). Tu servicio debe responder por debajo de ese valor o Waseller abortará la petición (la traza guardará error de red/abort).
+- **Timeout del cliente Waseller:** `LLM_SHADOW_COMPARE_TIMEOUT_MS` (default **30000** ms, máximo 120000). Tu servicio debe responder por debajo de ese valor o Waseller abortará la petición (la traza guardará error de red/abort).
 
 ### Cuerpo JSON (request)
 
@@ -61,7 +63,7 @@ Detalle completo v1.1: [`CONTRATO_V1_1.md`](./CONTRATO_V1_1.md). Resumen:
 | `correlationId`, `messageId` | `string` | Opcionales. |
 | `conversationId` | `string` | Opcional (si el job trae conversación). |
 | `recentMessages` | `{ direction, message }[]` | Opcional; hasta **8** mensajes, orden cronológico (más antiguo primero). |
-| `stockTable`, `businessProfileSlug`, `tenantBrief`, `tenantCommercialContext`, `inventoryNarrowingNote` | ver `CONTRATO_V1_1.md` §1 | Opcionales v1.1; el crew usa `extra="ignore"` para campos desconocidos. `tenantCommercialContext` acompaña al overlay `tenant_prompts/<slug>.txt`. |
+| `stockTable`, `businessProfileSlug`, `tenantBrief`, `tenantCommercialContext`, `inventoryNarrowingNote`, `etapa`, `activeOffer`, `memoryFacts` | ver `CONTRATO_V1_1.md` §1 y §1.1 | Opcionales v1.1; el crew usa `extra="ignore"` para campos desconocidos. `tenantBrief` es objeto en el wire Waseller (el crew puede acotarlo a ~2500 caracteres al volcar al kickoff). `memoryFacts`: hasta **40** strings (≤**400** caracteres c/u). **`stockTable` tiene prioridad** sobre `activeOffer` / digests si hay conflicto (documentado en prompts del crew). |
 
 #### `ConversationInterpretationV1` (resumen)
 
@@ -148,7 +150,7 @@ Waseller **no** exige `2xx` para parsear: lee el body igualmente. Igual conviene
 1. Si el JSON es inválido → traza `shadow_compare` con `error` y/o `issues`.  
 2. Si es válido → calcula `diff` (`draftReplyEqual`, `intentMatch`, …) comparando `baselineDecision` con `candidateDecision` (cuando corre el flujo de shadow-compare).  
 3. **`WASELLER_CREW_PRIMARY=true`:** una llamada al mismo endpoint puede **reemplazar** la decisión interna antes del verificador; traza `crew_primary`. Ver `CONTRATO_V1_1.md`.  
-4. **Shadow (rollout):** si el mensaje va por **lead worker** con variante resuelta, el orquestador **no** corre → **no** hay POST al crew ni `llm_traces` en ese turno (límite actual del monorepo Waseller, no del contrato HTTP).
+4. **Shadow (rollout) / lead directo:** si el mensaje va por **lead worker** sin pasar por el orquestador, el lead igual puede llamar al crew (primary / shadow) con el mismo contrato HTTP. Si **`WASELLER_CREW_ORCHESTRATE_FIRST=true`**, muchos de esos turnos **sí** pasan primero por el orquestador y el crew recibe también el contexto del intérprete interno.
 
 ---
 
@@ -232,16 +234,18 @@ No intentes llamar a Prisma ni a Redis desde este servicio en la fase shadow: el
 
 ---
 
-## Checklist antes de enchufar producción
+## Checklist operativo antes de enchufar producción
 
-- [ ] `POST` responde en menos que `LLM_SHADOW_COMPARE_TIMEOUT_MS`.  
-- [ ] JSON siempre parseable; errores del LLM capturados y devueltos como `500` + cuerpo JSON con `error` humano (Waseller igual intentará parsear `candidateDecision` si lo incluís).  
+- [ ] **Body:** `schemaVersion`, `kind`, `tenantId`, `leadId`, `incomingText`, `interpretation`, `baselineDecision` correctos; opcionales según §1 del contrato (`recentMessages`, `stockTable`, `inventoryNarrowingNote`, `tenantBrief`, `tenantCommercialContext`, `etapa`, `activeOffer`, `memoryFacts`, …).  
+- [ ] **Respuesta:** `200` + JSON con `candidateDecision.draftReply` **no vacío** en modo útil (primary); baseline de respaldo si el crew devuelve borrador vacío (ver `docs/CONTRATO_HTTP_V1_1.md` §4.2 en repo crew).  
+- [ ] **Timeouts:** `POST` por debajo de `LLM_SHADOW_COMPARE_TIMEOUT_MS` (workers); subir timeout si `stockTable` es grande.  
+- [ ] **Bearer:** `SHADOW_COMPARE_SECRET` (crew) = `LLM_SHADOW_COMPARE_SECRET` o `SHADOW_COMPARE_SECRET` (workers); `SHADOW_COMPARE_REQUIRE_AUTH=true` en prod si el endpoint es público.  
+- [ ] **Prueba mesa → colores:** `curl` / test con [`fixtures/request.mesa_colores.json`](./fixtures/request.mesa_colores.json) (esta carpeta) o el homónimo en **waseller-crew** → respuesta lista colores reales desde `stockTable`, sin repetir solo el cierre del baseline.  
 - [ ] `nextAction` / `conversationStage` / `source` dentro de enums permitidos.  
-- [ ] HTTPS y secret compartido o red privada/VPN según tu amenaza.  
-- [ ] Coste y rate limit: un mensaje shadow = al menos una corrida de crew; considerá cuotas por `tenantId`.
+- [ ] HTTPS y rate limit / coste por `tenantId`.
 
 ---
 
-## Extensión futura (Waseller monorepo)
+## Waseller monorepo — orquestador primero (opcional)
 
-- Encolar **orquestador** (y por tanto POST al crew / `llm_traces`) también cuando **`shouldHandleInLeadWorker`** es true por variante resuelta, si el producto quiere crew o telemetría en ese camino. Hoy es decisión de routing en `apps/workers/src/message-processor.worker.ts`.
+- Con **`WASELLER_CREW_ORCHESTRATE_FIRST=true`** (y primary + URL + LLM habilitado), el routing en `apps/workers/src/message-processor.worker.ts` **enciola el orquestador** también cuando antes solo iba al lead por variante resuelta. Sin ese flag, el comportamiento histórico se mantiene.

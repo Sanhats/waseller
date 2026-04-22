@@ -194,6 +194,74 @@ function buildTenantCommercialContextFromBrief(b: CrewTenantBriefV1): string {
   return lines.join("\n");
 }
 
+function activeOfferHasSignal(offer: ActiveOfferV1 | null | undefined): boolean {
+  if (!offer) return false;
+  return Boolean(
+    (offer.productName && offer.productName.trim()) ||
+      (offer.variantId && String(offer.variantId).trim()) ||
+      (offer.attributes && Object.keys(offer.attributes).length > 0) ||
+      offer.price != null ||
+      offer.availableStock != null ||
+      (offer.alternativeVariants && offer.alternativeVariants.length > 0) ||
+      (offer.expectedCustomerAction && offer.expectedCustomerAction.trim())
+  );
+}
+
+/** Objeto `activeOffer` en raíz del POST (paridad con waseller-crew / ShadowCompareRequest). */
+function slimActiveOfferForCrewRoot(offer: ActiveOfferV1): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (offer.productName?.trim()) out.productName = clampStr(offer.productName.trim(), 200);
+  if (offer.variantId?.trim()) out.variantId = String(offer.variantId).trim();
+  if (offer.attributes && Object.keys(offer.attributes).length > 0) {
+    const attrs: Record<string, string> = {};
+    let ak = 0;
+    for (const [k, v] of Object.entries(offer.attributes)) {
+      if (ak++ >= 16) break;
+      attrs[clampStr(k, 40)] = clampStr(String(v), 120);
+    }
+    out.attributes = attrs;
+  }
+  if (offer.price != null && Number.isFinite(Number(offer.price))) out.price = Number(offer.price);
+  if (offer.availableStock != null && Number.isFinite(Number(offer.availableStock))) {
+    out.availableStock = Number(offer.availableStock);
+  }
+  if (offer.expectedCustomerAction?.trim()) {
+    out.expectedCustomerAction = clampStr(offer.expectedCustomerAction.trim(), 280);
+  }
+  if (offer.alternativeVariants?.length) {
+    out.alternativeVariants = offer.alternativeVariants.slice(0, 12).map((av) => ({
+      variantId: av.variantId?.trim() ? String(av.variantId).trim() : null,
+      attributes: Object.fromEntries(
+        Object.entries(av.attributes ?? {})
+          .slice(0, 8)
+          .map(([k, vv]) => [clampStr(k, 40), clampStr(String(vv), 80)])
+      ),
+      availableStock:
+        av.availableStock != null && Number.isFinite(Number(av.availableStock))
+          ? Number(av.availableStock)
+          : null
+    }));
+  }
+  return out;
+}
+
+/** Hasta 40 líneas ≤400 caracteres (contrato crew); entrada: hechos en memoria del lead. */
+function memoryFactsRecordToStringArray(facts: Record<string, unknown>, maxLines: number, maxLineLen: number): string[] {
+  const out: string[] = [];
+  for (const [k, v] of Object.entries(facts ?? {})) {
+    if (out.length >= maxLines) break;
+    const key = clampStr(k, 80).trim();
+    if (!key) continue;
+    let val: string;
+    if (v === null || typeof v === "number" || typeof v === "boolean") val = String(v);
+    else if (typeof v === "string") val = v;
+    else val = JSON.stringify(v);
+    const line = clampStr(`${key}: ${val}`, maxLineLen);
+    if (line.trim()) out.push(line);
+  }
+  return out;
+}
+
 function summarizeActiveOfferForCrew(offer: ActiveOfferV1 | null | undefined): string | undefined {
   if (!offer) return undefined;
   const parts: string[] = [];
@@ -690,6 +758,10 @@ const readShadowCompareSecret = (): string =>
 export const isWasellerCrewPrimaryEnabled = (): boolean =>
   /^(1|true|yes)$/i.test(String(process.env.WASELLER_CREW_PRIMARY ?? "").trim());
 
+/** Si es true, el message-processor envía el turno al orquestador aunque antes iría solo al lead (p. ej. variante ya resuelta). */
+export const isWasellerCrewOrchestrateFirstEnabled = (): boolean =>
+  /^(1|true|yes)$/i.test(String(process.env.WASELLER_CREW_ORCHESTRATE_FIRST ?? "").trim());
+
 /**
  * Suelo más bajo de confianza cuando el `draftReply` viene de waseller-crew (primary), para no bloquear
  * guardrails / `requiresHuman` con el mismo umbral que el LLM interno.
@@ -836,6 +908,24 @@ export async function assembleShadowCompareOutboundBody(input: ShadowCompareInpu
       payload.tenantCommercialContext = clampStr(commercialLines, maxCommercial);
     }
   }
+
+  const stage = (inputResolved.conversationStage ??
+    inputResolved.interpretation.conversationStage) as ConversationStageV1 | undefined;
+  if (stage && String(stage).trim()) {
+    payload.etapa = clampStr(String(stage), 500);
+  }
+
+  if (inputResolved.activeOffer && activeOfferHasSignal(inputResolved.activeOffer)) {
+    payload.activeOffer = slimActiveOfferForCrewRoot(inputResolved.activeOffer);
+  }
+
+  const maxMemLines = Math.max(1, Math.min(40, Number(process.env.LLM_SHADOW_COMPARE_MAX_MEMORY_FACT_LINES ?? 40)));
+  const maxMemLineChars = Math.max(80, Math.min(400, Number(process.env.LLM_SHADOW_COMPARE_MAX_MEMORY_FACT_LINE_CHARS ?? 400)));
+  if (inputResolved.memoryFacts && Object.keys(inputResolved.memoryFacts).length > 0) {
+    const lines = memoryFactsRecordToStringArray(inputResolved.memoryFacts, maxMemLines, maxMemLineChars);
+    if (lines.length > 0) payload.memoryFacts = lines;
+  }
+
   return payload;
 }
 

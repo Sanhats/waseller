@@ -30,6 +30,10 @@ import {
   resolveStageFromContext
 } from "./services/conversation-policy.service";
 import { getWhatsappServiceBaseUrl } from "../../../packages/shared/src";
+import {
+  isWasellerCrewOrchestrateFirstEnabled,
+  isWasellerCrewPrimaryEnabled
+} from "./services/shadow-compare.service";
 
 const intentDetection = new IntentDetectionService();
 const productMatcher = new ProductMatcherService();
@@ -408,6 +412,14 @@ export const messageProcessorWorker = new Worker<IncomingMessageJobV1>(
         needsClarificationForAxes ||
         hasUnavailableCombination ||
         forceLeadWorkerForReservedPaymentFollowUp;
+      const crewOrchestrateFirstConfigured =
+        String(process.env.LLM_SHADOW_COMPARE_URL ?? "").trim().length > 0 &&
+        isWasellerCrewPrimaryEnabled() &&
+        isWasellerCrewOrchestrateFirstEnabled();
+      const preferOrchestratorForCrewContext =
+        crewOrchestrateFirstConfigured && !forceLeadWorkerForReservedPaymentFollowUp;
+      const routeThroughOrchestratorFirst =
+        llmPolicy.enabled && (!shouldHandleInLeadWorker || preferOrchestratorForCrewContext);
       const hadActiveReservation =
         !leadWasClosed &&
         Boolean(existingLead?.hasStockReservation) &&
@@ -623,7 +635,7 @@ export const messageProcessorWorker = new Worker<IncomingMessageJobV1>(
       const conversationState = shouldPreserveClosedSale ? "lead_closed" : leadWasClosed ? "open" : conversation?.state ?? "open";
       const botPaused = conversationState === "manual_paused";
       if (!botPaused && isBusinessRelated && lead) {
-        if (llmPolicy.enabled && !shouldHandleInLeadWorker) {
+        if (routeThroughOrchestratorFirst) {
           const llmJob: LlmOrchestrationJobV1 = {
             schemaVersion: JOB_SCHEMA_VERSION,
             correlationId: job.data.correlationId,
@@ -675,7 +687,8 @@ export const messageProcessorWorker = new Worker<IncomingMessageJobV1>(
               stockReserved: reserved,
               conversationStage: ruleInterpretation.conversationStage,
               activeOffer,
-              interpretation: ruleInterpretation
+              interpretation: ruleInterpretation,
+              memoryFacts: memory.facts ?? {}
             },
             {
               jobId: `lead_${leadDedupe}`

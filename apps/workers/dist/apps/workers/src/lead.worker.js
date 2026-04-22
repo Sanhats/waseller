@@ -1030,7 +1030,10 @@ exports.leadWorker = new bullmq_1.Worker(src_1.QueueNames.leadProcessing, async 
                 recentMessages: recentChronologicalForCrew,
                 tenantBusinessCategory: tenantKnowledge.profile.businessCategory,
                 stockTableProductId,
-                tenantBrief: crewTenantBrief
+                tenantBrief: crewTenantBrief,
+                activeOffer: job.data.activeOffer ?? null,
+                memoryFacts: job.data.memoryFacts ?? {},
+                conversationStage: job.data.conversationStage ?? interpretation.conversationStage
             }).catch(() => null);
             if (crewPrimary) {
                 const crewPrimaryThreshold = (0, shadow_compare_service_1.resolveCrewPrimaryEffectiveConfidenceThreshold)(confidenceThreshold, true);
@@ -1048,7 +1051,7 @@ exports.leadWorker = new bullmq_1.Worker(src_1.QueueNames.leadProcessing, async 
                     handoffRequired: templateGuarded.blocked,
                     qualityFlags: Array.from(new Set([...(baselineDecision.qualityFlags ?? []), ...templateGuarded.flags]))
                 };
-                void (0, shadow_compare_service_1.logShadowExternalCompareIfConfigured)({
+                const shadowInput = {
                     tenantId,
                     leadId,
                     conversationId: job.data.conversationId ?? undefined,
@@ -1062,8 +1065,21 @@ exports.leadWorker = new bullmq_1.Worker(src_1.QueueNames.leadProcessing, async 
                     recentMessages: recentChronologicalForCrew,
                     tenantBusinessCategory: tenantKnowledge.profile.businessCategory,
                     stockTableProductId,
-                    tenantBrief: crewTenantBrief
-                }).catch(() => undefined);
+                    tenantBrief: crewTenantBrief,
+                    activeOffer: job.data.activeOffer ?? null,
+                    memoryFacts: job.data.memoryFacts ?? {},
+                    conversationStage: job.data.conversationStage ?? interpretation.conversationStage
+                };
+                const shadowExec = await (0, shadow_compare_service_1.executeShadowCompareRequest)(shadowInput);
+                if (shadowExec) {
+                    await (0, shadow_compare_service_1.persistShadowCompareTelemetry)(shadowInput, shadowExec).catch(() => undefined);
+                    if (shadowExec.merged && shadowExec.httpOk) {
+                        const grShadow = (0, conversation_policy_service_1.applyReplyGuardrails)(shadowExec.merged.draftReply, guardrailFallbackMessage, incomingRaw, shadowExec.merged.confidence, confidenceThreshold);
+                        if (!grShadow.blocked) {
+                            message = grShadow.message;
+                        }
+                    }
+                }
             }
         }
     }

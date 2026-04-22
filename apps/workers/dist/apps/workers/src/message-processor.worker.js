@@ -14,6 +14,7 @@ const stock_reservation_service_1 = require("./services/stock-reservation.servic
 const tenant_knowledge_service_1 = require("./services/tenant-knowledge.service");
 const conversation_policy_service_1 = require("./services/conversation-policy.service");
 const src_3 = require("../../../packages/shared/src");
+const shadow_compare_service_1 = require("./services/shadow-compare.service");
 const intentDetection = new intent_detection_service_1.IntentDetectionService();
 const productMatcher = new product_matcher_service_1.ProductMatcherService();
 const leadClassifier = new lead_classifier_service_1.LeadClassifierService();
@@ -319,6 +320,11 @@ exports.messageProcessorWorker = new bullmq_1.Worker(src_1.QueueNames.incomingMe
             needsClarificationForAxes ||
             hasUnavailableCombination ||
             forceLeadWorkerForReservedPaymentFollowUp;
+        const crewOrchestrateFirstConfigured = String(process.env.LLM_SHADOW_COMPARE_URL ?? "").trim().length > 0 &&
+            (0, shadow_compare_service_1.isWasellerCrewPrimaryEnabled)() &&
+            (0, shadow_compare_service_1.isWasellerCrewOrchestrateFirstEnabled)();
+        const preferOrchestratorForCrewContext = crewOrchestrateFirstConfigured && !forceLeadWorkerForReservedPaymentFollowUp;
+        const routeThroughOrchestratorFirst = llmPolicy.enabled && (!shouldHandleInLeadWorker || preferOrchestratorForCrewContext);
         const hadActiveReservation = !leadWasClosed &&
             Boolean(existingLead?.hasStockReservation) &&
             (!existingLead?.reservationExpiresAt || new Date(existingLead.reservationExpiresAt).getTime() > Date.now());
@@ -522,7 +528,7 @@ exports.messageProcessorWorker = new bullmq_1.Worker(src_1.QueueNames.incomingMe
         const conversationState = shouldPreserveClosedSale ? "lead_closed" : leadWasClosed ? "open" : conversation?.state ?? "open";
         const botPaused = conversationState === "manual_paused";
         if (!botPaused && isBusinessRelated && lead) {
-            if (llmPolicy.enabled && !shouldHandleInLeadWorker) {
+            if (routeThroughOrchestratorFirst) {
                 const llmJob = {
                     schemaVersion: src_1.JOB_SCHEMA_VERSION,
                     correlationId: job.data.correlationId,
@@ -573,7 +579,8 @@ exports.messageProcessorWorker = new bullmq_1.Worker(src_1.QueueNames.incomingMe
                     stockReserved: reserved,
                     conversationStage: ruleInterpretation.conversationStage,
                     activeOffer,
-                    interpretation: ruleInterpretation
+                    interpretation: ruleInterpretation,
+                    memoryFacts: memory.facts ?? {}
                 }, {
                     jobId: `lead_${leadDedupe}`
                 });

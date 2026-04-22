@@ -168,6 +168,24 @@ export class IntentDetectionService {
     if (asksAlternative) return "pedir_alternativa";
     if (rejectsOffer) return "rechazar_oferta";
     if (acceptsOffer) return "aceptar_oferta";
+
+    // Preguntas de catálogo (color/talle) deben ir antes de `choosesVariantByReference`: ese heurístico
+    // trata cualquier mensaje corto con "color"/"talle" como elección de variante ("la negra", etc.),
+    // y frases como "que colores tenes?" quedarían como `elegir_variante` en lugar de `consultar_*`.
+    const asksWhichColors =
+      /\b(que|cuales)\s+(color|colores)\b/.test(text) ||
+      /\b(color|colores)\s+(tenes|tienen|hay|manejan)\b/.test(text) ||
+      /\bde\s+que\s+(color|colores)\b/.test(text) ||
+      /\botros\s+(color|colores)\b/.test(text) ||
+      /\b(que|cuales)\s+otros\s+(color|colores)\b/.test(text);
+    if (asksWhichColors) return "consultar_color";
+
+    const asksWhichTalles =
+      /\b(que|cuales)\s+(talle|talles|talla|tallas)\b/.test(text) ||
+      /\b(talle|talles|talla|tallas)\s+(tenes|tienen|hay)\b/.test(text) ||
+      /\bde\s+que\s+(talle|talles|talla|tallas)\b/.test(text);
+    if (asksWhichTalles) return "consultar_talle";
+
     if (choosesVariantByReference) return text.includes("color") || /la\s+\w+/.test(text) ? "elegir_variante" : "consultar_talle";
 
     const confirmPhrases = [

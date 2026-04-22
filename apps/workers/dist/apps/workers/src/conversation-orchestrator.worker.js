@@ -162,7 +162,10 @@ exports.conversationOrchestratorWorker = new bullmq_1.Worker(src_2.QueueNames.ll
             tenantBusinessCategory: tenantKnowledge.profile.businessCategory,
             stockTableProductId,
             stockTableRagProductIds: ragProductIdsForCrew.length > 0 ? ragProductIdsForCrew : null,
-            tenantBrief: crewTenantBrief
+            tenantBrief: crewTenantBrief,
+            activeOffer: job.data.activeOffer ?? null,
+            memoryFacts: job.data.memoryFacts ?? {},
+            conversationStage: job.data.conversationStage ?? interpreted.conversationStage
         }).catch(() => null);
         if (crewPrimary) {
             llmDecision = crewPrimary.decision;
@@ -205,7 +208,7 @@ exports.conversationOrchestratorWorker = new bullmq_1.Worker(src_2.QueueNames.ll
             !incomingText
                 .toLowerCase()
                 .includes(String(llmDecision.entities.productName).toLowerCase()));
-        const effectiveDecision = {
+        let effectiveDecision = {
             ...llmDecision,
             draftReply: guardrails.message,
             nextAction: recommendedAction,
@@ -235,6 +238,54 @@ exports.conversationOrchestratorWorker = new bullmq_1.Worker(src_2.QueueNames.ll
                 ])
             ]
         };
+        if (shadowMode && !crewPrimaryApplied && !(0, shadow_compare_service_1.isWasellerCrewPrimaryEnabled)()) {
+            const shadowInput = {
+                tenantId,
+                leadId,
+                conversationId,
+                messageId,
+                correlationId,
+                dedupeKey,
+                phone,
+                incomingText,
+                interpretation: interpreted,
+                baselineDecision: effectiveDecision,
+                recentMessages: recentChronologicalForCrew,
+                tenantBusinessCategory: tenantKnowledge.profile.businessCategory,
+                stockTableProductId,
+                stockTableRagProductIds: ragProductIdsForCrew.length > 0 ? ragProductIdsForCrew : null,
+                tenantBrief: crewTenantBrief,
+                activeOffer: job.data.activeOffer ?? null,
+                memoryFacts: job.data.memoryFacts ?? {},
+                conversationStage: job.data.conversationStage ?? interpreted.conversationStage
+            };
+            const shadowExec = await (0, shadow_compare_service_1.executeShadowCompareRequest)(shadowInput);
+            if (shadowExec) {
+                await (0, shadow_compare_service_1.persistShadowCompareTelemetry)(shadowInput, shadowExec).catch(() => undefined);
+                if (shadowExec.merged && shadowExec.httpOk) {
+                    const grShadow = (0, conversation_policy_service_1.applyReplyGuardrails)(shadowExec.merged.draftReply, guardrailFallbackMessage, incomingText, shadowExec.merged.confidence, effectiveConfidenceThreshold);
+                    if (!grShadow.blocked) {
+                        effectiveDecision = {
+                            ...effectiveDecision,
+                            draftReply: grShadow.message,
+                            intent: shadowExec.merged.intent ?? effectiveDecision.intent,
+                            confidence: shadowExec.merged.confidence,
+                            reason: shadowExec.merged.reason ?? effectiveDecision.reason,
+                            source: shadowExec.merged.source,
+                            provider: shadowExec.merged.provider,
+                            model: shadowExec.merged.model,
+                            entities: shadowExec.merged.entities ?? effectiveDecision.entities,
+                            qualityFlags: Array.from(new Set([
+                                ...(effectiveDecision.qualityFlags ?? []),
+                                ...(shadowExec.merged.qualityFlags ?? []),
+                                ...grShadow.flags,
+                                "shadow_compare_customer_applied"
+                            ]))
+                        };
+                    }
+                }
+            }
+        }
         const activeOffer = (0, conversation_policy_service_1.buildActiveOfferSnapshot)({
             existing: job.data.activeOffer ?? null,
             productName: typeof interpreted.entities.productName === "string" ? interpreted.entities.productName : job.data.activeOffer?.productName,
@@ -324,7 +375,8 @@ exports.conversationOrchestratorWorker = new bullmq_1.Worker(src_2.QueueNames.ll
                     conversationDiagnostics: {
                         baselineEchoesLastOutgoing,
                         recentMessageTurns: recentMessages.length,
-                        crewPrimaryApplied
+                        crewPrimaryApplied,
+                        shadowCompareCustomerApplied: effectiveDecision.qualityFlags?.includes("shadow_compare_customer_applied")
                     }
                 },
                 response: effectiveDecision,
@@ -334,25 +386,6 @@ exports.conversationOrchestratorWorker = new bullmq_1.Worker(src_2.QueueNames.ll
                 handoffRequired: effectiveDecision.handoffRequired
             }
         });
-        if (shadowMode && !crewPrimaryApplied) {
-            void (0, shadow_compare_service_1.logShadowExternalCompareIfConfigured)({
-                tenantId,
-                leadId,
-                conversationId,
-                messageId,
-                correlationId,
-                dedupeKey,
-                phone,
-                incomingText,
-                interpretation: interpreted,
-                baselineDecision: effectiveDecision,
-                recentMessages: recentChronologicalForCrew,
-                tenantBusinessCategory: tenantKnowledge.profile.businessCategory,
-                stockTableProductId,
-                stockTableRagProductIds: ragProductIdsForCrew.length > 0 ? ragProductIdsForCrew : null,
-                tenantBrief: crewTenantBrief
-            }).catch(() => undefined);
-        }
         await src_1.prisma.llmTrace.create({
             data: {
                 tenantId,

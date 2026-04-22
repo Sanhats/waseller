@@ -116,6 +116,8 @@ export type LeadProcessingJobV1 = {
   conversationId?: string | null;
   /** Política LLM del tenant en el momento del encolado (solo ruta directa lead). */
   executionMode?: "shadow" | "active";
+  /** Hechos de memoria (ruta lead directa → POST waseller-crew / shadow). */
+  memoryFacts?: Record<string, unknown>;
 };
 
 export type LlmOrchestrationJobV1 = {

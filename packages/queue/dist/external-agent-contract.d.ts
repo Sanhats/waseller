@@ -149,6 +149,39 @@ export declare const conversationInterpretationV1JsonSchema: {
                 readonly type: "string";
             };
         };
+        readonly activeOfferDigest: {
+            readonly type: "string";
+            readonly maxLength: 2000;
+        };
+        readonly closingGaps: {
+            readonly type: "array";
+            readonly items: {
+                readonly type: "string";
+                readonly maxLength: 220;
+            };
+        };
+        readonly memoryFactsDigest: {
+            readonly type: "object";
+            readonly additionalProperties: {
+                readonly oneOf: readonly [{
+                    readonly type: "string";
+                }, {
+                    readonly type: "number";
+                }, {
+                    readonly type: "boolean";
+                }, {
+                    readonly type: "null";
+                }];
+            };
+        };
+        readonly baselineLeadStage: {
+            readonly type: "string";
+            readonly enum: readonly string[];
+        };
+        readonly baselineRecommendedAction: {
+            readonly type: "string";
+            readonly maxLength: 400;
+        };
     };
 };
 /**

@@ -3,11 +3,13 @@
 **Estado:** cuerpo opcional + Bearer **implementados en Waseller** (`shadow-compare.service.ts` + orquestador). **waseller-crew** confirmó que **acepta** `stockTable` (hasta 500 filas, modelo flexible alineado a filas tipo `GET /products`) y `businessProfileSlug` con el patrón seguro documentado abajo; valida `Authorization: Bearer` contra `SHADOW_COMPARE_SECRET` cuando `SHADOW_COMPARE_REQUIRE_AUTH=true` (recomendado en prod; mismo valor que `LLM_SHADOW_COMPARE_SECRET` en workers).  
 **Compatibilidad:** `schemaVersion` y `kind` **sin cambio** respecto a v1; los campos nuevos son **opcionales**. Los clientes que solo implementaron v1 siguen siendo válidos.
 
-**Documentación cruzada:** en el repo **waseller-crew** el archivo `docs/CONTRATO_HTTP_V1_1.md` describe el mismo contrato y **remite a este documento** como referencia de lo que serializa Waseller (main). Aquí se mantiene la descripción orientada al monorepo Waseller.
+**Documentación cruzada:** en el repo **waseller-crew** el archivo `docs/CONTRATO_HTTP_V1_1.md` describe el mismo contrato (tabla ampliada, checklist §5, fixture `fixtures/request.mesa_colores.json`, test `test_mesa_colores_fixture_parses_and_posts`) y **remite a este documento** como referencia de lo que serializa Waseller (main). **Paridad de campos opcionales:** los nombres y límites de `etapa`, `activeOffer`, `memoryFacts` (raíz) y el uso de `tenantBrief` coinciden con el `ShadowCompareRequest` del crew; Waseller también enriquece `interpretation` con digests (§1.1) para compatibilidad y menor token count donde aplica.
 
 **Resumen operativo:** Waseller envía **body extendido + Bearer opcional**; URL del crew: `POST /shadow-compare` o **`POST /v1/shadow-compare`** (mismo contrato). El crew no impone un timeout HTTP más agresivo que el de la plataforma; el volumen de 500 filas afecta sobre todo el tiempo del LLM (CrewAI). Si los workers ven **abortos por timeout**, subir **`LLM_SHADOW_COMPARE_TIMEOUT_MS`** en el servicio de workers (Railway, etc.).
 
 **Modo primary (`WASELLER_CREW_PRIMARY=true`):** los workers llaman **una vez** al mismo endpoint; si la respuesta incluye `candidateDecision.draftReply` válido, **reemplazan** la decisión del LLM interno (OpenAI/self-hosted) antes del verificador y guardrails. Con primary activo **no** se invoca el POST adicional de telemetría `shadow_compare` (evita dos `POST` con el mismo `correlationId` al crew). Solo queda la traza `trace_kind = crew_primary` en `llm_traces` para ese turno. En **shadow** (política de rollout), el texto al cliente puede seguir yendo por plantillas del lead worker salvo que operen en **active** y el flujo use el `draftReply` del LLM.
+
+**Orquestador primero (`WASELLER_CREW_ORCHESTRATE_FIRST=true`):** con LLM habilitado, `LLM_SHADOW_COMPARE_URL` y primary, el **message-processor** puede enrutar al **orquestador** turnos que antes iban solo al **lead** (p. ej. variante ya resuelta), para que el crew reciba intérprete + RAG + `stockTable` enriquecido. Cobro / reserva explícita puede seguir forzando lead; ver código en `message-processor.worker.ts`.
 
 **Tamaño del payload hacia el crew:** Waseller **recorta** textos y campos pesados en el JSON HTTP (mensaje entrante, `recentMessages`, `interpretation`, `baselineDecision`, filas de `stockTable` sin `tags` salvo configuración explícita). Los límites se ajustan con variables `LLM_SHADOW_COMPARE_MAX_*` (ver tabla en §2); defaults orientados a bajar tokens (~orden 10–20k) sin romper el contrato.
 
@@ -27,10 +29,27 @@ Todos **opcionales**. Tipos alineados a uso en workers / Prisma (strings UUID do
 | `stockTable` | `array` | Opcional | Filas alineadas a `GET /products` (misma forma por variante). **Solo variantes `is_active` con `availableStock > 0`.** Con `variantId` / producto en contexto: todas las variantes de ese **un** `productId` (tope 500). Sin producto único: Waseller arma candidatos por **RAG** (nombre similiar al mensaje, hasta 3 `productId`) + opcional `entities.productId` de la interpretación; **tope de filas** configurable (`LLM_SHADOW_COMPARE_STOCK_RAG_ROW_LIMIT`, default **30**). Si no hay alcance posible, **no** se envía `stockTable`. |
 | `inventoryNarrowingNote` | `string` | Opcional | Waseller envía **siempre** una nota en español que explica el alcance: producto único, multi-producto RAG, sin tabla por falta de contexto, o conjunto vacío tras filtros. waseller-crew la usa en el bloque de misión (`extra="ignore"` sigue aplicando a campos desconocidos). |
 | `businessProfileSlug` | `string` | Opcional | Patrón seguro `[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}`. Waseller parte de `tenant_knowledge.business_category` y aplica **mapeo** a slugs del crew cuando hace falta (p. ej. `hogar_deco` → `muebles_deco`); valores como `indumentaria_calzado` o `repuestos_lubricentro` se envían tal cual si ya coinciden con el crew. |
-| `tenantBrief` | `object` | Opcional | Resumen del tenant para el agente: `businessName`, `businessCategory`, `businessLabels`, `tone`, `deliveryInfo`, `knowledgeUpdatedAt` (ISO), `payment` (métodos, `acceptsInstallments`, `transferAliasConfigured`), `shipping` (métodos, `zones`, `sameDay`), `policy` (reservas, horarios, notas, cambios/devoluciones). **Pydantic `extra="ignore"`** en crew: si el servicio aún no lo usa, no rompe. Definición TypeScript: `CrewTenantBriefV1` en `shadow-compare.service.ts`. |
+| `tenantBrief` | `object` | Opcional | Resumen estructurado del tenant para el agente: `businessName`, `businessCategory`, `businessLabels`, `tone`, `deliveryInfo`, `knowledgeUpdatedAt` (ISO), `payment`, `shipping`, `policy`, etc. **En waseller-crew** el modelo puede imponer tope de texto serializado (p. ej. ≤**2500** caracteres al volcar al kickoff); Waseller aplica `slimCrewTenantBriefForHttp` + variables `LLM_SHADOW_COMPARE_MAX_TENANT_BRIEF_*`. **Pydantic `extra="ignore"`** en crew. Definición TypeScript: `CrewTenantBriefV1` en `shadow-compare.service.ts`. |
 | `tenantCommercialContext` | `string` | Opcional | Texto plano (español) con el mismo contenido comercial que `tenantBrief`, pensado para **inyectar junto** al overlay `tenant_prompts/<businessProfileSlug>.txt` en waseller-crew. Waseller lo genera automáticamente cuando hay `tenantBrief` con señal; tope `LLM_SHADOW_COMPARE_MAX_TENANT_COMMERCIAL_CONTEXT_CHARS` (default **1400**). |
+| `etapa` | `string` | Opcional | Fase del embudo Waseller (`ConversationStageV1`), p. ej. `variant_offered`, `waiting_variant`. **Tope enviado por Waseller:** **500** caracteres (literal del enum). Alineado al campo `etapa` del crew (≤500). |
+| `activeOffer` | `object` | Opcional | Última oferta / deal en curso: JSON flexible (`productName`, `variantId`, `attributes`, `price`, `availableStock`, `alternativeVariants`, `expectedCustomerAction`, …). Waseller lo **serializa en raíz** cuando hay señal (`activeOfferHasSignal`), con recorte de listas/atributos. **Prioridad ante conflicto con texto libre:** el inventario canónico sigue siendo **`stockTable`**; el crew debe documentar en prompts que **`stockTable` gana** sobre suposiciones del `activeOffer` o del baseline si hay discrepancia (ver README del crew: `_sales_and_stock_rules`). |
+| `memoryFacts` | `string[]` | Opcional | Hechos de memoria del lead como **lista de strings** (formato Waseller: `"clave: valor"` por ítem). **Tope enviado por Waseller:** hasta **40** ítems, cada string ≤**400** caracteres (configurable con `LLM_SHADOW_COMPARE_MAX_MEMORY_FACT_LINES` y `LLM_SHADOW_COMPARE_MAX_MEMORY_FACT_LINE_CHARS`). Además, Waseller sigue enviando un digest objeto en `interpretation.memoryFactsDigest` cuando aplica (ver §1.1). |
 
 **No** se cambia en v1.1: `schemaVersion`, `kind`, `tenantId`, `leadId`, `incomingText`, `interpretation`, `baselineDecision` (siguen como hoy).
+
+### 1.1. Enriquecimiento embebido en `interpretation` (Waseller → crew)
+
+Además de los campos raíz anteriores, `assembleShadowCompareOutboundBody` construye una **`interpretation` enriquecida** antes del recorte HTTP:
+
+| Campo dentro de `interpretation` | Uso |
+|----------------------------------|-----|
+| `conversationStage` | Igual que `etapa` en sentido semántico; se rellena desde el job / interpretación base. |
+| `activeOfferDigest` | Resumen textual compacto de `activeOffer` (precio, stock, atributos, acción esperada). |
+| `closingGaps` | Pendientes y brechas respecto al baseline / oferta. |
+| `memoryFactsDigest` | Objeto clave → valor **acotado** derivado de `memoryFacts` del job (distinto del array `memoryFacts` en raíz). |
+| `baselineLeadStage` / `baselineRecommendedAction` | Contexto del baseline Waseller. |
+
+El crew puede consumir **solo** la raíz, **solo** el digest embebido, o ambos (`extra="ignore"` en claves no usadas). Los prompts del crew (`_waseller_negotiation_context_block`, etc.) deben listar prioridades explícitas (**`stockTable` > `activeOffer` / digest** ante conflicto).
 
 ---
 
@@ -61,7 +80,10 @@ Todos **opcionales**. Tipos alineados a uso en workers / Prisma (strings UUID do
 | `LLM_SHADOW_COMPARE_INCLUDE_STOCK_IMAGE_URL` | Opcional | Si es `true`/`1`/`yes`, incluye `imageUrl` en filas de stock (por defecto **no**, para ahorrar tokens). |
 | `LLM_SHADOW_COMPARE_MAX_TENANT_BRIEF_*` | Opcional | Límites de caracteres / listas para el objeto `tenantBrief` (nombre, delivery, notas de política, tono, labels; ver código en `slimCrewTenantBriefForHttp`). |
 | `LLM_SHADOW_COMPARE_MAX_TENANT_COMMERCIAL_CONTEXT_CHARS` | Opcional | Tope de `tenantCommercialContext` (default **1400**). |
+| `LLM_SHADOW_COMPARE_MAX_MEMORY_FACT_LINES` | Opcional | Máximo de strings en el array raíz `memoryFacts` (default **40**, rango 1–40). |
+| `LLM_SHADOW_COMPARE_MAX_MEMORY_FACT_LINE_CHARS` | Opcional | Máximo de caracteres por string en `memoryFacts[]` (default **400**, rango 80–400). |
 | `WASELLER_CREW_PRIMARY` | Opcional | `true`/`1`/`yes`: el crew **reemplaza** la decisión interna antes del verificador (misma URL que shadow). |
+| `WASELLER_CREW_ORCHESTRATE_FIRST` | Opcional | `true`/`1`/`yes`: con LLM habilitado y URL + primary configurados, el **message-processor** enruta también turnos con variante resuelta al **orquestador** primero (intérprete + RAG + crew). Ver `README.md` y `message-processor.worker.ts`. |
 | `CREW_PRIMARY_RELAX_GUARDRAILS` | Opcional | Default **true** cuando primary aplicó: baja el umbral efectivo de confianza para `applyReplyGuardrails` y `requiresHuman` (ver `CREW_PRIMARY_GUARDRAIL_CONFIDENCE_FLOOR`). |
 | `CREW_PRIMARY_GUARDRAIL_CONFIDENCE_FLOOR` | Opcional | Suelo mínimo (default **0.55**) usado junto al `llmConfidenceThreshold` del tenant cuando `CREW_PRIMARY_RELAX_GUARDRAILS` está activo. |
 
@@ -165,11 +187,21 @@ Mismo núcleo que arriba **más** campos opcionales (ejemplo ilustrativo):
     }
   ],
   "interpretation": { },
+  "etapa": "variant_offered",
+  "activeOffer": {
+    "productName": "Mesa de algarrobo",
+    "variantId": "…",
+    "attributes": { "talle": "L", "color": "marrón claro" },
+    "price": 195000,
+    "availableStock": 2,
+    "expectedCustomerAction": "Elegir color o confirmar reserva"
+  },
+  "memoryFacts": ["lastAction: variant_offered", "productName: Mesa de algarrobo"],
   "baselineDecision": { }
 }
 ```
 
-(`interpretation` y `baselineDecision` van completos como en v1; aquí se omiten por brevedad.)
+(`interpretation` y `baselineDecision` van completos como en v1; aquí se omiten por brevedad. Ejemplo completo de diálogo **mesa → colores**: fixture en esta carpeta [`fixtures/request.mesa_colores.json`](./fixtures/request.mesa_colores.json) y, en el repo **waseller-crew**, el fixture / test homónimos descritos en `docs/CONTRATO_HTTP_V1_1.md` §5.)
 
 ---
 
@@ -177,9 +209,9 @@ Mismo núcleo que arriba **más** campos opcionales (ejemplo ilustrativo):
 
 | Lado | Tarea |
 |------|--------|
-| **Waseller** | Hecho: opcionales + Bearer en `logShadowExternalCompareIfConfigured`; orquestador enriquece `recentMessages` con último bot vía `bot_response_events` si falta el `outgoing` en `messages` (carrera con sender); acota `stockTable` al producto en contexto; `inventoryNarrowingNote` si una sola fila; traza `reply` con `conversationDiagnostics.baselineEchoesLastOutgoing`; lead worker ajusta seguimientos en shadow; `infra/env/.env.example` documenta `LLM_SHADOW_COMPARE_SECRET`. |
-| **waseller-crew** | **Hecho:** ver **§7** (paridad detallada). Repo: `docs/CONTRATO_HTTP_V1_1.md` (incl. observabilidad §4.2), `fixtures/request.v1_1.example.json`, tests API. **Mejora continua de conversación:** ver **§8** (prompt / anti-eco / volumen / catálogo). |
-| **Ops** | Mismo valor en `LLM_SHADOW_COMPARE_SECRET` (workers) y `SHADOW_COMPARE_SECRET` (crew); prod con `SHADOW_COMPARE_REQUIRE_AUTH=true`. Tráfico **2xx** tras deploy: verificar con smoke en shadow + logs Railway (workers y crew) o métricas del balanceador. |
+| **Waseller** | Hecho: opcionales + Bearer; raíz **`etapa`**, **`activeOffer`**, **`memoryFacts`** (array) en `assembleShadowCompareOutboundBody`; `interpretation` enriquecida (§1.1); orquestador y lead enriquecen `recentMessages`; `stockTable` + `inventoryNarrowingNote`; `tenantBrief` + `tenantCommercialContext`; `WASELLER_CREW_ORCHESTRATE_FIRST` en `message-processor.worker.ts`; `infra/env/.env.example`. **Smoke:** `curl` con [`fixtures/request.mesa_colores.json`](./fixtures/request.mesa_colores.json) → `draftReply` no vacío en crew. |
+| **waseller-crew** | **Hecho (repo crew):** `ShadowCompareRequest` con `tenantBrief`, `etapa`, `activeOffer`, `memoryFacts` + prompts (`_sales_and_stock_rules`, `_waseller_negotiation_context_block`); `docs/CONTRATO_HTTP_V1_1.md` + `docs/integrations/waseller-crew/README.md` + `docs/GUIA_INTEGRACION_WASELLER_MAIN.md`; fixture `fixtures/request.mesa_colores.json`; test `test_mesa_colores_fixture_parses_and_posts` (Pydantic + POST **200** + `draftReply` con stub). **Mejora continua:** ver **§8**. |
+| **Ops** | Mismo valor en `LLM_SHADOW_COMPARE_SECRET` (workers) y `SHADOW_COMPARE_SECRET` (crew); `LLM_SHADOW_COMPARE_TIMEOUT_MS` acorde al tamaño de `stockTable`; prod con `SHADOW_COMPARE_REQUIRE_AUTH=true`. Tráfico **2xx** tras deploy: smoke mesa→colores + logs workers/crew. |
 
 ---
 
@@ -198,7 +230,7 @@ Lo siguiente está **implementado en el repo waseller-crew** (no en este monorep
 |------|----------------|
 | **HTTP** | `POST /shadow-compare` y `POST /v1/shadow-compare` — mismo handler, mismo `ShadowCompareRequest` / respuesta. |
 | **Pydantic** | `model_config = ConfigDict(extra="ignore")` — campos futuros de Waseller no rompen el POST. |
-| **Opcionales** | `stockTable` (≤500), `businessProfileSlug`, **`inventoryNarrowingNote`** (Waseller puede enviarlo cuando aplica), `recentMessages`, `phone`, ids, etc. |
+| **Opcionales** | `stockTable` (≤500), `businessProfileSlug`, **`inventoryNarrowingNote`**, `tenantBrief`, `tenantCommercialContext`, **`etapa`**, **`activeOffer`**, **`memoryFacts`** (array), `recentMessages`, `phone`, ids, etc. |
 | **Auth** | `SHADOW_COMPARE_SECRET` + `SHADOW_COMPARE_REQUIRE_AUTH` (p. ej. `Depends(check_shadow_compare_bearer)`). |
 | **Respuesta** | Instrucciones al LLM para `draftReply` no vacío en modo primary; si el crew devuelve vacío y el baseline tiene `draftReply`, enriquecimiento desde baseline + log **`shadow_compare_empty_draft_filled_from_baseline`**. `nextAction` sigue coaccionándose a enums válidos. |
 | **Agente** | Sin inventar catálogo; `stockTable` + baseline como contexto; `inventoryNarrowingNote` en bloque de misión; `businessProfileSlug` → `tenant_prompts/<slug>.txt`; reglas de seguimiento / anti-repetición en prompt. |

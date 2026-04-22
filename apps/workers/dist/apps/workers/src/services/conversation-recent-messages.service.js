@@ -1,5 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.normalizeSnippet = void 0;
+exports.injectLastOutgoingMessageForCrew = injectLastOutgoingMessageForCrew;
 exports.enrichRecentMessagesWithLastBotReply = enrichRecentMessagesWithLastBotReply;
 exports.replySimilarity = replySimilarity;
 const src_1 = require("../../../../packages/db/src");
@@ -9,6 +11,44 @@ const normalizeSnippet = (value) => value
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/\s+/g, " ");
+exports.normalizeSnippet = normalizeSnippet;
+/**
+ * Garantiza que, si el último turno es un incoming, el hilo incluya el **último outgoing real**
+ * persistido en `messages` (no solo `bot_response_events`). Así cada POST shadow-compare puede
+ * detectar eco / duplicado respecto del texto que el cliente ya recibió por WhatsApp.
+ */
+async function injectLastOutgoingMessageForCrew(tenantId, phone, chronological) {
+    const phoneTrim = String(phone ?? "").trim();
+    if (!tenantId || !phoneTrim)
+        return chronological;
+    const chrono = chronological.filter((m) => String(m?.message ?? "").trim());
+    if (chrono.length === 0)
+        return chronological;
+    let lastOutgoingText = "";
+    try {
+        const row = await src_1.prisma.message.findFirst({
+            where: { tenantId, phone: phoneTrim, direction: "outgoing" },
+            orderBy: { createdAt: "desc" },
+            select: { message: true }
+        });
+        lastOutgoingText = String(row?.message ?? "").trim();
+    }
+    catch {
+        return chronological;
+    }
+    if (!lastOutgoingText)
+        return chronological;
+    const last = chrono[chrono.length - 1];
+    if (last.direction !== "incoming")
+        return chrono;
+    const before = chrono.slice(0, -1);
+    const outgoingNorm = (0, exports.normalizeSnippet)(lastOutgoingText);
+    const alreadyPresent = before.some((m) => m.direction === "outgoing" && (0, exports.normalizeSnippet)(m.message) === outgoingNorm);
+    if (alreadyPresent)
+        return chrono;
+    const trimmed = [...before, { direction: "outgoing", message: lastOutgoingText }, last].slice(-8);
+    return trimmed;
+}
 /**
  * El `Message` saliente se persiste en `sender.worker` después del envío; el orquestador
  * puede correr antes y ver solo entradas seguidas. Completamos con el último texto bot
@@ -34,8 +74,8 @@ async function enrichRecentMessagesWithLastBotReply(tenantId, phone, recentDesc)
         const botMsg = String(rows[0]?.message ?? "").trim();
         if (!botMsg)
             return recentDesc;
-        const outgoingNorms = new Set(chrono.filter((m) => m.direction === "outgoing").map((m) => normalizeSnippet(m.message)));
-        if (outgoingNorms.has(normalizeSnippet(botMsg)))
+        const outgoingNorms = new Set(chrono.filter((m) => m.direction === "outgoing").map((m) => (0, exports.normalizeSnippet)(m.message)));
+        if (outgoingNorms.has((0, exports.normalizeSnippet)(botMsg)))
             return recentDesc;
         const injected = { direction: "outgoing", message: botMsg };
         const mergedChrono = [...chrono.slice(0, -1), injected, last];
@@ -47,8 +87,8 @@ async function enrichRecentMessagesWithLastBotReply(tenantId, phone, recentDesc)
     }
 }
 function replySimilarity(a, b) {
-    const na = normalizeSnippet(a);
-    const nb = normalizeSnippet(b);
+    const na = (0, exports.normalizeSnippet)(a);
+    const nb = (0, exports.normalizeSnippet)(b);
     if (!na || !nb)
         return 0;
     if (na === nb)

@@ -1183,6 +1183,7 @@ export const leadWorker = new Worker<LeadProcessingJobV1>(
           stockTableProductId,
           tenantBrief: crewTenantBrief,
           activeOffer: job.data.activeOffer ?? null,
+          memoryFacts: job.data.memoryFacts ?? {},
           conversationStage: job.data.conversationStage ?? interpretation.conversationStage
         }).catch(() => null);
         if (crewPrimary) {
@@ -1234,6 +1235,7 @@ export const leadWorker = new Worker<LeadProcessingJobV1>(
             stockTableProductId,
             tenantBrief: crewTenantBrief,
             activeOffer: job.data.activeOffer ?? null,
+            memoryFacts: job.data.memoryFacts ?? {},
             conversationStage: job.data.conversationStage ?? interpretation.conversationStage
           };
           const shadowExec = await executeShadowCompareRequest(shadowInput);
