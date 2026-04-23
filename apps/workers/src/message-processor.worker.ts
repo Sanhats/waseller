@@ -31,6 +31,7 @@ import {
 } from "./services/conversation-policy.service";
 import { getWhatsappServiceBaseUrl } from "../../../packages/shared/src";
 import {
+  isWasellerCrewConversationDelegationActiveForTenant,
   isWasellerCrewOrchestrateFirstEnabled,
   isWasellerCrewPrimaryEnabled,
   isWasellerCrewSoleModeEnabled
@@ -299,6 +300,9 @@ export const messageProcessorWorker = new Worker<IncomingMessageJobV1>(
 
       const memory = await loadLeadMemory(tenantId, existingLead?.id);
       const tenantKnowledge = await tenantKnowledgeService.getWithRulePack(tenantId);
+      const crewConversationDelegationActive = isWasellerCrewConversationDelegationActiveForTenant(
+        tenantKnowledge.profile
+      );
       const matched = (await productMatcher.matchByMessage(tenantId, payload.message, {
         previousProductName: existingLead?.product ?? memory.productName ?? memory.activeOffer?.productName,
         previousProductConfidence: memory.confidence,
@@ -420,7 +424,8 @@ export const messageProcessorWorker = new Worker<IncomingMessageJobV1>(
       const preferOrchestratorForCrewContext =
         crewOrchestrateFirstConfigured && !forceLeadWorkerForReservedPaymentFollowUp;
       const routeThroughOrchestratorFirst =
-        llmPolicy.enabled && (!shouldHandleInLeadWorker || preferOrchestratorForCrewContext);
+        (llmPolicy.enabled || crewConversationDelegationActive) &&
+        (!shouldHandleInLeadWorker || preferOrchestratorForCrewContext || crewConversationDelegationActive);
       const hadActiveReservation =
         !leadWasClosed &&
         Boolean(existingLead?.hasStockReservation) &&

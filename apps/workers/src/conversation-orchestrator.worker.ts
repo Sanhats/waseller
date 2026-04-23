@@ -37,13 +37,15 @@ import {
   buildCrewTenantBriefFromProfile,
   executeShadowCompareRequest,
   extractInterpretationProductId,
+  isWasellerCrewConversationDelegationActiveForTenant,
   isWasellerCrewPrimaryEnabled,
   isWasellerCrewSoleModeEnabled,
   mergeCrewCandidateInterpretation,
   persistShadowCompareTelemetry,
   resolveCrewPrimaryEffectiveConfidenceThreshold,
   resolveProductIdForTenantVariant,
-  tryWasellerCrewPrimaryReplacement
+  tryWasellerCrewPrimaryReplacement,
+  wasellerCrewDelegatesConversation
 } from "./services/shadow-compare.service";
 
 const orchestratorMetrics = new QueueMetricsService(QueueNames.llmOrchestration);
@@ -138,7 +140,11 @@ export const conversationOrchestratorWorker = new Worker<LlmOrchestrationJobV1>(
       const guardrailFallbackMessage =
         (await templateService.getTemplate(tenantId, "orchestrator_guardrail_handoff")) ||
         "Quiero asegurarme de darte la mejor respuesta. Te paso con un asesor para confirmar los detalles y ayudarte a cerrar la compra.";
-      const crewSole = isWasellerCrewSoleModeEnabled();
+      const crewConversationDelegationActive =
+        isWasellerCrewConversationDelegationActiveForTenant(tenantKnowledge.profile);
+      const allowCrewPrimaryPost =
+        isWasellerCrewPrimaryEnabled() || isWasellerCrewSoleModeEnabled() || crewConversationDelegationActive;
+      const crewSole = isWasellerCrewSoleModeEnabled() || crewConversationDelegationActive;
       let interpreted: ConversationInterpretationV1;
       let llmDecision: LlmDecisionV1;
       if (crewSole) {
@@ -220,26 +226,28 @@ export const conversationOrchestratorWorker = new Worker<LlmOrchestrationJobV1>(
       const crewTenantBrief = buildCrewTenantBriefFromProfile(tenantKnowledge.profile, {
         knowledgeUpdatedAt: tenantKnowledge.knowledgeUpdatedAt
       });
-      const crewPrimary = await tryWasellerCrewPrimaryReplacement({
-        tenantId,
-        leadId,
-        conversationId,
-        messageId,
-        correlationId,
-        dedupeKey,
-        phone,
-        incomingText,
-        interpretation: interpreted,
-        baselineDecision: llmDecision,
-        recentMessages: recentChronologicalForCrew,
-        tenantBusinessCategory: tenantKnowledge.profile.businessCategory,
-        stockTableProductId,
-        stockTableRagProductIds: ragProductIdsForCrew.length > 0 ? ragProductIdsForCrew : null,
-        tenantBrief: crewTenantBrief,
-        activeOffer: job.data.activeOffer ?? null,
-        memoryFacts: job.data.memoryFacts ?? {},
-        conversationStage: job.data.conversationStage ?? interpreted.conversationStage
-      }).catch(() => null);
+      const crewPrimary = allowCrewPrimaryPost
+        ? await tryWasellerCrewPrimaryReplacement({
+            tenantId,
+            leadId,
+            conversationId,
+            messageId,
+            correlationId,
+            dedupeKey,
+            phone,
+            incomingText,
+            interpretation: interpreted,
+            baselineDecision: llmDecision,
+            recentMessages: recentChronologicalForCrew,
+            tenantBusinessCategory: tenantKnowledge.profile.businessCategory,
+            stockTableProductId,
+            stockTableRagProductIds: ragProductIdsForCrew.length > 0 ? ragProductIdsForCrew : null,
+            tenantBrief: crewTenantBrief,
+            activeOffer: job.data.activeOffer ?? null,
+            memoryFacts: job.data.memoryFacts ?? {},
+            conversationStage: job.data.conversationStage ?? interpreted.conversationStage
+          }).catch(() => null)
+        : null;
       if (crewPrimary) {
         llmDecision = crewPrimary.decision;
         crewPrimaryApplied = true;
@@ -344,7 +352,7 @@ export const conversationOrchestratorWorker = new Worker<LlmOrchestrationJobV1>(
         ]
       };
 
-      if (shadowMode && !crewPrimaryApplied && !isWasellerCrewPrimaryEnabled() && !isWasellerCrewSoleModeEnabled()) {
+      if (shadowMode && !crewPrimaryApplied && !wasellerCrewDelegatesConversation()) {
         const shadowInput = {
           tenantId,
           leadId,

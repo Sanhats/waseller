@@ -38,6 +38,8 @@ import {
   buildCrewTenantBriefFromProfile,
   executeShadowCompareRequest,
   extractInterpretationProductId,
+  isWasellerCrewConversationDelegationActiveForTenant,
+  isWasellerCrewPrimaryEnabled,
   isWasellerCrewSoleModeEnabled,
   persistShadowCompareTelemetry,
   resolveCrewPrimaryEffectiveConfidenceThreshold,
@@ -637,6 +639,13 @@ export const leadWorker = new Worker<LeadProcessingJobV1>(
     const lead = await prisma.lead.findUnique({ where: { id: leadId } });
     if (!lead) return;
 
+    const tenantKnowledge = await tenantKnowledgeService.getWithRulePack(tenantId);
+    const crewConversationDelegationActive = isWasellerCrewConversationDelegationActiveForTenant(
+      tenantKnowledge.profile
+    );
+    const allowCrewPrimaryPost =
+      isWasellerCrewPrimaryEnabled() || isWasellerCrewSoleModeEnabled() || crewConversationDelegationActive;
+
     const effectiveVariantId =
       job.data.variantId && job.data.variantId.trim().length > 0 ? job.data.variantId : lead.productVariantId;
     const effectiveProductName =
@@ -736,7 +745,8 @@ export const leadWorker = new Worker<LeadProcessingJobV1>(
     const visibleAxes = filterAxesWithOptions(axisOptions, missingAxes);
     const rawIncoming = String(job.data.incomingMessage ?? "").trim();
     const incomingText = normalizeText(job.data.incomingMessage ?? "");
-    const shadowLlm = isLlmShadowDecision(job.data.llmDecision);
+    const shadowLlm =
+      isLlmShadowDecision(job.data.llmDecision) && !crewConversationDelegationActive;
     const wantsPaymentLink =
       incomingText.includes("link de pago") ||
       incomingText.includes("un link") ||
@@ -799,7 +809,9 @@ export const leadWorker = new Worker<LeadProcessingJobV1>(
     let selectedVariant = "fallback";
     const playbookIntent = resolvePlaybookIntent(job.data);
     const soleSkipConversationalTemplates =
-      isWasellerCrewSoleModeEnabled() && !job.data.llmDecision && !shadowLlm;
+      (isWasellerCrewSoleModeEnabled() || crewConversationDelegationActive) &&
+      !job.data.llmDecision &&
+      !shadowLlm;
 
     if (initialLlmDraft && job.data.llmDecision) {
       message = initialLlmDraft;
@@ -1202,7 +1214,6 @@ export const leadWorker = new Worker<LeadProcessingJobV1>(
         const guardrailFallbackMessage =
           (await templateService.getTemplate(tenantId, "orchestrator_guardrail_handoff")) ||
           "Quiero asegurarme de darte la mejor respuesta. Te paso con un asesor para confirmar los detalles y ayudarte a cerrar la compra.";
-        const tenantKnowledge = await tenantKnowledgeService.getWithRulePack(tenantId);
         const crewTenantBrief = buildCrewTenantBriefFromProfile(tenantKnowledge.profile, {
           knowledgeUpdatedAt: tenantKnowledge.knowledgeUpdatedAt
         });
@@ -1233,26 +1244,28 @@ export const leadWorker = new Worker<LeadProcessingJobV1>(
           soleLead && ragProductIdForCrew ? [ragProductIdForCrew] : null;
         const shadowMode = job.data.executionMode === "shadow";
         let crewPrimaryApplied = false;
-        const crewPrimary = await tryWasellerCrewPrimaryReplacement({
-          tenantId,
-          leadId,
-          conversationId: job.data.conversationId ?? undefined,
-          messageId,
-          correlationId: job.data.correlationId,
-          dedupeKey: crewDedupe,
-          phone,
-          incomingText: incomingRaw,
-          interpretation: interpretationForCrew,
-          baselineDecision,
-          recentMessages: recentChronologicalForCrew,
-          tenantBusinessCategory: tenantKnowledge.profile.businessCategory,
-          stockTableProductId,
-          stockTableRagProductIds: stockTableRagProductIdsForLead,
-          tenantBrief: crewTenantBrief,
-          activeOffer: job.data.activeOffer ?? null,
-          memoryFacts: job.data.memoryFacts ?? {},
-          conversationStage: job.data.conversationStage ?? interpretationForCrew.conversationStage
-        }).catch(() => null);
+        const crewPrimary = allowCrewPrimaryPost
+          ? await tryWasellerCrewPrimaryReplacement({
+              tenantId,
+              leadId,
+              conversationId: job.data.conversationId ?? undefined,
+              messageId,
+              correlationId: job.data.correlationId,
+              dedupeKey: crewDedupe,
+              phone,
+              incomingText: incomingRaw,
+              interpretation: interpretationForCrew,
+              baselineDecision,
+              recentMessages: recentChronologicalForCrew,
+              tenantBusinessCategory: tenantKnowledge.profile.businessCategory,
+              stockTableProductId,
+              stockTableRagProductIds: stockTableRagProductIdsForLead,
+              tenantBrief: crewTenantBrief,
+              activeOffer: job.data.activeOffer ?? null,
+              memoryFacts: job.data.memoryFacts ?? {},
+              conversationStage: job.data.conversationStage ?? interpretationForCrew.conversationStage
+            }).catch(() => null)
+          : null;
         if (crewPrimary) {
           const crewPrimaryThreshold = resolveCrewPrimaryEffectiveConfidenceThreshold(
             confidenceThreshold,

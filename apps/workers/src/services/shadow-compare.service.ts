@@ -966,6 +966,29 @@ export const isWasellerCrewSoleModeEnabled = (): boolean =>
 export const isWasellerCrewOrchestrateFirstEnabled = (): boolean =>
   /^(1|true|yes)$/i.test(String(process.env.WASELLER_CREW_ORCHESTRATE_FIRST ?? "").trim());
 
+/**
+ * Si hay `LLM_SHADOW_COMPARE_URL`, por defecto la conversación comercial se delega a waseller-crew
+ * (sin depender de `WASELLER_CREW_PRIMARY` / `WASELLER_CREW_SOLE_MODE`). Opt-out: `WASELLER_CREW_DELEGATE_CONVERSATION=false`.
+ * Sin URL nunca delega.
+ */
+export function wasellerCrewDelegatesConversation(): boolean {
+  const url = String(process.env.LLM_SHADOW_COMPARE_URL ?? "").trim();
+  if (!url) return false;
+  if (isWasellerCrewPrimaryEnabled() || isWasellerCrewSoleModeEnabled()) return true;
+  const raw = String(process.env.WASELLER_CREW_DELEGATE_CONVERSATION ?? "").trim();
+  if (/^(0|false|no)$/i.test(raw)) return false;
+  if (/^(1|true|yes)$/i.test(raw)) return true;
+  return true;
+}
+
+/**
+ * Delegación de conversación al crew (waseller-crew) cuando la URL está configurada.
+ * El perfil comercial incompleto se avisa en el dashboard; los workers no bloquean el crew por eso.
+ */
+export function isWasellerCrewConversationDelegationActiveForTenant(_profile: TenantBusinessProfile): boolean {
+  return wasellerCrewDelegatesConversation();
+}
+
 /** Shell de interpretación antes del POST al crew (reglas del processor o stub mínimo). */
 export function buildCrewSoleStubInterpretation(input: {
   intentHint?: string;
@@ -1513,14 +1536,13 @@ export type CrewPrimaryReplacementResult = {
 
 /**
  * Una sola llamada a waseller-crew: si responde con `candidateDecision.draftReply` válido, reemplaza la decisión
- * interna (OpenAI/self-hosted) **antes** del verificador y guardrails. Requiere `LLM_SHADOW_COMPARE_URL` y
- * `WASELLER_CREW_PRIMARY=true` **o** `WASELLER_CREW_SOLE_MODE=true` (este último implica llamada obligatoria al crew
- * desde el orquestador con baseline stub). No lanza hacia arriba.
+ * interna (OpenAI/self-hosted) **antes** del verificador y guardrails. Requiere `LLM_SHADOW_COMPARE_URL`.
+ * Quien llama debe acotar con `isWasellerCrewConversationDelegationActiveForTenant` / PRIMARY / SOLE para no POSTear
+ * cuando no corresponde. No lanza hacia arriba.
  */
 export async function tryWasellerCrewPrimaryReplacement(
   input: ShadowCompareInput
 ): Promise<CrewPrimaryReplacementResult | null> {
-  if (!isWasellerCrewPrimaryEnabled() && !isWasellerCrewSoleModeEnabled()) return null;
   const url = String(process.env.LLM_SHADOW_COMPARE_URL ?? "").trim();
   if (!url) return null;
 
@@ -1551,8 +1573,8 @@ export async function tryWasellerCrewPrimaryReplacement(
  */
 export async function logShadowExternalCompareIfConfigured(input: ShadowCompareInput): Promise<void> {
   if (!String(process.env.LLM_SHADOW_COMPARE_URL ?? "").trim()) return;
-  if (isWasellerCrewPrimaryEnabled() || isWasellerCrewSoleModeEnabled()) {
-    // `tryWasellerCrewPrimaryReplacement` ya hizo POST al mismo endpoint con el mismo `correlationId`.
+  if (wasellerCrewDelegatesConversation()) {
+    // `tryWasellerCrewPrimaryReplacement` u orquestación crew ya hizo POST al mismo endpoint con el mismo `correlationId`.
     return;
   }
   try {

@@ -12,6 +12,7 @@ Esta carpeta en Waseller contiene todo el paquete para el **otro repo**:
 | [`fixtures/request.mesa_colores.json`](./fixtures/request.mesa_colores.json) | Diálogo **mesa → «¿Qué colores tenés?»** (`recentMessages`, `activeOffer`, `memoryFacts`, `etapa`, `stockTable`, …) para smoke / alinear con el test del repo **waseller-crew**. |
 | [`IMPLEMENTACION_MINIMA.md`](./IMPLEMENTACION_MINIMA.md) | Esqueleto FastAPI + stub `run_crew()` y `curl` de prueba. |
 | [`CONTRATO_V1_1.md`](./CONTRATO_V1_1.md) | Propuesta coordinada: body opcional + Bearer + ejemplos JSON (para PR en Waseller y alinear waseller-crew). |
+| [`SINCRONIZACION_CON_WASELLER.md`](./SINCRONIZACION_CON_WASELLER.md) | Checklist de alineación waseller-crew ↔ workers, contratos y datos enviados en el POST. |
 
 Podés copiar **toda la carpeta** `docs/integrations/waseller-crew/` al nuevo repositorio (como `docs/` o raíz del proyecto Python).
 
