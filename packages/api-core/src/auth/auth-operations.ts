@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
+import { slugifyTenantCatalogSlug } from "../tenant-catalog-slug";
 import type { UserRole } from "./types";
 import { createAuthToken, type AuthTokenEnv } from "./token";
 
@@ -171,6 +172,20 @@ export async function loginUser(
   };
 }
 
+async function reserveUniquePublicCatalogSlug(prisma: PrismaClient, tenantName: string): Promise<string> {
+  const root = slugifyTenantCatalogSlug(tenantName);
+  let candidate = root;
+  for (let n = 2; n < 10_000; n += 1) {
+    const taken = await prisma.tenant.findFirst({
+      where: { publicCatalogSlug: candidate },
+      select: { id: true }
+    });
+    if (!taken) return candidate;
+    candidate = `${root}-${n}`;
+  }
+  throw new Error("reserveUniquePublicCatalogSlug: demasiados intentos");
+}
+
 export async function registerTenantUser(
   prisma: PrismaClient,
   runtime: AuthRuntimeEnv,
@@ -234,13 +249,16 @@ export async function registerTenantUser(
     };
   }
 
+  const publicCatalogSlug = await reserveUniquePublicCatalogSlug(prisma, tenantName);
+
   let tenant: { id: string };
   let admin: { id: string; email: string };
   try {
     tenant = await prisma.tenant.create({
       data: {
         name: tenantName,
-        whatsappNumber
+        whatsappNumber,
+        publicCatalogSlug
       },
       select: { id: true }
     });

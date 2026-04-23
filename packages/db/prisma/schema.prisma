@@ -104,6 +104,8 @@ enum PaymentAttemptStatus {
 model Tenant {
   id               String         @id @default(uuid()) @db.Uuid
   name             String
+  /** Slug único para catálogo público `/tienda/[slug]`. */
+  publicCatalogSlug String?      @unique @map("public_catalog_slug")
   whatsappNumber   String         @map("whatsapp_number")
   plan             String         @default("starter")
   senderRateMs     Int            @default(500) @map("sender_rate_ms")

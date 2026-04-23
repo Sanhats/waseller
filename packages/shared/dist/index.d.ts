@@ -8,3 +8,4 @@ export * from "./mercado-pago";
 export * from "./conversation-labels";
 export * from "./whatsapp-service-url";
 export * from "./phone-variants";
+export * from "./tenant-catalog-slug";

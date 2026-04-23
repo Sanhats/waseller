@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.normalizeTenantBusinessProfile = exports.BUSINESS_PRESETS = exports.DEFAULT_TENANT_BUSINESS_PROFILE = exports.TENANT_BUSINESS_PROFILE_VERSION = void 0;
+exports.isTenantCrewCommercialContextComplete = isTenantCrewCommercialContextComplete;
 exports.TENANT_BUSINESS_PROFILE_VERSION = 1;
 const toArray = (value) => Array.isArray(value) ? value.map((item) => String(item).trim()).filter(Boolean) : [];
 const asBoolean = (value, fallback = false) => typeof value === "boolean" ? value : fallback;
@@ -12,7 +13,8 @@ const isBusinessCategory = (value) => value === "general" ||
     value === "indumentaria_calzado" ||
     value === "electronica" ||
     value === "hogar_deco" ||
-    value === "belleza_salud";
+    value === "belleza_salud" ||
+    value === "repuestos_lubricentro";
 const asBusinessCategory = (value) => {
     const candidate = String(value ?? "").trim().toLowerCase();
     return isBusinessCategory(candidate) ? candidate : "general";
@@ -96,8 +98,19 @@ exports.BUSINESS_PRESETS = {
         payment: { methods: ["link_pago", "efectivo_retiro"], acceptsInstallments: false },
         productVariantAxes: ["color", "modelo"],
         policy: { reservationTtlMinutes: 20, allowExchange: false, allowReturns: false }
+    },
+    repuestos_lubricentro: {
+        businessLabels: ["compatibilidad_vehiculo", "stock_bajo_rotacion"],
+        payment: { methods: ["link_pago", "efectivo_retiro"], acceptsInstallments: false },
+        productVariantAxes: ["modelo", "material"],
+        policy: { reservationTtlMinutes: 30, allowExchange: true, allowReturns: false }
     }
 };
+/** Mínimo para enviar `tenantBrief` útil a waseller-crew (tono + logística/entregas en texto). */
+function isTenantCrewCommercialContextComplete(profile) {
+    return (String(profile.tone ?? "").trim().length > 0 &&
+        String(profile.deliveryInfo ?? "").trim().length > 0);
+}
 const normalizeTenantBusinessProfile = (raw) => {
     const input = raw && typeof raw === "object" ? raw : {};
     const paymentSource = input.payment && typeof input.payment === "object"
@@ -152,7 +165,14 @@ const normalizeTenantBusinessProfile = (raw) => {
             allowExchange: asBoolean(policy.allowExchange, presetPolicy.allowExchange ?? exports.DEFAULT_TENANT_BUSINESS_PROFILE.policy.allowExchange),
             allowReturns: asBoolean(policy.allowReturns, presetPolicy.allowReturns ?? exports.DEFAULT_TENANT_BUSINESS_PROFILE.policy.allowReturns)
         },
-        businessName: String(input.businessName ?? "").trim() || undefined
+        businessName: String(input.businessName ?? "").trim() || undefined,
+        tone: String(input.tone ?? input.communicationTone ?? "").trim() || undefined,
+        deliveryInfo: (() => {
+            const raw = String(input.deliveryInfo ?? input.deliverySummary ?? input.shippingNotes ?? "").trim();
+            if (!raw)
+                return undefined;
+            return raw.length > 2000 ? `${raw.slice(0, 2000)}…` : raw;
+        })()
     };
 };
 exports.normalizeTenantBusinessProfile = normalizeTenantBusinessProfile;

@@ -115,6 +115,15 @@ alter table public.tenants add column if not exists llm_confidence_threshold dou
 alter table public.tenants add column if not exists llm_guardrails_strict boolean not null default true;
 alter table public.tenants add column if not exists llm_rollout_percent int not null default 0;
 alter table public.tenants add column if not exists llm_model_name text not null default 'self-hosted-default';
+alter table public.tenants add column if not exists public_catalog_slug text;
+
+-- Prisma / migraciones antiguas pueden dejar updated_at sin default: el INSERT explícito falla con null.
+alter table public.tenants alter column updated_at set default now();
+alter table public.tenants alter column created_at set default now();
+update public.tenants set updated_at = now() where updated_at is null;
+update public.tenants set created_at = now() where created_at is null;
+
+create unique index if not exists tenants_public_catalog_slug_key on public.tenants (public_catalog_slug);
 
 create table if not exists public.products (
   id uuid primary key default gen_random_uuid(),
@@ -465,14 +474,27 @@ create index if not exists idx_payment_attempts_provider_preference on public.pa
 create index if not exists idx_payment_attempts_provider_payment on public.payment_attempts (provider, external_payment_id);
 
 -- Semilla mínima para pruebas.
-insert into public.tenants (id, name, whatsapp_number, plan)
+insert into public.tenants (id, name, whatsapp_number, plan, public_catalog_slug, created_at, updated_at)
 values (
   '00000000-0000-0000-0000-000000000001',
   'Demo Tenant',
   '5491100000000',
-  'starter'
+  'starter',
+  'demo-tenant',
+  now(),
+  now()
 )
 on conflict (id) do nothing;
+
+update public.tenants
+set public_catalog_slug = 'demo-tenant', updated_at = now()
+where id = '00000000-0000-0000-0000-000000000001'
+  and public_catalog_slug is null;
+
+-- Tenants legacy sin slug: URL estable única por id (ejecutar tras añadir la columna).
+update public.tenants
+set public_catalog_slug = 't-' || replace(id::text, '-', ''), updated_at = now()
+where public_catalog_slug is null;
 
 insert into public.products (tenant_id, name, price, tags)
 values

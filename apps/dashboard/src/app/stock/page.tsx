@@ -61,6 +61,17 @@ export default function StockPage() {
   const [editRows, setEditRows] = useState<StockProductVariantRow[] | null>(
     null,
   );
+  const [publicCatalogSlug, setPublicCatalogSlug] = useState<string | null>(null);
+  const [catalogShareUrl, setCatalogShareUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!publicCatalogSlug) {
+      setCatalogShareUrl(null);
+      return;
+    }
+    setCatalogShareUrl(`${window.location.origin}/tienda/${publicCatalogSlug}`);
+  }, [publicCatalogSlug]);
+
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth < 1024);
     onResize();
@@ -105,6 +116,7 @@ export default function StockPage() {
       setRows((await productsRes.json()) as VariantRow[]);
       const knowledge = (await knowledgeRes.json()) as {
         knowledge?: { productVariantAxes?: string[] };
+        publicCatalogSlug?: string | null;
       };
       const loadedAxes = Array.isArray(knowledge?.knowledge?.productVariantAxes)
         ? knowledge.knowledge.productVariantAxes
@@ -112,8 +124,14 @@ export default function StockPage() {
             .filter(Boolean)
         : [];
       setAxes(loadedAxes.length > 0 ? loadedAxes : ["talle", "color"]);
+      const slug =
+        typeof knowledge.publicCatalogSlug === "string" && knowledge.publicCatalogSlug.trim()
+          ? knowledge.publicCatalogSlug.trim()
+          : null;
+      setPublicCatalogSlug(slug);
       setError("");
     } catch (err) {
+      setPublicCatalogSlug(null);
       setError(err instanceof Error ? err.message : "No se pudo cargar stock");
     } finally {
       setLoading(false);
@@ -322,6 +340,57 @@ export default function StockPage() {
             Cargar producto nuevo
           </button>
         </div>
+
+        {catalogShareUrl ? (
+          <div
+            style={{
+              marginBottom: 16,
+              padding: "12px 14px",
+              borderRadius: 12,
+              border: "1px solid var(--color-border)",
+              backgroundColor: "var(--color-surface)",
+            }}
+          >
+            <div
+              style={{
+                fontSize: 12,
+                fontWeight: 600,
+                marginBottom: 6,
+                color: "var(--color-text)",
+              }}
+            >
+              Tu catálogo público
+            </div>
+            <div
+              style={{
+                fontSize: 13,
+                wordBreak: "break-all",
+                marginBottom: 10,
+                color: "var(--color-muted)",
+              }}
+            >
+              {catalogShareUrl}
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                void navigator.clipboard.writeText(catalogShareUrl);
+              }}
+              style={{
+                backgroundColor: "transparent",
+                color: "var(--color-primary)",
+                border: "1px solid var(--color-border)",
+                borderRadius: 8,
+                padding: "6px 12px",
+                fontSize: 13,
+                fontWeight: 500,
+                cursor: "pointer",
+              }}
+            >
+              Copiar enlace
+            </button>
+          </div>
+        ) : null}
 
         <StockTableMobileHint />
 

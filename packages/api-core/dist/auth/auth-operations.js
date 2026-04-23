@@ -4,6 +4,7 @@ exports.authRuntimeEnvFromProcess = void 0;
 exports.loginUser = loginUser;
 exports.registerTenantUser = registerTenantUser;
 const node_crypto_1 = require("node:crypto");
+const tenant_catalog_slug_1 = require("../tenant-catalog-slug");
 const token_1 = require("./token");
 const authRuntimeEnvFromProcess = (env) => ({
     AUTH_TOKEN_SECRET: env.AUTH_TOKEN_SECRET ?? "dev-secret-change-me",
@@ -124,6 +125,20 @@ async function loginUser(prisma, runtime, input) {
         })
     };
 }
+async function reserveUniquePublicCatalogSlug(prisma, tenantName) {
+    const root = (0, tenant_catalog_slug_1.slugifyTenantCatalogSlug)(tenantName);
+    let candidate = root;
+    for (let n = 2; n < 10_000; n += 1) {
+        const taken = await prisma.tenant.findFirst({
+            where: { publicCatalogSlug: candidate },
+            select: { id: true }
+        });
+        if (!taken)
+            return candidate;
+        candidate = `${root}-${n}`;
+    }
+    throw new Error("reserveUniquePublicCatalogSlug: demasiados intentos");
+}
 async function registerTenantUser(prisma, runtime, input) {
     const tenantName = input.tenantName.trim();
     const whatsappNumber = input.whatsappNumber.trim().replace(/[^\d]/g, "");
@@ -176,13 +191,15 @@ async function registerTenantUser(prisma, runtime, input) {
             }
         };
     }
+    const publicCatalogSlug = await reserveUniquePublicCatalogSlug(prisma, tenantName);
     let tenant;
     let admin;
     try {
         tenant = await prisma.tenant.create({
             data: {
                 name: tenantName,
-                whatsappNumber
+                whatsappNumber,
+                publicCatalogSlug
             },
             select: { id: true }
         });

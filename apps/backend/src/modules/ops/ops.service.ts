@@ -487,15 +487,20 @@ export class OpsService {
   async getTenantKnowledge(tenantId: string): Promise<{
     tenantId: string;
     tenantName: string;
+    publicCatalogSlug: string | null;
     persisted: boolean;
     crewCommercialContextComplete: boolean;
     knowledge: TenantBusinessProfile;
   }> {
     const tenant = await prisma.tenant.findUnique({
       where: { id: tenantId },
-      select: { name: true }
+      select: { name: true, publicCatalogSlug: true }
     });
     const tenantName = String(tenant?.name ?? "").trim();
+    const publicCatalogSlug =
+      typeof tenant?.publicCatalogSlug === "string" && tenant.publicCatalogSlug.trim()
+        ? tenant.publicCatalogSlug.trim()
+        : null;
     try {
       const rows = (await (prisma as any).$queryRaw`
         select profile, business_category as "businessCategory", business_labels as "businessLabels"
@@ -517,6 +522,7 @@ export class OpsService {
         return {
           tenantId,
           tenantName,
+          publicCatalogSlug,
           persisted: true,
           crewCommercialContextComplete: isTenantCrewCommercialContextComplete(knowledge),
           knowledge
@@ -532,6 +538,7 @@ export class OpsService {
     return {
       tenantId,
       tenantName,
+      publicCatalogSlug,
       persisted: false,
       crewCommercialContextComplete: isTenantCrewCommercialContextComplete(fallback),
       knowledge: fallback

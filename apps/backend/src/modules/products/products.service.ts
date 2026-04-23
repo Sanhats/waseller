@@ -145,6 +145,63 @@ export class ProductsService {
     }));
   }
 
+  /** Catálogo público: solo variantes activas (sin JWT en el consumidor de la página). */
+  async listPublicCatalogByTenant(tenantId: string): Promise<ProductVariantRow[]> {
+    const rows = (await (prisma as any).$queryRaw`
+      select
+        v.id as "variantId",
+        p.id as "productId",
+        p.name as "name",
+        p.price as "basePrice",
+        v.price as "variantPrice",
+        coalesce(v.price, p.price) as "effectivePrice",
+        v.sku as "sku",
+        v.attributes as "attributes",
+        v.stock as "stock",
+        v.reserved_stock as "reservedStock",
+        greatest(v.stock - v.reserved_stock, 0) as "availableStock",
+        p.image_url as "imageUrl",
+        p.tags as "tags",
+        v.is_active as "isActive"
+      from public.product_variants v
+      inner join public.products p on p.id = v.product_id
+      where v.tenant_id::text = ${tenantId}
+        and v.is_active = true
+      order by p.updated_at desc, p.name asc, v.sku asc
+    `) as Array<{
+      variantId: string;
+      productId: string;
+      name: string;
+      basePrice: unknown;
+      variantPrice: unknown;
+      effectivePrice: unknown;
+      sku: string;
+      attributes: unknown;
+      stock: number;
+      reservedStock: number;
+      availableStock: number;
+      imageUrl?: string | null;
+      tags?: string[] | null;
+      isActive: boolean;
+    }>;
+    return rows.map((row) => ({
+      variantId: row.variantId,
+      productId: row.productId,
+      name: row.name,
+      basePrice: row.basePrice,
+      variantPrice: row.variantPrice,
+      effectivePrice: Number(row.effectivePrice ?? 0),
+      sku: row.sku,
+      attributes: normalizeAttributes(row.attributes),
+      stock: Number(row.stock ?? 0),
+      reservedStock: Number(row.reservedStock ?? 0),
+      availableStock: Number(row.availableStock ?? 0),
+      imageUrl: row.imageUrl,
+      tags: Array.isArray(row.tags) ? row.tags : [],
+      isActive: Boolean(row.isActive)
+    }));
+  }
+
   async createProduct(
     tenantId: string,
     body: { name: string; price: number; imageUrl?: string; tags?: string[]; variants?: ProductVariantInput[] }
