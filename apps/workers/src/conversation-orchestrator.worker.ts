@@ -32,10 +32,14 @@ import {
   replySimilarity
 } from "./services/conversation-recent-messages.service";
 import {
+  buildCrewSoleStubBaselineDecision,
+  buildCrewSoleStubInterpretation,
   buildCrewTenantBriefFromProfile,
   executeShadowCompareRequest,
   extractInterpretationProductId,
   isWasellerCrewPrimaryEnabled,
+  isWasellerCrewSoleModeEnabled,
+  mergeCrewCandidateInterpretation,
   persistShadowCompareTelemetry,
   resolveCrewPrimaryEffectiveConfidenceThreshold,
   resolveProductIdForTenantVariant,
@@ -131,44 +135,59 @@ export const conversationOrchestratorWorker = new Worker<LlmOrchestrationJobV1>(
       recentMessages = await enrichRecentMessagesWithLastBotReply(tenantId, phone, recentMessages);
       const ragProducts = await buildRagProducts(tenantId, incomingText);
       const tenantKnowledge = await tenantKnowledgeService.getWithRulePack(tenantId);
-      const interpreted = await interpreterService.interpret({
-        incomingText,
-        hintIntent: intentHint,
-        conversationStage: job.data.conversationStage,
-        activeOffer: job.data.activeOffer ?? null,
-        tenantProfile: tenantKnowledge.profile as Record<string, unknown>,
-        rubroRulePack: tenantKnowledge.rulePack as Record<string, unknown>,
-        recentMessages: recentMessages
-          .reverse()
-          .map((item: { direction: "incoming" | "outgoing"; message: string }) => ({
-            direction: item.direction,
-            message: item.message
-          })),
-        candidateProducts: ragProducts,
-        ruleInterpretation: job.data.ruleInterpretation ?? null
-      });
-      let llmDecision = await llmService.decide({
-        tenantId,
-        phone,
-        incomingText,
-        hintIntent: intentHint,
-        leadStatus: lead.status,
-        leadScore: lead.score,
-        candidateProducts: ragProducts,
-        recentMessages: recentMessages
-          .reverse()
-          .map((item: { direction: "incoming" | "outgoing"; message: string }) => ({
-            direction: item.direction,
-            message: item.message
-          })),
-        confidenceThreshold,
-        tenantProfile: tenantKnowledge.profile as Record<string, unknown>,
-        rubroRulePack: tenantKnowledge.rulePack as Record<string, unknown>,
-        conversationStage: job.data.conversationStage,
-        activeOffer: job.data.activeOffer ?? null,
-        interpretation: interpreted,
-        memoryFacts: job.data.memoryFacts ?? {}
-      });
+      const guardrailFallbackMessage =
+        (await templateService.getTemplate(tenantId, "orchestrator_guardrail_handoff")) ||
+        "Quiero asegurarme de darte la mejor respuesta. Te paso con un asesor para confirmar los detalles y ayudarte a cerrar la compra.";
+      const crewSole = isWasellerCrewSoleModeEnabled();
+      let interpreted: ConversationInterpretationV1;
+      let llmDecision: LlmDecisionV1;
+      if (crewSole) {
+        interpreted = buildCrewSoleStubInterpretation({
+          intentHint,
+          ruleInterpretation: job.data.ruleInterpretation ?? null,
+          conversationStage: job.data.conversationStage
+        });
+        llmDecision = buildCrewSoleStubBaselineDecision(interpreted);
+      } else {
+        interpreted = await interpreterService.interpret({
+          incomingText,
+          hintIntent: intentHint,
+          conversationStage: job.data.conversationStage,
+          activeOffer: job.data.activeOffer ?? null,
+          tenantProfile: tenantKnowledge.profile as Record<string, unknown>,
+          rubroRulePack: tenantKnowledge.rulePack as Record<string, unknown>,
+          recentMessages: recentMessages
+            .reverse()
+            .map((item: { direction: "incoming" | "outgoing"; message: string }) => ({
+              direction: item.direction,
+              message: item.message
+            })),
+          candidateProducts: ragProducts,
+          ruleInterpretation: job.data.ruleInterpretation ?? null
+        });
+        llmDecision = await llmService.decide({
+          tenantId,
+          phone,
+          incomingText,
+          hintIntent: intentHint,
+          leadStatus: lead.status,
+          leadScore: lead.score,
+          candidateProducts: ragProducts,
+          recentMessages: recentMessages
+            .reverse()
+            .map((item: { direction: "incoming" | "outgoing"; message: string }) => ({
+              direction: item.direction,
+              message: item.message
+            })),
+          confidenceThreshold,
+          tenantProfile: tenantKnowledge.profile as Record<string, unknown>,
+          rubroRulePack: tenantKnowledge.rulePack as Record<string, unknown>,
+          conversationStage: job.data.conversationStage,
+          activeOffer: job.data.activeOffer ?? null,
+          interpretation: interpreted,
+          memoryFacts: job.data.memoryFacts ?? {}
+        });
+      }
 
       const recentChronologicalForCrew = recentMessages
         .slice()
@@ -224,6 +243,22 @@ export const conversationOrchestratorWorker = new Worker<LlmOrchestrationJobV1>(
       if (crewPrimary) {
         llmDecision = crewPrimary.decision;
         crewPrimaryApplied = true;
+        if (crewPrimary.candidateInterpretation) {
+          interpreted = mergeCrewCandidateInterpretation(interpreted, crewPrimary.candidateInterpretation);
+        }
+      } else if (crewSole) {
+        llmDecision = {
+          ...llmDecision,
+          draftReply: guardrailFallbackMessage,
+          requiresHuman: true,
+          handoffRequired: true,
+          nextAction: "handoff_human",
+          recommendedAction: "handoff_human",
+          confidence: 0.2,
+          reason: "crew_sole_mode_unavailable",
+          qualityFlags: Array.from(new Set([...(llmDecision.qualityFlags ?? []), "crew_sole_mode_fallback"])),
+          source: "fallback"
+        };
       }
 
       const payment =
@@ -240,9 +275,6 @@ export const conversationOrchestratorWorker = new Worker<LlmOrchestrationJobV1>(
       });
       const verifierFailed = verifierRequired && (!verification.passed || verification.score < minVerifierScore);
 
-      const guardrailFallbackMessage =
-        (await templateService.getTemplate(tenantId, "orchestrator_guardrail_handoff")) ||
-        "Quiero asegurarme de darte la mejor respuesta. Te paso con un asesor para confirmar los detalles y ayudarte a cerrar la compra.";
       const effectiveConfidenceThreshold = resolveCrewPrimaryEffectiveConfidenceThreshold(
         confidenceThreshold,
         crewPrimaryApplied
@@ -312,7 +344,7 @@ export const conversationOrchestratorWorker = new Worker<LlmOrchestrationJobV1>(
         ]
       };
 
-      if (shadowMode && !crewPrimaryApplied && !isWasellerCrewPrimaryEnabled()) {
+      if (shadowMode && !crewPrimaryApplied && !isWasellerCrewPrimaryEnabled() && !isWasellerCrewSoleModeEnabled()) {
         const shadowInput = {
           tenantId,
           leadId,

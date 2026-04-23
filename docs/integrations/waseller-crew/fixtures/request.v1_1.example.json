@@ -7,6 +7,8 @@
   "correlationId": "22222222-3333-4444-5555-666666666666",
   "messageId": "33333333-4444-5555-6666-777777777777",
   "conversationId": "44444444-5555-6666-7777-888888888888",
+  "publicCatalogSlug": "mi-tienda-demo",
+  "publicCatalogBaseUrl": "https://tu-app.vercel.app",
   "incomingText": "Cuánto sale la remera negra talle M?",
   "recentMessages": [
     { "direction": "outgoing", "message": "Hola, ¿en qué te ayudo?" },

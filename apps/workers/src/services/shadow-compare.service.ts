@@ -755,12 +755,122 @@ export type ShadowCompareInput = {
 const readShadowCompareSecret = (): string =>
   String(process.env.LLM_SHADOW_COMPARE_SECRET ?? process.env.SHADOW_COMPARE_SECRET ?? "").trim();
 
+/**
+ * Origen público del storefront **sin barra final** (mismo host que sirve `/tienda/<slug>`).
+ * `PUBLIC_CATALOG_BASE_URL` tiene prioridad; si falta, `PUBLIC_API_BASE_URL` (p. ej. dashboard Vercel).
+ */
+export function resolvePublicCatalogBaseUrlForCrew(): string | null {
+  const raw = String(
+    process.env.PUBLIC_CATALOG_BASE_URL ?? process.env.PUBLIC_API_BASE_URL ?? ""
+  )
+    .trim()
+    .replace(/\/+$/, "");
+  return raw.length > 0 ? raw : null;
+}
+
+async function loadPublicCatalogFieldsForCrewPayload(
+  tenantId: string
+): Promise<{ publicCatalogSlug: string; publicCatalogBaseUrl: string } | null> {
+  const tid = String(tenantId ?? "").trim();
+  if (!tid) return null;
+  const publicCatalogBaseUrl = resolvePublicCatalogBaseUrlForCrew();
+  if (!publicCatalogBaseUrl) return null;
+  try {
+    const row = await prisma.tenant.findUnique({
+      where: { id: tid },
+      select: { publicCatalogSlug: true }
+    });
+    const slug = typeof row?.publicCatalogSlug === "string" ? row.publicCatalogSlug.trim() : "";
+    if (!slug) return null;
+    return { publicCatalogSlug: slug, publicCatalogBaseUrl };
+  } catch {
+    return null;
+  }
+}
+
 export const isWasellerCrewPrimaryEnabled = (): boolean =>
   /^(1|true|yes)$/i.test(String(process.env.WASELLER_CREW_PRIMARY ?? "").trim());
+
+/**
+ * Modo “solo waseller-crew” en el **orquestador**: no se llama al intérprete OpenAI ni a `SelfHostedLlmService.decide`;
+ * se arma un baseline mínimo y se delega NL + borrador al crew (`LLM_SHADOW_COMPARE_URL` obligatoria).
+ * Si el crew no responde válido, se deriva a humano con el template de handoff.
+ */
+export const isWasellerCrewSoleModeEnabled = (): boolean =>
+  /^(1|true|yes)$/i.test(String(process.env.WASELLER_CREW_SOLE_MODE ?? "").trim());
 
 /** Si es true, el message-processor envía el turno al orquestador aunque antes iría solo al lead (p. ej. variante ya resuelta). */
 export const isWasellerCrewOrchestrateFirstEnabled = (): boolean =>
   /^(1|true|yes)$/i.test(String(process.env.WASELLER_CREW_ORCHESTRATE_FIRST ?? "").trim());
+
+/** Shell de interpretación antes del POST al crew (reglas del processor o stub mínimo). */
+export function buildCrewSoleStubInterpretation(input: {
+  intentHint?: string;
+  ruleInterpretation?: ConversationInterpretationV1 | null;
+  conversationStage?: ConversationStageV1;
+}): ConversationInterpretationV1 {
+  const r = input.ruleInterpretation;
+  if (r && typeof r.intent === "string" && r.intent.trim() && typeof r.nextAction === "string" && r.nextAction.trim()) {
+    return {
+      ...r,
+      source: "rules",
+      notes: Array.from(new Set([...(r.notes ?? []), "crew_sole_mode_shell"]))
+    };
+  }
+  const hint = String(input.intentHint ?? "desconocido").trim() || "desconocido";
+  return {
+    intent: hint,
+    confidence: 0.2,
+    entities: {},
+    references: [],
+    conversationStage: input.conversationStage ?? "waiting_product",
+    missingFields: ["crew_will_refine"],
+    nextAction: "reply_only",
+    source: "rules",
+    notes: ["crew_sole_mode_stub", "nl_delegated_to_waseller_crew"]
+  };
+}
+
+/** Baseline mínimo para `mergeCrewCandidateIntoLlmDecision` (el borrador real lo aporta el crew). */
+export function buildCrewSoleStubBaselineDecision(interpretation: ConversationInterpretationV1): LlmDecisionV1 {
+  return {
+    intent: interpretation.intent,
+    leadStage: "discovery",
+    confidence: 0.35,
+    entities: {},
+    nextAction: "reply_only",
+    reason: "crew_sole_mode_stub_baseline",
+    requiresHuman: false,
+    recommendedAction: "reply_only",
+    draftReply: "  ",
+    handoffRequired: false,
+    qualityFlags: ["crew_sole_stub_baseline"],
+    source: "fallback"
+  };
+}
+
+export function mergeCrewCandidateInterpretation(
+  base: ConversationInterpretationV1,
+  partial?: Partial<ConversationInterpretationV1> | null
+): ConversationInterpretationV1 {
+  if (!partial || Object.keys(partial).length === 0) return base;
+  const entities =
+    partial.entities !== undefined ? { ...base.entities, ...partial.entities } : base.entities;
+  const references = partial.references !== undefined ? partial.references : base.references;
+  const missingFields = partial.missingFields !== undefined ? partial.missingFields : base.missingFields;
+  const notes =
+    partial.notes !== undefined
+      ? Array.from(new Set([...(base.notes ?? []), ...partial.notes]))
+      : base.notes;
+  return {
+    ...base,
+    ...partial,
+    entities,
+    references,
+    missingFields,
+    notes
+  };
+}
 
 /**
  * Suelo más bajo de confianza cuando el `draftReply` viene de waseller-crew (primary), para no bloquear
@@ -941,6 +1051,12 @@ export async function assembleShadowCompareOutboundBody(input: ShadowCompareInpu
   if (inputResolved.memoryFacts && Object.keys(inputResolved.memoryFacts).length > 0) {
     const lines = memoryFactsRecordToStringArray(inputResolved.memoryFacts, maxMemLines, maxMemLineChars);
     if (lines.length > 0) payload.memoryFacts = lines;
+  }
+
+  const publicCatalog = await loadPublicCatalogFieldsForCrewPayload(inputResolved.tenantId);
+  if (publicCatalog) {
+    payload.publicCatalogSlug = publicCatalog.publicCatalogSlug;
+    payload.publicCatalogBaseUrl = publicCatalog.publicCatalogBaseUrl;
   }
 
   return payload;
@@ -1221,15 +1337,22 @@ export async function persistShadowCompareTelemetry(
   );
 }
 
+export type CrewPrimaryReplacementResult = {
+  decision: LlmDecisionV1;
+  outboundBody: Record<string, unknown>;
+  candidateInterpretation?: Partial<ConversationInterpretationV1>;
+};
+
 /**
  * Una sola llamada a waseller-crew: si responde con `candidateDecision.draftReply` válido, reemplaza la decisión
  * interna (OpenAI/self-hosted) **antes** del verificador y guardrails. Requiere `LLM_SHADOW_COMPARE_URL` y
- * `WASELLER_CREW_PRIMARY=true`. No lanza hacia arriba.
+ * `WASELLER_CREW_PRIMARY=true` **o** `WASELLER_CREW_SOLE_MODE=true` (este último implica llamada obligatoria al crew
+ * desde el orquestador con baseline stub). No lanza hacia arriba.
  */
 export async function tryWasellerCrewPrimaryReplacement(
   input: ShadowCompareInput
-): Promise<{ decision: LlmDecisionV1; outboundBody: Record<string, unknown> } | null> {
-  if (!isWasellerCrewPrimaryEnabled()) return null;
+): Promise<CrewPrimaryReplacementResult | null> {
+  if (!isWasellerCrewPrimaryEnabled() && !isWasellerCrewSoleModeEnabled()) return null;
   const url = String(process.env.LLM_SHADOW_COMPARE_URL ?? "").trim();
   if (!url) return null;
 
@@ -1246,7 +1369,11 @@ export async function tryWasellerCrewPrimaryReplacement(
   await persistCrewPrimaryTrace(input, exec, url, timeoutMs, authorizationSent);
 
   if (!exec.merged || !exec.httpOk) return null;
-  return { decision: exec.merged, outboundBody: exec.outboundBody };
+  return {
+    decision: exec.merged,
+    outboundBody: exec.outboundBody,
+    candidateInterpretation: exec.candidateInterpretation
+  };
 }
 
 /**
@@ -1256,7 +1383,7 @@ export async function tryWasellerCrewPrimaryReplacement(
  */
 export async function logShadowExternalCompareIfConfigured(input: ShadowCompareInput): Promise<void> {
   if (!String(process.env.LLM_SHADOW_COMPARE_URL ?? "").trim()) return;
-  if (isWasellerCrewPrimaryEnabled()) {
+  if (isWasellerCrewPrimaryEnabled() || isWasellerCrewSoleModeEnabled()) {
     // `tryWasellerCrewPrimaryReplacement` ya hizo POST al mismo endpoint con el mismo `correlationId`.
     return;
   }

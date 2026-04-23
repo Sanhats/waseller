@@ -32,7 +32,8 @@ import {
 import { getWhatsappServiceBaseUrl } from "../../../packages/shared/src";
 import {
   isWasellerCrewOrchestrateFirstEnabled,
-  isWasellerCrewPrimaryEnabled
+  isWasellerCrewPrimaryEnabled,
+  isWasellerCrewSoleModeEnabled
 } from "./services/shadow-compare.service";
 
 const intentDetection = new IntentDetectionService();
@@ -414,7 +415,7 @@ export const messageProcessorWorker = new Worker<IncomingMessageJobV1>(
         forceLeadWorkerForReservedPaymentFollowUp;
       const crewOrchestrateFirstConfigured =
         String(process.env.LLM_SHADOW_COMPARE_URL ?? "").trim().length > 0 &&
-        isWasellerCrewPrimaryEnabled() &&
+        (isWasellerCrewPrimaryEnabled() || isWasellerCrewSoleModeEnabled()) &&
         isWasellerCrewOrchestrateFirstEnabled();
       const preferOrchestratorForCrewContext =
         crewOrchestrateFirstConfigured && !forceLeadWorkerForReservedPaymentFollowUp;

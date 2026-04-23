@@ -77,6 +77,7 @@ Los tipos canónicos viven en [`packages/queue/src/contracts.ts`](../../packages
 | `LLM_SHADOW_COMPARE_TIMEOUT_MS` | Timeout del POST de comparación. |
 | `LLM_SHADOW_COMPARE_SECRET` | Opcional: si está definido, `Authorization: Bearer` en el POST (ver [`CONTRATO_V1_1.md`](../integrations/waseller-crew/CONTRATO_V1_1.md)). |
 | `WASELLER_CREW_PRIMARY` | Opcional: `true` — el crew reemplaza la decisión interna antes del verificador (misma URL que shadow-compare); sin segundo POST de comparación en ese turno. |
+| `WASELLER_CREW_SOLE_MODE` | Opcional: `true` — en el orquestador **no** se ejecuta intérprete OpenAI ni `SelfHostedLlmService.decide`; solo baseline stub + POST al crew. Si el crew falla → handoff. Ver [`waseller-crew/README.md`](../integrations/waseller-crew/README.md). |
 
 ## Referencia de decisión de runtime
 

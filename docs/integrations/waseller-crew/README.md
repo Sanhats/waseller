@@ -19,6 +19,7 @@ Este documento es **autocontenido** para implementar el microservicio con **`uv`
 
 - `LLM_SHADOW_COMPARE_URL` apunta a tu URL (HTTPS en producción).
 - **`WASELLER_CREW_PRIMARY=true`** (opcional): el crew **sustituye** la decisión interna en el orquestador (misma URL y contrato); no se envía un POST adicional solo para comparar en ese turno. Ver `CONTRATO_V1_1.md`.
+- **`WASELLER_CREW_SOLE_MODE=true`** (opcional): en el **orquestador** no se llama al intérprete OpenAI ni a `SelfHostedLlmService.decide`; se envía al crew un baseline mínimo más la `ruleInterpretation` del processor (si existe). Si el crew responde con `candidateInterpretation`, se fusiona como interpretación efectiva. Si el crew no responde válido, se deriva a humano (mismo template que guardrails). Requiere `LLM_SHADOW_COMPARE_URL`; **no** hace falta `WASELLER_CREW_PRIMARY` (el modo sole habilita el POST al crew por sí solo).
 - **`WASELLER_CREW_ORCHESTRATE_FIRST=true`** (opcional): con LLM habilitado y `LLM_SHADOW_COMPARE_URL` + primary, el **message-processor** manda también los turnos con variante resuelta al **orquestador** (intérprete + RAG + crew), no solo al lead. Ver `CONTRATO_V1_1.md` §2 y `message-processor.worker.ts`.
 - El job de orquestación va en **`executionMode: "shadow"`** o **`active`** (ver `LlmRolloutService` / tenant / `LLM_SHADOW_MODE`).
 
@@ -63,7 +64,7 @@ Detalle completo v1.1: [`CONTRATO_V1_1.md`](./CONTRATO_V1_1.md). Resumen:
 | `correlationId`, `messageId` | `string` | Opcionales. |
 | `conversationId` | `string` | Opcional (si el job trae conversación). |
 | `recentMessages` | `{ direction, message }[]` | Opcional; hasta **8** mensajes, orden cronológico (más antiguo primero). |
-| `stockTable`, `businessProfileSlug`, `tenantBrief`, `tenantCommercialContext`, `inventoryNarrowingNote`, `etapa`, `activeOffer`, `memoryFacts` | ver `CONTRATO_V1_1.md` §1 y §1.1 | Opcionales v1.1; el crew usa `extra="ignore"` para campos desconocidos. `tenantBrief` es objeto en el wire Waseller (el crew puede acotarlo a ~2500 caracteres al volcar al kickoff). `memoryFacts`: hasta **40** strings (≤**400** caracteres c/u). **`stockTable` tiene prioridad** sobre `activeOffer` / digests si hay conflicto (documentado en prompts del crew). |
+| `stockTable`, `businessProfileSlug`, `tenantBrief`, `tenantCommercialContext`, `inventoryNarrowingNote`, `etapa`, `activeOffer`, `memoryFacts`, `publicCatalogSlug`, `publicCatalogBaseUrl` | ver `CONTRATO_V1_1.md` §1 y §1.1 | Opcionales v1.1; el crew usa `extra="ignore"` para campos desconocidos. `tenantBrief` es objeto en el wire Waseller (el crew puede acotarlo a ~2500 caracteres al volcar al kickoff). `memoryFacts`: hasta **40** strings (≤**400** caracteres c/u). **`stockTable` tiene prioridad** sobre `activeOffer` / digests si hay conflicto (documentado en prompts del crew). **`publicCatalog*`:** Waseller los envía cuando el tenant tiene slug en BD y hay origen (`PUBLIC_CATALOG_BASE_URL` o `PUBLIC_API_BASE_URL`) para armar `…/tienda/<slug>`. |
 
 #### `ConversationInterpretationV1` (resumen)
 
