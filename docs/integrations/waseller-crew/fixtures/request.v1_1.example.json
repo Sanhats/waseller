@@ -9,6 +9,33 @@
   "conversationId": "44444444-5555-6666-7777-888888888888",
   "publicCatalogSlug": "mi-tienda-demo",
   "publicCatalogBaseUrl": "https://tu-app.vercel.app",
+  "tenantRuntimeContext": {
+    "version": 1,
+    "identity": {
+      "tenantId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      "displayName": "Mi tienda demo",
+      "plan": "starter"
+    },
+    "knowledge": {
+      "businessCategory": "hogar_deco",
+      "businessLabels": ["catalogo_whatsapp"],
+      "profileUpdatedAt": "2026-01-15T12:00:00.000Z"
+    },
+    "llm": {
+      "assistEnabled": true,
+      "confidenceThreshold": 0.72,
+      "guardrailsStrict": true,
+      "rolloutPercent": 100,
+      "modelName": "self-hosted-default"
+    },
+    "outboundMessaging": { "senderRateMs": 500, "senderPauseEvery": 20, "senderPauseMs": 2500 },
+    "catalog": { "publicSlug": "mi-tienda-demo", "publicBaseUrl": "https://tu-app.vercel.app" },
+    "paymentChannels": [{ "provider": "mercadopago", "status": "connected" }],
+    "timestamps": {
+      "tenantCreatedAt": "2025-06-01T10:00:00.000Z",
+      "tenantUpdatedAt": "2026-01-20T08:30:00.000Z"
+    }
+  },
   "incomingText": "Cuánto sale la remera negra talle M?",
   "recentMessages": [
     { "direction": "outgoing", "message": "Hola, ¿en qué te ayudo?" },

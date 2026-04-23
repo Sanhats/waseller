@@ -788,13 +788,176 @@ async function loadPublicCatalogFieldsForCrewPayload(
   }
 }
 
+/**
+ * Snapshot ordenado de la fila `tenants` + `tenant_knowledge` + integraciones de pago (solo `provider`/`status`),
+ * para que waseller-crew orqueste sin depender de lectura directa de la BD de Waseller.
+ * **No** incluye tokens ni `tenant_knowledge.profile` JSON completo (eso sigue en `tenantBrief` cuando el caller lo arma).
+ */
+export type CrewTenantRuntimeContextV1 = {
+  version: 1;
+  identity: { tenantId: string; displayName: string; plan: string };
+  knowledge: {
+    businessCategory: string;
+    businessLabels: string[];
+    profileUpdatedAt?: string;
+  };
+  llm: {
+    assistEnabled: boolean;
+    confidenceThreshold: number;
+    guardrailsStrict: boolean;
+    rolloutPercent: number;
+    modelName: string;
+  };
+  outboundMessaging: {
+    senderRateMs: number;
+    senderPauseEvery: number;
+    senderPauseMs: number;
+  };
+  catalog: { publicSlug: string | null; publicBaseUrl: string | null };
+  paymentChannels: Array<{ provider: string; status: string }>;
+  timestamps: { tenantCreatedAt: string; tenantUpdatedAt: string };
+  /** Solo si `LLM_SHADOW_COMPARE_INCLUDE_TENANT_WHATSAPP_NUMBER=true` (número del canal bot del tenant). */
+  channel?: { whatsAppBusinessNumber?: string };
+};
+
+function slimCrewTenantRuntimeContextForHttp(ctx: CrewTenantRuntimeContextV1): CrewTenantRuntimeContextV1 {
+  const maxName = readNumericEnv("LLM_SHADOW_COMPARE_MAX_TENANT_RUNTIME_DISPLAY_NAME_CHARS", 160);
+  const maxLabels = readNumericEnv("LLM_SHADOW_COMPARE_MAX_TENANT_RUNTIME_LABELS", 24);
+  const maxPaymentRows = readNumericEnv("LLM_SHADOW_COMPARE_MAX_TENANT_RUNTIME_PAYMENT_CHANNELS", 12);
+  const maxWa = readNumericEnv("LLM_SHADOW_COMPARE_MAX_TENANT_RUNTIME_WHATSAPP_CHARS", 48);
+  const maxModel = readNumericEnv("LLM_SHADOW_COMPARE_MAX_TENANT_RUNTIME_MODEL_NAME_CHARS", 80);
+  const out: CrewTenantRuntimeContextV1 = {
+    ...ctx,
+    identity: {
+      ...ctx.identity,
+      displayName: clampStr(ctx.identity.displayName, maxName)
+    },
+    knowledge: {
+      ...ctx.knowledge,
+      businessLabels: ctx.knowledge.businessLabels.slice(0, maxLabels).map((l) => clampStr(l, 64))
+    },
+    llm: {
+      ...ctx.llm,
+      modelName: clampStr(ctx.llm.modelName, maxModel)
+    },
+    paymentChannels: ctx.paymentChannels.slice(0, maxPaymentRows)
+  };
+  if (out.channel?.whatsAppBusinessNumber) {
+    out.channel = {
+      whatsAppBusinessNumber: clampStr(out.channel.whatsAppBusinessNumber, maxWa)
+    };
+  }
+  return out;
+}
+
+/**
+ * Carga desde Prisma el contexto de tenant para el POST al crew. Respetar privacidad: el número WhatsApp del tenant
+ * solo se envía si `LLM_SHADOW_COMPARE_INCLUDE_TENANT_WHATSAPP_NUMBER=true`.
+ */
+export async function loadCrewTenantRuntimeContextForCrewPayload(
+  tenantId: string
+): Promise<CrewTenantRuntimeContextV1 | null> {
+  const tid = String(tenantId ?? "").trim();
+  if (!tid) return null;
+  if (/^(1|true|yes)$/i.test(String(process.env.LLM_SHADOW_COMPARE_OMIT_TENANT_RUNTIME_CONTEXT ?? "").trim())) {
+    return null;
+  }
+  try {
+    const row = await prisma.tenant.findUnique({
+      where: { id: tid },
+      select: {
+        id: true,
+        name: true,
+        plan: true,
+        publicCatalogSlug: true,
+        whatsappNumber: true,
+        senderRateMs: true,
+        senderPauseEvery: true,
+        senderPauseMs: true,
+        llmAssistEnabled: true,
+        llmConfidenceThreshold: true,
+        llmGuardrailsStrict: true,
+        llmRolloutPercent: true,
+        llmModelName: true,
+        createdAt: true,
+        updatedAt: true,
+        tenantKnowledge: {
+          select: {
+            businessCategory: true,
+            businessLabels: true,
+            updatedAt: true
+          }
+        },
+        paymentIntegrations: {
+          select: { provider: true, status: true }
+        }
+      }
+    });
+    if (!row) return null;
+
+    const publicBaseUrl = resolvePublicCatalogBaseUrlForCrew();
+    const slug =
+      typeof row.publicCatalogSlug === "string" && row.publicCatalogSlug.trim()
+        ? row.publicCatalogSlug.trim()
+        : null;
+    const thr = Number(row.llmConfidenceThreshold);
+    const ctx: CrewTenantRuntimeContextV1 = {
+      version: 1,
+      identity: {
+        tenantId: row.id,
+        displayName: row.name,
+        plan: row.plan
+      },
+      knowledge: {
+        businessCategory: String(row.tenantKnowledge?.businessCategory ?? "general").trim() || "general",
+        businessLabels: [...(row.tenantKnowledge?.businessLabels ?? [])],
+        profileUpdatedAt: row.tenantKnowledge?.updatedAt?.toISOString()
+      },
+      llm: {
+        assistEnabled: row.llmAssistEnabled,
+        confidenceThreshold: Number.isFinite(thr) ? thr : 0.72,
+        guardrailsStrict: row.llmGuardrailsStrict,
+        rolloutPercent: row.llmRolloutPercent,
+        modelName: String(row.llmModelName ?? "").trim() || "self-hosted-default"
+      },
+      outboundMessaging: {
+        senderRateMs: row.senderRateMs,
+        senderPauseEvery: row.senderPauseEvery,
+        senderPauseMs: row.senderPauseMs
+      },
+      catalog: {
+        publicSlug: slug,
+        publicBaseUrl: slug && publicBaseUrl ? publicBaseUrl : null
+      },
+      paymentChannels: row.paymentIntegrations.map((p: { provider: unknown; status: unknown }) => ({
+        provider: String(p.provider),
+        status: String(p.status)
+      })),
+      timestamps: {
+        tenantCreatedAt: row.createdAt.toISOString(),
+        tenantUpdatedAt: row.updatedAt.toISOString()
+      }
+    };
+    if (/^(1|true|yes)$/i.test(String(process.env.LLM_SHADOW_COMPARE_INCLUDE_TENANT_WHATSAPP_NUMBER ?? "").trim())) {
+      const wa = String(row.whatsappNumber ?? "").trim();
+      if (wa) {
+        ctx.channel = { whatsAppBusinessNumber: wa };
+      }
+    }
+    return slimCrewTenantRuntimeContextForHttp(ctx);
+  } catch {
+    return null;
+  }
+}
+
 export const isWasellerCrewPrimaryEnabled = (): boolean =>
   /^(1|true|yes)$/i.test(String(process.env.WASELLER_CREW_PRIMARY ?? "").trim());
 
 /**
- * Modo “solo waseller-crew” en el **orquestador**: no se llama al intérprete OpenAI ni a `SelfHostedLlmService.decide`;
- * se arma un baseline mínimo y se delega NL + borrador al crew (`LLM_SHADOW_COMPARE_URL` obligatoria).
- * Si el crew no responde válido, se deriva a humano con el template de handoff.
+ * Modo “solo waseller-crew” para **respuestas a leads** vía POST al crew:
+ * - **Orquestador:** no intérprete OpenAI ni `SelfHostedLlmService.decide`; baseline stub + crew.
+ * - **Lead worker (ruta directa):** el POST al crew usa interpretación/baseline stub (no el texto largo de plantillas como baseline); si el crew no aplica, mensaje = handoff.
+ * Requiere `LLM_SHADOW_COMPARE_URL`. Sin `WASELLER_CREW_PRIMARY`, el POST igual se habilita con este flag.
  */
 export const isWasellerCrewSoleModeEnabled = (): boolean =>
   /^(1|true|yes)$/i.test(String(process.env.WASELLER_CREW_SOLE_MODE ?? "").trim());
@@ -1057,6 +1220,11 @@ export async function assembleShadowCompareOutboundBody(input: ShadowCompareInpu
   if (publicCatalog) {
     payload.publicCatalogSlug = publicCatalog.publicCatalogSlug;
     payload.publicCatalogBaseUrl = publicCatalog.publicCatalogBaseUrl;
+  }
+
+  const tenantRuntimeContext = await loadCrewTenantRuntimeContextForCrewPayload(inputResolved.tenantId);
+  if (tenantRuntimeContext) {
+    payload.tenantRuntimeContext = tenantRuntimeContext;
   }
 
   return payload;

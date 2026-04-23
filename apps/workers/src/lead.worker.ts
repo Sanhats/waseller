@@ -33,8 +33,12 @@ import {
   replySimilarity
 } from "./services/conversation-recent-messages.service";
 import {
+  buildCrewSoleStubBaselineDecision,
+  buildCrewSoleStubInterpretation,
   buildCrewTenantBriefFromProfile,
   executeShadowCompareRequest,
+  extractInterpretationProductId,
+  isWasellerCrewSoleModeEnabled,
   persistShadowCompareTelemetry,
   resolveCrewPrimaryEffectiveConfidenceThreshold,
   resolveProductIdForTenantVariant,
@@ -794,10 +798,52 @@ export const leadWorker = new Worker<LeadProcessingJobV1>(
       "Gracias por tu consulta. Te ayudo con disponibilidad y precio ahora.";
     let selectedVariant = "fallback";
     const playbookIntent = resolvePlaybookIntent(job.data);
+    const soleSkipConversationalTemplates =
+      isWasellerCrewSoleModeEnabled() && !job.data.llmDecision && !shadowLlm;
 
     if (initialLlmDraft && job.data.llmDecision) {
       message = initialLlmDraft;
       selectedVariant = `llm-${job.data.llmDecision.source}`;
+    } else if (soleSkipConversationalTemplates) {
+      if (shouldGeneratePaymentLink && variant) {
+        try {
+          await mercadoPagoPaymentService.createPaymentLink({
+            tenantId,
+            leadId,
+            phone,
+            productVariantId: variant.variantId,
+            title: `${variant.productName}${variantSummary ? ` - ${variantSummary}` : ""}`,
+            amount: resolvedUnitPrice,
+            metadata: {
+              productName: variant.productName,
+              variantAttributes: variantAttributeMap
+            }
+          });
+          await prisma.lead.update({
+            where: { id: leadId },
+            data: {
+              status: "listo_para_cobrar",
+              score: Math.max(120, lead.score ?? 0)
+            }
+          });
+          message = await templateService.render(tenantId, "payment_link_ready_for_review", {
+            product_name: variant.productName
+          });
+          selectedVariant = "payment-link-ready-review";
+        } catch (error) {
+          const fallbackKey =
+            error instanceof Error && error.message.includes("No hay una cuenta de Mercado Pago conectada")
+              ? "payment_link_unavailable"
+              : "reservation_payment_link_handoff";
+          message = await templateService.render(tenantId, fallbackKey, {
+            product_name: variant.productName
+          });
+          selectedVariant = fallbackKey;
+        }
+      } else {
+        message = "  ";
+        selectedVariant = "crew-sole-pending";
+      }
     } else if (!variant && !productContext) {
       message = await templateService.getTemplate(tenantId, "lead_no_product");
     } else if (unavailableCombination) {
@@ -984,6 +1030,7 @@ export const leadWorker = new Worker<LeadProcessingJobV1>(
       llmConfidence >= PLAYBOOK_OVERRIDE_CONFIDENCE_MAX;
     const shouldKeepDeterministicReply = selectedVariant === "exact-variant-close";
     if (
+      !soleSkipConversationalTemplates &&
       variant &&
       missingAxes.length === 0 &&
       !unavailableCombination &&
@@ -1007,6 +1054,7 @@ export const leadWorker = new Worker<LeadProcessingJobV1>(
     let contextOverride = false;
 
     const catalogOrAlternateProduct =
+      !soleSkipConversationalTemplates &&
       variant &&
       (isCatalogBroadDiscoveryAsk(rawIncoming) || isAnotherProductOrLineAsk(rawIncoming));
     if (catalogOrAlternateProduct) {
@@ -1033,7 +1081,7 @@ export const leadWorker = new Worker<LeadProcessingJobV1>(
     const shortageFrustration = /\b(no\s+me\s+alcanza|no\s+alcanza|necesito\s+m[aá]s|m[aá]s\s+unidades|no\s+tenes\s+m[aá]s|no\s+tienen\s+m[aá]s)\b/.test(
       normalizeText(rawIncoming)
     );
-    if (!contextOverride && variant && availableStock > 0) {
+    if (!soleSkipConversationalTemplates && !contextOverride && variant && availableStock > 0) {
       if (qtyWanted !== null && qtyWanted > availableStock) {
         message = `Respecto a ${variant.productName}${variantSummary ? ` (${variantSummary})` : ""}: registro ${availableStock} unidad(es) disponible(s).${exactVariantPriceText} Para ${qtyWanted} necesitamos más stock del que tengo cargado; no puedo confirmar las ${qtyWanted} sin coordinar reposición o compra por volumen. ¿Reservo las ${availableStock} disponibles o preferís que te pase con un asesor para plazos y mayoreo?`;
         selectedVariant = "bulk-shortfall";
@@ -1046,7 +1094,8 @@ export const leadWorker = new Worker<LeadProcessingJobV1>(
     }
 
     // Solo eje color/talle/vari: no dispara con “otro producto”, catálogo, ni pedidos de muchas unidades.
-    const asksVariantFollowUp = variant && !contextOverride && wantsVariantAxisFollowUp(rawIncoming);
+    const asksVariantFollowUp =
+      !soleSkipConversationalTemplates && variant && !contextOverride && wantsVariantAxisFollowUp(rawIncoming);
     if (asksVariantFollowUp) {
       const lastBotMsg = await prisma.message.findFirst({
         where: { tenantId, phone, direction: "outgoing" },
@@ -1157,7 +1206,17 @@ export const leadWorker = new Worker<LeadProcessingJobV1>(
         const crewTenantBrief = buildCrewTenantBriefFromProfile(tenantKnowledge.profile, {
           knowledgeUpdatedAt: tenantKnowledge.knowledgeUpdatedAt
         });
-        const baselineDecision = buildLeadTemplateBaselineDecision(job.data, message, interpretation);
+        const soleLead = soleSkipConversationalTemplates;
+        const interpretationForCrew = soleLead
+          ? buildCrewSoleStubInterpretation({
+              intentHint: job.data.intent,
+              ruleInterpretation: job.data.interpretation ?? null,
+              conversationStage: job.data.conversationStage
+            })
+          : interpretation;
+        const baselineDecision = soleLead
+          ? buildCrewSoleStubBaselineDecision(interpretationForCrew)
+          : buildLeadTemplateBaselineDecision(job.data, message, interpretation);
         let stockTableProductId: string | null = null;
         const vidForCrew = effectiveVariantId?.trim();
         if (vidForCrew) {
@@ -1169,6 +1228,9 @@ export const leadWorker = new Worker<LeadProcessingJobV1>(
         } else if (productContext?.productId) {
           stockTableProductId = String(productContext.productId).trim() || null;
         }
+        const ragProductIdForCrew = extractInterpretationProductId(interpretationForCrew);
+        const stockTableRagProductIdsForLead =
+          soleLead && ragProductIdForCrew ? [ragProductIdForCrew] : null;
         const shadowMode = job.data.executionMode === "shadow";
         let crewPrimaryApplied = false;
         const crewPrimary = await tryWasellerCrewPrimaryReplacement({
@@ -1180,15 +1242,16 @@ export const leadWorker = new Worker<LeadProcessingJobV1>(
           dedupeKey: crewDedupe,
           phone,
           incomingText: incomingRaw,
-          interpretation,
+          interpretation: interpretationForCrew,
           baselineDecision,
           recentMessages: recentChronologicalForCrew,
           tenantBusinessCategory: tenantKnowledge.profile.businessCategory,
           stockTableProductId,
+          stockTableRagProductIds: stockTableRagProductIdsForLead,
           tenantBrief: crewTenantBrief,
           activeOffer: job.data.activeOffer ?? null,
           memoryFacts: job.data.memoryFacts ?? {},
-          conversationStage: job.data.conversationStage ?? interpretation.conversationStage
+          conversationStage: job.data.conversationStage ?? interpretationForCrew.conversationStage
         }).catch(() => null);
         if (crewPrimary) {
           const crewPrimaryThreshold = resolveCrewPrimaryEffectiveConfidenceThreshold(
@@ -1209,7 +1272,7 @@ export const leadWorker = new Worker<LeadProcessingJobV1>(
             appliedExternalRoute = "lead_crew_primary";
           }
         }
-        if (shadowMode && !crewPrimaryApplied) {
+        if (shadowMode && !crewPrimaryApplied && !soleLead) {
           const templateGuarded = applyReplyGuardrails(
             message,
             guardrailFallbackMessage,
@@ -1239,6 +1302,7 @@ export const leadWorker = new Worker<LeadProcessingJobV1>(
             recentMessages: recentChronologicalForCrew,
             tenantBusinessCategory: tenantKnowledge.profile.businessCategory,
             stockTableProductId,
+            stockTableRagProductIds: stockTableRagProductIdsForLead,
             tenantBrief: crewTenantBrief,
             activeOffer: job.data.activeOffer ?? null,
             memoryFacts: job.data.memoryFacts ?? {},
@@ -1263,6 +1327,17 @@ export const leadWorker = new Worker<LeadProcessingJobV1>(
                 }
               }
             }
+          }
+        }
+
+        if (soleLead && !crewPrimaryApplied) {
+          const paymentTemplateVariants = new Set([
+            "payment-link-ready-review",
+            "payment_link_unavailable",
+            "reservation_payment_link_handoff"
+          ]);
+          if (!paymentTemplateVariants.has(selectedVariant)) {
+            message = guardrailFallbackMessage;
           }
         }
 

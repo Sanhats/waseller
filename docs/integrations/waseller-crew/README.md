@@ -8,7 +8,7 @@ Esta carpeta en Waseller contiene todo el paquete para el **otro repo**:
 | [`pyproject.toml.example`](./pyproject.toml.example) | Copiar como `pyproject.toml` y ajustar nombre/versions de `crewai`. |
 | [`.env.example`](./.env.example) | Variables del servicio Python. |
 | [`fixtures/request.example.json`](./fixtures/request.example.json) | Body mínimo (v1). |
-| [`fixtures/request.v1_1.example.json`](./fixtures/request.v1_1.example.json) | Body con opcionales v1.1 (`phone`, ids, `recentMessages`, `tenantBrief`, …). |
+| [`fixtures/request.v1_1.example.json`](./fixtures/request.v1_1.example.json) | Body con opcionales v1.1 (`phone`, ids, `recentMessages`, `tenantBrief`, `tenantRuntimeContext`, …). |
 | [`fixtures/request.mesa_colores.json`](./fixtures/request.mesa_colores.json) | Diálogo **mesa → «¿Qué colores tenés?»** (`recentMessages`, `activeOffer`, `memoryFacts`, `etapa`, `stockTable`, …) para smoke / alinear con el test del repo **waseller-crew**. |
 | [`IMPLEMENTACION_MINIMA.md`](./IMPLEMENTACION_MINIMA.md) | Esqueleto FastAPI + stub `run_crew()` y `curl` de prueba. |
 | [`CONTRATO_V1_1.md`](./CONTRATO_V1_1.md) | Propuesta coordinada: body opcional + Bearer + ejemplos JSON (para PR en Waseller y alinear waseller-crew). |
@@ -19,7 +19,7 @@ Este documento es **autocontenido** para implementar el microservicio con **`uv`
 
 - `LLM_SHADOW_COMPARE_URL` apunta a tu URL (HTTPS en producción).
 - **`WASELLER_CREW_PRIMARY=true`** (opcional): el crew **sustituye** la decisión interna en el orquestador (misma URL y contrato); no se envía un POST adicional solo para comparar en ese turno. Ver `CONTRATO_V1_1.md`.
-- **`WASELLER_CREW_SOLE_MODE=true`** (opcional): en el **orquestador** no se llama al intérprete OpenAI ni a `SelfHostedLlmService.decide`; se envía al crew un baseline mínimo más la `ruleInterpretation` del processor (si existe). Si el crew responde con `candidateInterpretation`, se fusiona como interpretación efectiva. Si el crew no responde válido, se deriva a humano (mismo template que guardrails). Requiere `LLM_SHADOW_COMPARE_URL`; **no** hace falta `WASELLER_CREW_PRIMARY` (el modo sole habilita el POST al crew por sí solo).
+- **`WASELLER_CREW_SOLE_MODE=true`** (opcional): **orquestador** — no intérprete OpenAI ni `SelfHostedLlmService.decide`; baseline stub + `ruleInterpretation` del processor cuando aplica; se fusiona `candidateInterpretation` del crew si viene. **Lead worker** (ruta directa sin `llmDecision`) — el POST al crew usa interpretación/baseline stub (el texto de plantillas locales no es el baseline enviado al crew); sin respuesta crew válida, el mensaje al cliente es el template de handoff. Requiere `LLM_SHADOW_COMPARE_URL`; **no** hace falta `WASELLER_CREW_PRIMARY`.
 - **`WASELLER_CREW_ORCHESTRATE_FIRST=true`** (opcional): con LLM habilitado y `LLM_SHADOW_COMPARE_URL` + primary, el **message-processor** manda también los turnos con variante resuelta al **orquestador** (intérprete + RAG + crew), no solo al lead. Ver `CONTRATO_V1_1.md` §2 y `message-processor.worker.ts`.
 - El job de orquestación va en **`executionMode: "shadow"`** o **`active`** (ver `LlmRolloutService` / tenant / `LLM_SHADOW_MODE`).
 
@@ -64,7 +64,7 @@ Detalle completo v1.1: [`CONTRATO_V1_1.md`](./CONTRATO_V1_1.md). Resumen:
 | `correlationId`, `messageId` | `string` | Opcionales. |
 | `conversationId` | `string` | Opcional (si el job trae conversación). |
 | `recentMessages` | `{ direction, message }[]` | Opcional; hasta **8** mensajes, orden cronológico (más antiguo primero). |
-| `stockTable`, `businessProfileSlug`, `tenantBrief`, `tenantCommercialContext`, `inventoryNarrowingNote`, `etapa`, `activeOffer`, `memoryFacts`, `publicCatalogSlug`, `publicCatalogBaseUrl` | ver `CONTRATO_V1_1.md` §1 y §1.1 | Opcionales v1.1; el crew usa `extra="ignore"` para campos desconocidos. `tenantBrief` es objeto en el wire Waseller (el crew puede acotarlo a ~2500 caracteres al volcar al kickoff). `memoryFacts`: hasta **40** strings (≤**400** caracteres c/u). **`stockTable` tiene prioridad** sobre `activeOffer` / digests si hay conflicto (documentado en prompts del crew). **`publicCatalog*`:** Waseller los envía cuando el tenant tiene slug en BD y hay origen (`PUBLIC_CATALOG_BASE_URL` o `PUBLIC_API_BASE_URL`) para armar `…/tienda/<slug>`. |
+| `stockTable`, `businessProfileSlug`, `tenantBrief`, `tenantCommercialContext`, `inventoryNarrowingNote`, `etapa`, `activeOffer`, `memoryFacts`, `publicCatalogSlug`, `publicCatalogBaseUrl`, `tenantRuntimeContext` | ver `CONTRATO_V1_1.md` §1 y §1.1 | Opcionales v1.1; el crew usa `extra="ignore"` para campos desconocidos. `tenantBrief` es objeto en el wire Waseller (el crew puede acotarlo a ~2500 caracteres al volcar al kickoff). `tenantRuntimeContext`: snapshot ordenado de fila tenant + políticas LLM + integraciones de pago (sin secretos). `memoryFacts`: hasta **40** strings (≤**400** caracteres c/u). **`stockTable` tiene prioridad** sobre `activeOffer` / digests si hay conflicto (documentado en prompts del crew). **`publicCatalog*`:** Waseller los envía cuando el tenant tiene slug en BD y hay origen (`PUBLIC_CATALOG_BASE_URL` o `PUBLIC_API_BASE_URL`) para armar `…/tienda/<slug>`. |
 
 #### `ConversationInterpretationV1` (resumen)
 
