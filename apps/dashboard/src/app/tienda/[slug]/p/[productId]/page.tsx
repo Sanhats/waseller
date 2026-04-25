@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { prisma } from "@waseller/db";
 import { getBackendServices } from "@/lib/backend-services";
+import { ProductGallery } from "./product-gallery.client";
 
 type PageProps = { params: Promise<{ slug: string; productId: string }> };
 
@@ -71,40 +72,8 @@ export default async function TiendaProductoPage({ params }: PageProps) {
 
       <div className="grid grid-cols-1 gap-10 lg:grid-cols-[1.1fr_0.9fr]">
         {/* Galería tipo ecommerce: principal + miniaturas */}
-        <section className="flex flex-col gap-4">
-          <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-            <div className="relative aspect-square w-full overflow-hidden rounded-xl bg-[var(--color-bg)]">
-              {gallery[0] ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={gallery[0]} alt={first.name} className="h-full w-full object-contain" />
-              ) : (
-                <div className="flex h-full w-full items-center justify-center text-sm font-medium text-[var(--color-muted)]">
-                  Sin fotos
-                </div>
-              )}
-            </div>
-          </div>
-
-          {gallery.length > 1 ? (
-            <div className="flex gap-3 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-              {gallery.map((src, idx) => (
-                <a
-                  key={`${src.slice(0, 40)}-${idx}`}
-                  href={src}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="group block"
-                  aria-label={`Ver foto ${idx + 1} en tamaño completo`}
-                  title="Abrir imagen"
-                >
-                  <div className="h-20 w-20 overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={src} alt={`${first.name} — ${idx + 1}`} className="h-full w-full object-cover" />
-                  </div>
-                </a>
-              ))}
-            </div>
-          ) : null}
+        <section>
+          <ProductGallery name={first.name} images={gallery} />
         </section>
 
         {/* Panel derecho: info tipo Mercado Libre */}
