@@ -966,6 +966,10 @@ export const isWasellerCrewSoleModeEnabled = (): boolean =>
 export const isWasellerCrewOrchestrateFirstEnabled = (): boolean =>
   /^(1|true|yes)$/i.test(String(process.env.WASELLER_CREW_ORCHESTRATE_FIRST ?? "").trim());
 
+/** JSON en stderr cuando el POST al crew no aplica (`tryWasellerCrewPrimaryReplacement` devuelve null). Útil en Railway (servicio workers, no Redis). */
+export const isWasellerCrewHttpLogEnabled = (): boolean =>
+  /^(1|true|yes)$/i.test(String(process.env.WASELLER_CREW_HTTP_LOG ?? "").trim());
+
 /**
  * Producción “solo crew” para **lenguaje natural de leads**: con URL, ignora el opt-out
  * `WASELLER_CREW_DELEGATE_CONVERSATION=false` y fuerza el mismo camino que la delegación por defecto
@@ -1567,6 +1571,34 @@ export async function tryWasellerCrewPrimaryReplacement(
   if (!exec) return null;
 
   await persistCrewPrimaryTrace(input, exec, url, timeoutMs, authorizationSent);
+
+  const applied = Boolean(exec.merged && exec.httpOk);
+  if (!applied && isWasellerCrewHttpLogEnabled()) {
+    const draft = exec.candidateDecision?.draftReply;
+    const draftLen = typeof draft === "string" ? draft.trim().length : 0;
+    try {
+      console.warn(
+        JSON.stringify({
+          event: "waseller_crew_http",
+          ts: new Date().toISOString(),
+          applied: false,
+          httpStatus: exec.httpStatus,
+          httpOk: exec.httpOk,
+          parseOk: exec.parseOk,
+          jsonInvalid: exec.jsonInvalid,
+          networkError: exec.networkError ?? null,
+          parseError: exec.parseError ?? null,
+          draftReplyChars: draftLen,
+          hasCandidateDecision: Boolean(exec.candidateDecision),
+          correlationId: input.correlationId,
+          tenantId: input.tenantId,
+          leadId: input.leadId
+        })
+      );
+    } catch {
+      // noop
+    }
+  }
 
   if (!exec.merged || !exec.httpOk) return null;
   return {

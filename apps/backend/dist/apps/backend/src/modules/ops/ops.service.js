@@ -372,9 +372,12 @@ let OpsService = class OpsService {
     async getTenantKnowledge(tenantId) {
         const tenant = await src_2.prisma.tenant.findUnique({
             where: { id: tenantId },
-            select: { name: true }
+            select: { name: true, publicCatalogSlug: true }
         });
         const tenantName = String(tenant?.name ?? "").trim();
+        const publicCatalogSlug = typeof tenant?.publicCatalogSlug === "string" && tenant.publicCatalogSlug.trim()
+            ? tenant.publicCatalogSlug.trim()
+            : null;
         try {
             const rows = (await src_2.prisma.$queryRaw `
         select profile, business_category as "businessCategory", business_labels as "businessLabels"
@@ -396,7 +399,9 @@ let OpsService = class OpsService {
                 return {
                     tenantId,
                     tenantName,
+                    publicCatalogSlug,
                     persisted: true,
+                    crewCommercialContextComplete: (0, src_3.isTenantCrewCommercialContextComplete)(knowledge),
                     knowledge
                 };
             }
@@ -411,7 +416,9 @@ let OpsService = class OpsService {
         return {
             tenantId,
             tenantName,
+            publicCatalogSlug,
             persisted: false,
+            crewCommercialContextComplete: (0, src_3.isTenantCrewCommercialContextComplete)(fallback),
             knowledge: fallback
         };
     }
@@ -427,11 +434,14 @@ let OpsService = class OpsService {
             select: { name: true }
         });
         const tenantName = String(tenant?.name ?? "").trim();
-        const source = input.knowledge && typeof input.knowledge === "object"
+        const rawKnowledge = input.knowledge && typeof input.knowledge === "object"
+            ? input.knowledge
+            : undefined;
+        const source = rawKnowledge
             ? {
-                ...input.knowledge,
+                ...rawKnowledge,
                 ...(input.presetCategory ? { businessCategory: input.presetCategory } : {}),
-                businessName: tenantName || undefined
+                businessName: String(rawKnowledge.businessName ?? "").trim() || tenantName || undefined
             }
             : input.presetCategory
                 ? {

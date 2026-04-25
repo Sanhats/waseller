@@ -208,6 +208,7 @@ model Product {
   name      String
   price     Decimal  @db.Decimal(10, 2)
   imageUrl      String?  @map("image_url")
+  imageUrls     String[] @default([]) @map("image_urls")
   tags      String[]
   /// Algunas BD legacy tienen stock a nivel producto; el stock operativo está en `product_variants`.
   stock         Int?     @default(0) @map("stock")
@@ -231,6 +232,7 @@ model ProductVariant {
   stock         Int      @default(0)
   reservedStock Int      @default(0) @map("reserved_stock")
   isActive      Boolean  @default(true) @map("is_active")
+  imageUrls     String[] @default([]) @map("image_urls")
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
   tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)

@@ -175,8 +175,15 @@ let OnboardingService = class OnboardingService {
         const tenantName = tenantKnowledge.tenantName;
         const whatsappConnected = whatsapp.sessionStatus === "connected";
         const mercadoPagoConnected = mercadoPago.status === "connected";
-        const businessProfileSaved = tenantKnowledge.persisted;
+        const tenantKnowledgePersisted = tenantKnowledge.persisted;
+        const crewCommercialContextComplete = (0, shared_1.isTenantCrewCommercialContextComplete)(tenantKnowledge.knowledge);
+        const businessProfileSaved = tenantKnowledgePersisted && crewCommercialContextComplete;
         const catalogReady = productsCount >= 3;
+        const businessStepMetric = !tenantKnowledgePersisted
+            ? "Pendiente"
+            : !crewCommercialContextComplete
+                ? "Incompleto: tono y entregas"
+                : "Guardado";
         const steps = [
             {
                 key: "connect_whatsapp",
@@ -197,10 +204,10 @@ let OnboardingService = class OnboardingService {
             {
                 key: "configure_business",
                 title: "Contexto de la tienda",
-                description: "Rubro, medios de pago y variantes del catálogo (envíos se acuerdan por WhatsApp).",
+                description: "Rubro, pagos, variantes y datos para el asistente (tono + entregas): se envían a waseller-crew como contexto comercial.",
                 completed: businessProfileSaved,
                 href: "/",
-                metric: businessProfileSaved ? "Guardado" : "Pendiente"
+                metric: businessStepMetric
             },
             {
                 key: "create_catalog",
@@ -213,12 +220,14 @@ let OnboardingService = class OnboardingService {
         ];
         const completedCount = steps.filter((step) => step.completed).length;
         const completionPercent = Math.round((completedCount / steps.length) * 100);
-        const allCompleted = completedCount === steps.length;
+        const allCompleted = steps.every((step) => step.completed);
         return {
             generatedAt: new Date().toISOString(),
             tenantName,
             allCompleted,
             completionPercent,
+            tenantKnowledgePersisted,
+            crewCommercialContextComplete,
             steps,
             whatsapp,
             mercadoPago

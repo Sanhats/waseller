@@ -41,6 +41,7 @@ export class ProductsController {
       name: string;
       price: number;
       imageUrl?: string;
+      imageUrls?: string[];
       tags?: string[];
       variants?: Array<{
         sku: string;
@@ -48,6 +49,7 @@ export class ProductsController {
         stock: number;
         price?: number | null;
         isActive?: boolean;
+        imageUrls?: string[];
       }>;
     }
   ): Promise<unknown> {
@@ -119,6 +121,7 @@ export class ProductsController {
       name?: string;
       price?: number;
       imageUrl?: string | null;
+      imageUrls?: string[] | null;
       tags?: string[];
     }
   ): Promise<unknown> {

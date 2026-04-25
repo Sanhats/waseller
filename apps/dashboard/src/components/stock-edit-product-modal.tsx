@@ -1,12 +1,15 @@
 "use client";
 
-import type { CSSProperties } from "react";
 import { useEffect, useState } from "react";
+import { X, Plus } from "lucide-react";
 import {
   formatAxisLabel,
   StockFieldHint,
   StockProductThumb,
-  StockSectionTitle,
+  FormSection,
+  ImageDropZone,
+  ImageThumbnailGrid,
+  compressImageToDataUrl,
 } from "@/components/stock-ui";
 import { Spinner } from "@/components/ui";
 import { getClientApiBase } from "@/lib/api-base";
@@ -23,6 +26,8 @@ export type StockProductVariantRow = {
   availableStock: number;
   effectivePrice: number;
   imageUrl?: string;
+  imageUrls?: string[];
+  variantImageUrls?: string[];
   isActive: boolean;
   tags?: string[];
   basePrice?: unknown;
@@ -39,7 +44,12 @@ type EditLine = {
   attributes: Record<string, string>;
   price: number | "";
   isActive: boolean;
+  imageUrls: string[];
 };
+
+const COMPRESS_OPTS = { maxWidth: 512, maxHeight: 512, quality: 0.85 } as const;
+const MAX_PRODUCT_IMAGES = 10;
+const MAX_VARIANT_IMAGES = 6;
 
 function authHeaders(): HeadersInit | null {
   if (typeof window === "undefined") return null;
@@ -67,20 +77,13 @@ function variantPriceField(row: StockProductVariantRow): number | "" {
   return pv;
 }
 
-const labelStyle: CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
+const labelSt = {
+  display: "flex" as const,
+  flexDirection: "column" as const,
   gap: 4,
   fontSize: 13,
-  fontWeight: 600,
+  fontWeight: 600 as const,
   color: "var(--color-text)",
-};
-
-const inputStyle: CSSProperties = {
-  padding: "10px 12px",
-  borderRadius: 8,
-  border: "1px solid var(--color-border)",
-  fontSize: 14,
 };
 
 export function StockEditProductModal({
@@ -100,7 +103,8 @@ export function StockEditProductModal({
 }) {
   const [productName, setProductName] = useState("");
   const [basePrice, setBasePrice] = useState<number | "">("");
-  const [imageUrl, setImageUrl] = useState("");
+  const [productImageUrls, setProductImageUrls] = useState<string[]>([]);
+  const [imageUrlDraft, setImageUrlDraft] = useState("");
   const [tagsCsv, setTagsCsv] = useState("");
   const [lines, setLines] = useState<EditLine[]>([]);
   const [draftAttrs, setDraftAttrs] = useState<Record<string, string>>({});
@@ -114,7 +118,14 @@ export function StockEditProductModal({
     const first = rows[0];
     setProductName(first.name);
     setBasePrice(toNum(first.basePrice));
-    setImageUrl(typeof first.imageUrl === "string" ? first.imageUrl : "");
+    const initialProduct =
+      Array.isArray(first.imageUrls) && first.imageUrls.length > 0
+        ? first.imageUrls
+        : typeof first.imageUrl === "string" && first.imageUrl.trim()
+          ? [first.imageUrl.trim()]
+          : [];
+    setProductImageUrls(initialProduct);
+    setImageUrlDraft("");
     setTagsCsv((first.tags ?? []).join(", "));
     setLines(
       rows.map((r) => ({
@@ -127,6 +138,7 @@ export function StockEditProductModal({
         attributes: { ...r.attributes },
         price: variantPriceField(r),
         isActive: r.isActive,
+        imageUrls: Array.isArray(r.variantImageUrls) ? r.variantImageUrls : [],
       })),
     );
     setDraftAttrs({});
@@ -135,35 +147,38 @@ export function StockEditProductModal({
     setApiError("");
   }, [open, rows]);
 
-  const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (loadEvent) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement("canvas");
-        const maxWidth = 512;
-        const maxHeight = 512;
-        let width = img.width;
-        let height = img.height;
-        if (width > height && width > maxWidth) {
-          height *= maxWidth / width;
-          width = maxWidth;
-        } else if (height > maxHeight) {
-          width *= maxHeight / height;
-          height = maxHeight;
-        }
-        canvas.width = width;
-        canvas.height = height;
-        const context = canvas.getContext("2d");
-        context?.drawImage(img, 0, 0, width, height);
-        setImageUrl(canvas.toDataURL("image/jpeg", 0.85));
-      };
-      img.src = String(loadEvent.target?.result ?? "");
-    };
-    reader.readAsDataURL(file);
+  const handleProductImagesUpload = async (files: File[]) => {
+    try {
+      const next: string[] = [];
+      for (const f of files) {
+        if (productImageUrls.length + next.length >= MAX_PRODUCT_IMAGES) break;
+        next.push(await compressImageToDataUrl(f, COMPRESS_OPTS));
+      }
+      if (next.length > 0) setProductImageUrls((prev) => [...prev, ...next]);
+    } catch (e) {
+      setApiError(
+        e instanceof Error ? e.message : "No se pudieron procesar las imágenes",
+      );
+    }
   };
+
+  const addImageUrl = () => {
+    const url = imageUrlDraft.trim();
+    if (!url) return;
+    setProductImageUrls((prev) => {
+      if (prev.includes(url) || prev.length >= MAX_PRODUCT_IMAGES) return prev;
+      return [...prev, url];
+    });
+    setImageUrlDraft("");
+  };
+
+  const draftSkuPreview = buildGeneratedSku(
+    productName,
+    Object.fromEntries(
+      axes.map((axis) => [axis, String(draftAttrs[axis] ?? "").trim()]),
+    ),
+    lines.map((l) => l.sku),
+  );
 
   const appendDraftVariant = () => {
     const attrs = Object.fromEntries(
@@ -174,9 +189,9 @@ export function StockEditProductModal({
     for (const axis of axes) {
       if (!attrs[axis]) return;
     }
-    const existingSkus = lines.map((l) => l.sku);
-    const sku = buildGeneratedSku(productName, attrs, existingSkus);
-    const stock = draftStock === "" ? 0 : Math.max(0, Math.floor(Number(draftStock)));
+    const sku = buildGeneratedSku(productName, attrs, lines.map((l) => l.sku));
+    const stock =
+      draftStock === "" ? 0 : Math.max(0, Math.floor(Number(draftStock)));
     const price =
       draftPrice === "" || Number.isNaN(Number(draftPrice))
         ? ""
@@ -193,20 +208,13 @@ export function StockEditProductModal({
         attributes: attrs,
         price,
         isActive: true,
+        imageUrls: [],
       },
     ]);
     setDraftAttrs({});
     setDraftStock("");
     setDraftPrice("");
   };
-
-  const draftSkuPreview = buildGeneratedSku(
-    productName,
-    Object.fromEntries(
-      axes.map((axis) => [axis, String(draftAttrs[axis] ?? "").trim()]),
-    ),
-    lines.map((l) => l.sku),
-  );
 
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -216,62 +224,52 @@ export function StockEditProductModal({
     setSaving(true);
     setApiError("");
     try {
-      const productRes = await fetch(`${getClientApiBase()}/products/${productId}`, {
-        method: "PATCH",
-        headers,
-        body: JSON.stringify({
-          name: productName.trim(),
-          price: Number(basePrice || 0),
-          imageUrl: imageUrl.trim().length > 0 ? imageUrl.trim() : null,
-          tags: tagsCsv
-            .split(",")
-            .map((t) => t.trim())
-            .filter(Boolean),
-        }),
-      });
-      if (!productRes.ok) {
-        throw new Error(await productRes.text());
-      }
+      const productRes = await fetch(
+        `${getClientApiBase()}/products/${productId}`,
+        {
+          method: "PATCH",
+          headers,
+          body: JSON.stringify({
+            name: productName.trim(),
+            price: Number(basePrice || 0),
+            imageUrls: productImageUrls,
+            tags: tagsCsv
+              .split(",")
+              .map((t) => t.trim())
+              .filter(Boolean),
+          }),
+        },
+      );
+      if (!productRes.ok) throw new Error(await productRes.text());
 
-      const persistBody = (line: EditLine) => {
-        const stockNum =
-          line.stock === "" ? 0 : Math.max(0, Math.floor(Number(line.stock)));
-        return {
-          sku: line.sku.trim(),
-          attributes: line.attributes,
-          stock: stockNum,
-          isActive: line.isActive,
-          price: line.price === "" ? null : Math.max(0, Number(line.price)),
-        };
-      };
+      const persistBody = (line: EditLine) => ({
+        sku: line.sku.trim(),
+        attributes: line.attributes,
+        stock:
+          line.stock === "" ? 0 : Math.max(0, Math.floor(Number(line.stock))),
+        isActive: line.isActive,
+        price: line.price === "" ? null : Math.max(0, Number(line.price)),
+        imageUrls: line.imageUrls,
+      });
 
       for (const line of lines.filter((l) => !l.isNew && l.variantId)) {
         const vr = await fetch(
           `${getClientApiBase()}/products/variants/${line.variantId}`,
-          {
-            method: "PATCH",
-            headers,
-            body: JSON.stringify(persistBody(line)),
-          },
+          { method: "PATCH", headers, body: JSON.stringify(persistBody(line)) },
         );
-        if (!vr.ok) {
-          throw new Error(
-            `${line.sku}: ${(await vr.text()) || vr.statusText}`,
-          );
-        }
+        if (!vr.ok)
+          throw new Error(`${line.sku}: ${(await vr.text()) || vr.statusText}`);
       }
 
       for (const line of lines.filter((l) => l.isNew)) {
-        const vr = await fetch(`${getClientApiBase()}/products/${productId}/variants`, {
-          method: "POST",
-          headers,
-          body: JSON.stringify(persistBody(line)),
-        });
-        if (!vr.ok) {
+        const vr = await fetch(
+          `${getClientApiBase()}/products/${productId}/variants`,
+          { method: "POST", headers, body: JSON.stringify(persistBody(line)) },
+        );
+        if (!vr.ok)
           throw new Error(
             `Alta ${line.sku}: ${(await vr.text()) || vr.statusText}`,
           );
-        }
       }
 
       onSaved();
@@ -287,546 +285,298 @@ export function StockEditProductModal({
 
   if (!open) return null;
 
+  const canSubmit =
+    !saving && !!productName.trim() && Number(basePrice) >= 0 && lines.every((l) => !!String(l.sku).trim());
+
   return (
     <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        backgroundColor: "rgba(11, 11, 12, 0.55)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 1000,
-        padding: 14,
-      }}
+      className="ws-modal-overlay"
       role="dialog"
       aria-modal="true"
       aria-labelledby="edit-product-title"
     >
       <form
         onSubmit={(ev) => void save(ev)}
-        style={{
-          backgroundColor: "var(--color-surface)",
-          borderRadius: 14,
-          width: "100%",
-          maxWidth: 920,
-          maxHeight: "90vh",
-          overflowY: "auto",
-          padding: 20,
-          display: "grid",
-          gap: 18,
-        }}
+        className="ws-modal-panel"
+        style={{ maxWidth: isMobile ? "100%" : 920 }}
       >
-        <div>
-          <h2
-            id="edit-product-title"
-            style={{
-              margin: 0,
-              fontSize: 22,
-              color: "var(--color-text)",
-            }}
-          >
-            Editar producto
-          </h2>
-          <p
-            style={{
-              margin: "8px 0 0",
-              fontSize: 14,
-              lineHeight: 1.5,
-              color: "var(--color-muted)",
-            }}
-          >
-            Cambiá datos del artículo y de cada variante; podés sumar nuevas
-            combinaciones antes de guardar. El depósito no puede quedar por
-            debajo de las unidades reservadas en conversaciones.
-          </p>
-        </div>
-
-        {apiError ? (
-          <p
-            role="alert"
-            style={{
-              margin: 0,
-              padding: "10px 12px",
-              borderRadius: 8,
-              fontSize: 13,
-              color: "var(--color-error)",
-              backgroundColor: "var(--color-error-bg)",
-              border: "1px solid color-mix(in srgb, var(--color-error) 35%, transparent)",
-            }}
-          >
-            {apiError}
-          </p>
-        ) : null}
-
-        <div style={{ display: "grid", gap: 12 }}>
-          <StockSectionTitle>1 · Datos generales</StockSectionTitle>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
-              gap: 12,
-            }}
-          >
-            <label style={labelStyle}>
-              Nombre del producto
-              <input
-                required
-                value={productName}
-                onChange={(e) => setProductName(e.target.value)}
-                style={inputStyle}
-              />
-              <StockFieldHint>
-                Aplica a todas las variantes de este producto.
-              </StockFieldHint>
-            </label>
-            <label style={labelStyle}>
-              Precio de lista (ARS)
-              <input
-                type="number"
-                min={0}
-                step="0.01"
-                required
-                value={basePrice}
-                onChange={(e) =>
-                  setBasePrice(
-                    e.target.value.trim().length === 0
-                      ? ""
-                      : Number(e.target.value),
-                  )
-                }
-                style={inputStyle}
-              />
-              <StockFieldHint>
-                Precio por defecto si la variante no tiene precio propio.
-              </StockFieldHint>
-            </label>
-            <label style={labelStyle}>
-              URL de imagen (opcional)
-              <input
-                value={imageUrl.startsWith("data:") ? "" : imageUrl}
-                onChange={(e) => setImageUrl(e.target.value)}
-                disabled={imageUrl.startsWith("data:")}
-                placeholder="https://…"
-                style={inputStyle}
-              />
-              <StockFieldHint>
-                O subí una imagen abajo (se comprime en el navegador).
-              </StockFieldHint>
-            </label>
-            <label style={labelStyle}>
-              Etiquetas (coma)
-              <input
-                value={tagsCsv}
-                onChange={(e) => setTagsCsv(e.target.value)}
-                placeholder="remera, verano"
-                style={inputStyle}
-              />
-            </label>
+        {/* ── Header ── */}
+        <div className="ws-modal-header">
+          <div>
+            <h2
+              id="edit-product-title"
+              style={{ margin: 0, fontSize: 18, fontWeight: 700, color: "var(--color-text)" }}
+            >
+              Editar producto
+            </h2>
+            <p style={{ margin: "4px 0 0", fontSize: 13, color: "var(--color-muted)" }}>
+              {productName || rows[0]?.name || ""} · {lines.length} variante
+              {lines.length !== 1 ? "s" : ""}
+            </p>
           </div>
+          <button
+            type="button"
+            className="ws-btn-close"
+            onClick={onClose}
+            aria-label="Cerrar sin guardar"
+          >
+            <X size={16} aria-hidden />
+          </button>
         </div>
 
-        <div
-          style={{
-            display: "grid",
-            gap: 10,
-            borderTop: "1px solid var(--color-border)",
-            paddingTop: 16,
-          }}
-        >
-          <StockSectionTitle>2 · Imagen</StockSectionTitle>
-          <label
-            style={{
-              border: "2px dashed var(--color-border)",
-              borderRadius: 10,
-              padding: 16,
-              cursor: "pointer",
-              background: "var(--color-bg)",
-              display: "grid",
-              gap: 10,
-              justifyItems: "center",
-            }}
-          >
-            <input
-              type="file"
-              accept="image/*"
-              onChange={handleImageUpload}
-              style={{ display: "none" }}
-            />
-            {imageUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={imageUrl}
-                alt="Vista previa"
-                style={{
-                  maxWidth: "100%",
-                  maxHeight: 180,
-                  borderRadius: 8,
-                  objectFit: "contain",
-                }}
-              />
-            ) : (
-              <span style={{ color: "var(--color-muted)", fontSize: 14 }}>
-                Elegir archivo
-              </span>
-            )}
-          </label>
-          {imageUrl.startsWith("data:") ? (
-            <button
-              type="button"
-              onClick={() => setImageUrl("")}
+        {/* ── Body ── */}
+        <div className="ws-modal-body">
+          {apiError ? (
+            <div
+              role="alert"
               style={{
-                width: "fit-content",
-                padding: "8px 14px",
+                padding: "10px 14px",
                 borderRadius: 8,
-                border: "1px solid var(--color-border)",
-                background: "var(--color-surface)",
-                cursor: "pointer",
                 fontSize: 13,
+                color: "var(--color-error)",
+                backgroundColor: "var(--color-error-bg)",
+                border:
+                  "1px solid color-mix(in srgb, var(--color-error) 30%, transparent)",
               }}
             >
-              Quitar imagen subida
-            </button>
+              {apiError}
+            </div>
           ) : null}
-        </div>
 
-        <div
-          style={{
-            display: "grid",
-            gap: 14,
-            borderTop: "1px solid var(--color-border)",
-            paddingTop: 16,
-          }}
-        >
-          <StockSectionTitle>3 · Variantes ({lines.length})</StockSectionTitle>
-          <p
-            style={{
-              margin: 0,
-              fontSize: 13,
-              color: "var(--color-muted)",
-              lineHeight: 1.5,
-            }}
-          >
-            Sumá una combinación nueva con los mismos ejes del negocio. El SKU
-            se arma solo; podés editarlo antes de guardar.
-          </p>
-          <div
-            style={{
-              border: "1px dashed var(--color-border)",
-              borderRadius: 10,
-              padding: 14,
-              display: "grid",
-              gap: 12,
-              backgroundColor: "var(--color-surface)",
-            }}
-          >
-            <span
-              style={{
-                fontSize: 11,
-                fontWeight: 700,
-                color: "var(--color-muted)",
-                textTransform: "uppercase",
-                letterSpacing: "0.04em",
-              }}
-            >
-              Nueva variante (sin guardar aún)
-            </span>
+          {/* 1 · Datos generales */}
+          <FormSection num={1} title="Datos generales">
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr",
-                gap: 12,
+                gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
+                gap: 14,
               }}
             >
-              <div
-                style={{
-                  padding: "10px 12px",
-                  borderRadius: 8,
-                  border: "1px solid var(--color-border)",
-                  background: "var(--color-bg)",
-                  fontSize: 13,
-                }}
-              >
-                <span
-                  style={{
-                    fontSize: 10,
-                    fontWeight: 700,
-                    color: "var(--color-muted)",
-                    textTransform: "uppercase",
-                  }}
-                >
-                  Vista previa SKU
-                </span>
-                <div
-                  style={{
-                    marginTop: 6,
-                    fontFamily: "ui-monospace, monospace",
-                    fontWeight: 600,
-                    wordBreak: "break-all",
-                  }}
-                >
-                  {draftSkuPreview}
-                </div>
-              </div>
-              <label style={labelStyle}>
-                Depósito inicial
+              <label style={labelSt}>
+                Nombre del producto
                 <input
-                  type="number"
-                  min={0}
-                  value={draftStock}
-                  onChange={(e) =>
-                    setDraftStock(
-                      e.target.value.trim() === ""
-                        ? ""
-                        : Number(e.target.value),
-                    )
-                  }
-                  style={inputStyle}
+                  required
+                  value={productName}
+                  onChange={(e) => setProductName(e.target.value)}
+                  className="ws-input"
                 />
+                <StockFieldHint>
+                  Aplica a todas las variantes de este producto.
+                </StockFieldHint>
               </label>
-              <label style={labelStyle}>
-                Precio (opcional)
+              <label style={labelSt}>
+                Precio de lista (ARS)
                 <input
                   type="number"
                   min={0}
                   step="0.01"
-                  value={draftPrice}
+                  required
+                  value={basePrice}
                   onChange={(e) =>
-                    setDraftPrice(
-                      e.target.value.trim() === ""
-                        ? ""
-                        : Number(e.target.value),
+                    setBasePrice(
+                      e.target.value.trim() === "" ? "" : Number(e.target.value),
                     )
                   }
-                  placeholder="Base del producto"
-                  style={inputStyle}
+                  className="ws-input"
+                />
+                <StockFieldHint>
+                  Precio por defecto si la variante no tiene precio propio.
+                </StockFieldHint>
+              </label>
+              <label style={labelSt}>
+                Etiquetas (coma)
+                <input
+                  value={tagsCsv}
+                  onChange={(e) => setTagsCsv(e.target.value)}
+                  placeholder="remera, verano"
+                  className="ws-input"
                 />
               </label>
             </div>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: isMobile
-                  ? "1fr"
-                  : `repeat(${Math.max(axes.length, 1)}, minmax(0,1fr))`,
-                gap: 12,
-              }}
-            >
-              {axes.map((axis) => (
-                <label key={`draft-${axis}`} style={labelStyle}>
-                  {formatAxisLabel(axis)}{" "}
-                  <span style={{ fontWeight: 400, color: "var(--color-muted)" }}>
-                    (obligatorio)
-                  </span>
-                  <input
-                    value={draftAttrs[axis] ?? ""}
-                    onChange={(e) =>
-                      setDraftAttrs((prev) => ({
-                        ...prev,
-                        [axis]: e.target.value,
-                      }))
-                    }
-                    style={inputStyle}
-                  />
-                </label>
-              ))}
-            </div>
-            <button
-              type="button"
-              onClick={appendDraftVariant}
-              style={{
-                width: "fit-content",
-                padding: "8px 14px",
-                borderRadius: 8,
-                border: "1px solid var(--color-border)",
-                background: "var(--color-bg)",
-                cursor: "pointer",
-                fontSize: 13,
-                fontWeight: 600,
-              }}
-            >
-              Agregar a la lista
-            </button>
-            <StockFieldHint>
-              Si no pasa nada, completá todos los ejes (
-              {axes.map((a) => formatAxisLabel(a)).join(", ")}).
-            </StockFieldHint>
-          </div>
+          </FormSection>
 
-          {lines.map((line, idx) => (
-            <div
-              key={line.clientKey}
-              style={{
-                border: "1px solid var(--color-border)",
-                borderRadius: 10,
-                padding: 14,
-                display: "grid",
-                gap: 12,
-                backgroundColor: "var(--color-bg)",
-              }}
-            >
-              <div
+          {/* 2 · Fotos */}
+          <FormSection
+            num={2}
+            title="Fotos del producto"
+            description="La primera imagen es la foto principal. Se comprimen automáticamente."
+          >
+            <ImageDropZone
+              onFilesSelected={(files) => void handleProductImagesUpload(files)}
+              count={productImageUrls.length}
+              maxCount={MAX_PRODUCT_IMAGES}
+              label="Subí fotos del producto"
+            />
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <input
+                value={imageUrlDraft}
+                onChange={(e) => setImageUrlDraft(e.target.value)}
+                placeholder="O pegá una URL de imagen…"
+                className="ws-input"
+                style={{ flex: "1 1 180px", minWidth: 0 }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    addImageUrl();
+                  }
+                }}
+              />
+              <button
+                type="button"
+                onClick={addImageUrl}
+                disabled={
+                  !imageUrlDraft.trim() ||
+                  productImageUrls.length >= MAX_PRODUCT_IMAGES
+                }
                 style={{
-                  display: "flex",
-                  flexWrap: "wrap",
-                  alignItems: "center",
-                  gap: 10,
+                  padding: "10px 16px",
+                  borderRadius: 8,
+                  border: "1px solid var(--color-border)",
+                  background: "var(--color-surface)",
+                  cursor: "pointer",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  whiteSpace: "nowrap",
+                  flexShrink: 0,
                 }}
               >
-                <StockProductThumb
-                  imageUrl={rows[0]?.imageUrl}
-                  name={productName || rows[0]?.name || "Producto"}
-                />
-                <span
+                Agregar URL
+              </button>
+              {productImageUrls.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setProductImageUrls([])}
                   style={{
-                    fontSize: 12,
-                    fontWeight: 700,
-                    color: "var(--color-muted)",
-                    textTransform: "uppercase",
-                  }}
-                >
-                  Variante {idx + 1}
-                </span>
-                {line.isNew ? (
-                  <span
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 700,
-                      padding: "2px 8px",
-                      borderRadius: 999,
-                      backgroundColor: "var(--color-primary-ultra-light)",
-                      color: "var(--color-primary)",
-                    }}
-                  >
-                    Nueva
-                  </span>
-                ) : null}
-                <label
-                  style={{
-                    marginLeft: "auto",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    fontSize: 13,
+                    padding: "10px 16px",
+                    borderRadius: 8,
+                    border: "1px solid var(--color-border)",
+                    background: "var(--color-surface)",
                     cursor: "pointer",
+                    fontSize: 13,
+                    color: "var(--color-error)",
+                    whiteSpace: "nowrap",
+                    flexShrink: 0,
                   }}
                 >
-                  <input
-                    type="checkbox"
-                    checked={line.isActive}
-                    onChange={(e) =>
-                      setLines((prev) =>
-                        prev.map((L) =>
-                          L.clientKey === line.clientKey
-                            ? { ...L, isActive: e.target.checked }
-                            : L,
-                        ),
-                      )
-                    }
-                  />
-                  Activa en catálogo
-                </label>
-                {line.isNew ? (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setLines((prev) =>
-                        prev.filter((L) => L.clientKey !== line.clientKey),
-                      )
-                    }
-                    style={{
-                      border: "none",
-                      background: "transparent",
-                      color: "var(--color-error)",
-                      cursor: "pointer",
-                      fontSize: 13,
-                      fontWeight: 600,
-                    }}
-                  >
-                    Quitar
-                  </button>
-                ) : null}
-              </div>
-              <label style={labelStyle}>
-                SKU
-                <input
-                  required
-                  value={line.sku}
-                  onChange={(e) =>
-                    setLines((prev) =>
-                      prev.map((L) =>
-                        L.clientKey === line.clientKey
-                          ? { ...L, sku: e.target.value }
-                          : L,
-                      ),
-                    )
-                  }
-                  style={{ ...inputStyle, fontFamily: "ui-monospace, monospace" }}
-                />
-              </label>
+                  Quitar todas
+                </button>
+              ) : null}
+            </div>
+            <ImageThumbnailGrid
+              urls={productImageUrls}
+              onRemove={(idx) =>
+                setProductImageUrls((prev) => prev.filter((_, i) => i !== idx))
+              }
+              onMoveUp={(idx) =>
+                setProductImageUrls((prev) => {
+                  const next = [...prev];
+                  [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
+                  return next;
+                })
+              }
+            />
+          </FormSection>
+
+          {/* 3 · Variantes */}
+          <FormSection
+            num={3}
+            title={`Variantes (${lines.length})`}
+            description="Sumá una combinación nueva o editá las existentes. El SKU se arma solo; podés editarlo antes de guardar."
+          >
+            {/* New variant builder */}
+            <div
+              style={{
+                border: "2px dashed var(--color-growth-strong)",
+                borderRadius: 12,
+                padding: "18px 20px",
+                background: "var(--color-growth-soft)",
+                display: "grid",
+                gap: 14,
+              }}
+            >
+              <span
+                style={{
+                  fontSize: 11,
+                  fontWeight: 700,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.06em",
+                  color: "var(--color-growth-strong)",
+                }}
+              >
+                Nueva variante (sin guardar aún)
+              </span>
+
               <div
                 style={{
                   display: "grid",
-                  gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
+                  gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr",
                   gap: 12,
                 }}
               >
-                <label style={labelStyle}>
-                  Depósito (unidades)
+                <div
+                  style={{
+                    padding: "10px 14px",
+                    borderRadius: 8,
+                    border: "1px solid var(--color-border)",
+                    background: "var(--color-surface)",
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 700,
+                      color: "var(--color-muted)",
+                      textTransform: "uppercase",
+                      letterSpacing: "0.04em",
+                    }}
+                  >
+                    Vista previa SKU
+                  </span>
+                  <div
+                    style={{
+                      marginTop: 6,
+                      fontFamily: "ui-monospace, monospace",
+                      fontWeight: 600,
+                      fontSize: 13,
+                      wordBreak: "break-all",
+                      color: "var(--color-text)",
+                    }}
+                  >
+                    {draftSkuPreview}
+                  </div>
+                </div>
+                <label style={labelSt}>
+                  Depósito inicial
                   <input
                     type="number"
-                    min={line.reservedStock}
-                    step={1}
-                    required
-                    value={line.stock}
+                    min={0}
+                    value={draftStock}
                     onChange={(e) =>
-                      setLines((prev) =>
-                        prev.map((L) =>
-                          L.clientKey === line.clientKey
-                            ? {
-                                ...L,
-                                stock:
-                                  e.target.value.trim() === ""
-                                    ? ""
-                                    : Number(e.target.value),
-                              }
-                            : L,
-                        ),
+                      setDraftStock(
+                        e.target.value.trim() === "" ? "" : Number(e.target.value),
                       )
                     }
-                    style={inputStyle}
+                    className="ws-input"
                   />
-                  <StockFieldHint>
-                    Mínimo {line.reservedStock} (reservado actualmente).
-                  </StockFieldHint>
                 </label>
-                <label style={labelStyle}>
-                  Precio variante (ARS, opcional)
+                <label style={labelSt}>
+                  Precio (opcional)
                   <input
                     type="number"
                     min={0}
                     step="0.01"
-                    value={line.price}
+                    value={draftPrice}
                     onChange={(e) =>
-                      setLines((prev) =>
-                        prev.map((L) =>
-                          L.clientKey === line.clientKey
-                            ? {
-                                ...L,
-                                price:
-                                  e.target.value.trim() === ""
-                                    ? ""
-                                    : Number(e.target.value),
-                              }
-                            : L,
-                        ),
+                      setDraftPrice(
+                        e.target.value.trim() === "" ? "" : Number(e.target.value),
                       )
                     }
-                    placeholder="Vacío = precio base"
-                    style={inputStyle}
+                    placeholder="Base del producto"
+                    className="ws-input"
                   />
                 </label>
               </div>
+
               <div
                 style={{
                   display: "grid",
@@ -837,79 +587,116 @@ export function StockEditProductModal({
                 }}
               >
                 {axes.map((axis) => (
-                  <label key={`${line.clientKey}-${axis}`} style={labelStyle}>
-                    {formatAxisLabel(axis)}
+                  <label key={`draft-${axis}`} style={labelSt}>
+                    {formatAxisLabel(axis)}{" "}
+                    <span style={{ fontWeight: 400, color: "var(--color-muted)" }}>
+                      (obligatorio)
+                    </span>
                     <input
-                      value={line.attributes[axis] ?? ""}
+                      value={draftAttrs[axis] ?? ""}
                       onChange={(e) =>
-                        setLines((prev) =>
-                          prev.map((L) =>
-                            L.clientKey === line.clientKey
-                              ? {
-                                  ...L,
-                                  attributes: {
-                                    ...L.attributes,
-                                    [axis]: e.target.value,
-                                  },
-                                }
-                              : L,
-                          ),
-                        )
+                        setDraftAttrs((prev) => ({ ...prev, [axis]: e.target.value }))
                       }
-                      style={inputStyle}
+                      className="ws-input"
                     />
                   </label>
                 ))}
               </div>
+
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  onClick={appendDraftVariant}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "9px 18px",
+                    borderRadius: 8,
+                    border: "1.5px solid var(--color-growth-strong)",
+                    background: "var(--color-surface)",
+                    cursor: "pointer",
+                    fontSize: 13,
+                    fontWeight: 700,
+                    color: "var(--color-text)",
+                  }}
+                >
+                  <Plus size={14} aria-hidden />
+                  Agregar a la lista
+                </button>
+                <StockFieldHint style={{ margin: 0 }}>
+                  Si no pasa nada, completá todos los ejes (
+                  {axes.map(formatAxisLabel).join(", ")}).
+                </StockFieldHint>
+              </div>
             </div>
-          ))}
+
+            {/* Existing + new variant cards */}
+            {lines.map((line, idx) => (
+              <VariantEditCard
+                key={line.clientKey}
+                line={line}
+                idx={idx}
+                axes={axes}
+                isMobile={isMobile}
+                productThumbUrl={productImageUrls[0] || rows[0]?.imageUrl}
+                productName={productName || rows[0]?.name || "Producto"}
+                onUpdateLine={(patch) =>
+                  setLines((prev) =>
+                    prev.map((L) =>
+                      L.clientKey === line.clientKey ? { ...L, ...patch } : L,
+                    ),
+                  )
+                }
+                onRemoveLine={() =>
+                  setLines((prev) =>
+                    prev.filter((L) => L.clientKey !== line.clientKey),
+                  )
+                }
+                onError={setApiError}
+              />
+            ))}
+          </FormSection>
         </div>
 
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "flex-end",
-            gap: 10,
-            borderTop: "1px solid var(--color-border)",
-            paddingTop: 16,
-          }}
-        >
+        {/* ── Footer ── */}
+        <div className="ws-modal-footer">
           <button
             type="button"
             onClick={onClose}
             style={{
-              padding: "10px 14px",
+              padding: "10px 20px",
               borderRadius: 8,
               border: "1px solid var(--color-border)",
               background: "var(--color-surface)",
               cursor: "pointer",
               fontSize: 14,
+              fontWeight: 500,
+              color: "var(--color-text)",
             }}
           >
             Cancelar
           </button>
           <button
             type="submit"
-            disabled={
-              saving ||
-              !productName.trim() ||
-              Number(basePrice) < 0 ||
-              lines.some((l) => !String(l.sku).trim())
-            }
+            disabled={!canSubmit}
             style={{
-              padding: "10px 18px",
+              padding: "10px 22px",
               borderRadius: 8,
               border: "none",
-              background: "var(--color-primary)",
-              color: "var(--color-surface)",
-              cursor: saving ? "wait" : "pointer",
+              background: canSubmit ? "var(--color-primary)" : "var(--color-disabled-bg)",
+              color: canSubmit ? "#fff" : "var(--color-disabled)",
+              cursor: canSubmit ? "pointer" : "not-allowed",
               fontSize: 14,
               fontWeight: 600,
-              opacity: saving ? 0.75 : 1,
               display: "inline-flex",
               alignItems: "center",
               gap: 8,
+              minWidth: 140,
+              justifyContent: "center",
+              transition: "background 0.15s",
             }}
+            aria-busy={saving || undefined}
           >
             {saving ? (
               <Spinner size="sm" label="Guardando" />
@@ -919,6 +706,247 @@ export function StockEditProductModal({
           </button>
         </div>
       </form>
+    </div>
+  );
+}
+
+/* ── Tarjeta de variante editable ──────────────────────────────────────────── */
+
+function VariantEditCard({
+  line,
+  idx,
+  axes,
+  isMobile,
+  productThumbUrl,
+  productName,
+  onUpdateLine,
+  onRemoveLine,
+  onError,
+}: {
+  line: EditLine;
+  idx: number;
+  axes: string[];
+  isMobile: boolean;
+  productThumbUrl?: string;
+  productName: string;
+  onUpdateLine: (patch: Partial<EditLine>) => void;
+  onRemoveLine: () => void;
+  onError: (msg: string) => void;
+}) {
+  const handleVariantImagesUpload = async (files: File[]) => {
+    try {
+      const next: string[] = [];
+      for (const f of files) {
+        if (line.imageUrls.length + next.length >= MAX_VARIANT_IMAGES) break;
+        next.push(await compressImageToDataUrl(f, COMPRESS_OPTS));
+      }
+      if (next.length > 0)
+        onUpdateLine({ imageUrls: [...line.imageUrls, ...next] });
+    } catch (err) {
+      onError(
+        err instanceof Error
+          ? err.message
+          : "No se pudieron procesar las imágenes de la variante",
+      );
+    }
+  };
+
+  return (
+    <div
+      className={`ws-variant-card${line.isNew ? " ws-variant-card-new" : ""}`}
+    >
+      {/* Card header */}
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          alignItems: "center",
+          gap: 10,
+          padding: "12px 14px",
+          borderBottom: "1px solid var(--color-border)",
+          background: "var(--color-surface)",
+        }}
+      >
+        <StockProductThumb imageUrl={productThumbUrl} name={productName} />
+        <span
+          style={{
+            fontSize: 12,
+            fontWeight: 700,
+            color: "var(--color-muted)",
+            textTransform: "uppercase",
+            letterSpacing: "0.04em",
+          }}
+        >
+          Variante {idx + 1}
+        </span>
+        {line.isNew ? (
+          <span
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              padding: "2px 9px",
+              borderRadius: 999,
+              backgroundColor: "var(--color-growth-soft)",
+              color: "var(--color-growth-strong)",
+              border: "1px solid var(--color-growth-strong)",
+            }}
+          >
+            Nueva
+          </span>
+        ) : null}
+        <label
+          style={{
+            marginLeft: "auto",
+            display: "flex",
+            alignItems: "center",
+            gap: 7,
+            fontSize: 13,
+            cursor: "pointer",
+            userSelect: "none",
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={line.isActive}
+            onChange={(e) => onUpdateLine({ isActive: e.target.checked })}
+          />
+          Activa en catálogo
+        </label>
+        {line.isNew ? (
+          <button
+            type="button"
+            onClick={onRemoveLine}
+            style={{
+              border: "none",
+              background: "transparent",
+              color: "var(--color-error)",
+              cursor: "pointer",
+              fontSize: 13,
+              fontWeight: 600,
+              padding: "2px 0",
+            }}
+          >
+            Quitar
+          </button>
+        ) : null}
+      </div>
+
+      {/* Card body */}
+      <div style={{ padding: "14px", display: "grid", gap: 12 }}>
+        <label style={labelSt}>
+          SKU
+          <input
+            required
+            value={line.sku}
+            onChange={(e) => onUpdateLine({ sku: e.target.value })}
+            className="ws-input ws-input-mono"
+          />
+        </label>
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
+            gap: 12,
+          }}
+        >
+          <label style={labelSt}>
+            Depósito (unidades)
+            <input
+              type="number"
+              min={line.reservedStock}
+              step={1}
+              required
+              value={line.stock}
+              onChange={(e) =>
+                onUpdateLine({
+                  stock: e.target.value.trim() === "" ? "" : Number(e.target.value),
+                })
+              }
+              className="ws-input"
+            />
+            <StockFieldHint>
+              Mínimo {line.reservedStock} (reservado actualmente).
+            </StockFieldHint>
+          </label>
+          <label style={labelSt}>
+            Precio variante (ARS, opcional)
+            <input
+              type="number"
+              min={0}
+              step="0.01"
+              value={line.price}
+              onChange={(e) =>
+                onUpdateLine({
+                  price: e.target.value.trim() === "" ? "" : Number(e.target.value),
+                })
+              }
+              placeholder="Vacío = precio base"
+              className="ws-input"
+            />
+          </label>
+        </div>
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: isMobile
+              ? "1fr"
+              : `repeat(${Math.max(axes.length, 1)}, minmax(0,1fr))`,
+            gap: 12,
+          }}
+        >
+          {axes.map((axis) => (
+            <label key={`${line.clientKey}-${axis}`} style={labelSt}>
+              {formatAxisLabel(axis)}
+              <input
+                value={line.attributes[axis] ?? ""}
+                onChange={(e) =>
+                  onUpdateLine({
+                    attributes: { ...line.attributes, [axis]: e.target.value },
+                  })
+                }
+                className="ws-input"
+              />
+            </label>
+          ))}
+        </div>
+
+        <div style={{ display: "grid", gap: 8 }}>
+          <span
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              color: "var(--color-muted)",
+              textTransform: "uppercase",
+              letterSpacing: "0.04em",
+            }}
+          >
+            Fotos de la variante (opcional)
+          </span>
+          <ImageDropZone
+            onFilesSelected={(files) => void handleVariantImagesUpload(files)}
+            count={line.imageUrls.length}
+            maxCount={MAX_VARIANT_IMAGES}
+            label="Fotos específicas de esta combinación"
+            sublabel="Opcional · máx. 6 fotos"
+          />
+          <ImageThumbnailGrid
+            urls={line.imageUrls}
+            thumbHeight={72}
+            onRemove={(imgIdx) => {
+              const next = [...line.imageUrls];
+              next.splice(imgIdx, 1);
+              onUpdateLine({ imageUrls: next });
+            }}
+            onMoveUp={(imgIdx) => {
+              const next = [...line.imageUrls];
+              [next[imgIdx - 1], next[imgIdx]] = [next[imgIdx], next[imgIdx - 1]];
+              onUpdateLine({ imageUrls: next });
+            }}
+          />
+        </div>
+      </div>
     </div>
   );
 }

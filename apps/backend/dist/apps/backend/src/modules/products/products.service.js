@@ -9,6 +9,41 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.ProductsService = void 0;
 const common_1 = require("@nestjs/common");
 const src_1 = require("../../../../../packages/db/src");
+function readNumericEnv(key, fallback) {
+    const n = Number(process.env[key]);
+    return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+function normalizeImageUrls(input, opts) {
+    if (!Array.isArray(input))
+        return [];
+    const out = [];
+    const seen = new Set();
+    for (const item of input) {
+        if (out.length >= opts.maxItems)
+            break;
+        const s = String(item ?? "").trim();
+        if (!s)
+            continue;
+        if (s.length > opts.maxChars)
+            continue;
+        if (seen.has(s))
+            continue;
+        seen.add(s);
+        out.push(s);
+    }
+    return out;
+}
+function resolvePrimaryImageUrl(candidate) {
+    const explicit = typeof candidate.imageUrl === "string" ? candidate.imageUrl.trim() : "";
+    if (explicit)
+        return explicit;
+    if (Array.isArray(candidate.imageUrls) && candidate.imageUrls.length > 0) {
+        const first = String(candidate.imageUrls[0] ?? "").trim();
+        if (first)
+            return first;
+    }
+    return undefined;
+}
 const normalizeAttributes = (raw) => {
     if (!raw || typeof raw !== "object" || Array.isArray(raw))
         return {};
@@ -21,22 +56,30 @@ const normalizeVariant = (input) => {
     const sku = String(input.sku ?? "").trim();
     if (!sku)
         return null;
+    const maxVariantImages = readNumericEnv("VARIANT_MAX_IMAGE_UPLOADS", 6);
+    const maxVariantChars = readNumericEnv("VARIANT_IMAGE_MAX_CHARS", 220_000);
     return {
         sku,
         attributes: normalizeAttributes(input.attributes),
         stock: Math.max(0, Number(input.stock ?? 0)),
         price: input.price === null || input.price === undefined ? null : Math.max(0, Number(input.price)),
-        isActive: input.isActive !== false
+        isActive: input.isActive !== false,
+        imageUrls: normalizeImageUrls(input.imageUrls, { maxItems: maxVariantImages, maxChars: maxVariantChars })
     };
 };
 const normalizeCreatePayload = (body) => {
+    const maxProductImages = readNumericEnv("PRODUCT_MAX_IMAGE_UPLOADS", 10);
+    const maxProductChars = readNumericEnv("PRODUCT_IMAGE_MAX_CHARS", 220_000);
     const variants = Array.isArray(body.variants) ? body.variants.map(normalizeVariant).filter(Boolean) : [];
     const sanitizedVariants = variants;
     const fallbackSku = `SKU-${Date.now()}`;
+    const normalizedImageUrls = normalizeImageUrls(body.imageUrls, { maxItems: maxProductImages, maxChars: maxProductChars });
+    const imageUrl = resolvePrimaryImageUrl({ imageUrl: body.imageUrl, imageUrls: normalizedImageUrls }) || undefined;
     return {
         name: String(body.name ?? "").trim(),
         price: Math.max(0, Number(body.price ?? 0)),
-        imageUrl: String(body.imageUrl ?? "").trim() || undefined,
+        imageUrl,
+        imageUrls: normalizedImageUrls,
         tags: Array.isArray(body.tags) ? body.tags.map((item) => String(item ?? "").trim()).filter(Boolean) : [],
         variants: sanitizedVariants.length > 0
             ? sanitizedVariants
@@ -46,7 +89,8 @@ const normalizeCreatePayload = (body) => {
                     attributes: {},
                     stock: 0,
                     price: null,
-                    isActive: true
+                    isActive: true,
+                    imageUrls: []
                 }
             ]
     };
@@ -67,6 +111,8 @@ let ProductsService = class ProductsService {
         v.reserved_stock as "reservedStock",
         greatest(v.stock - v.reserved_stock, 0) as "availableStock",
         p.image_url as "imageUrl",
+        p.image_urls as "imageUrls",
+        v.image_urls as "variantImageUrls",
         p.tags as "tags",
         v.is_active as "isActive"
       from public.product_variants v
@@ -86,7 +132,58 @@ let ProductsService = class ProductsService {
             stock: Number(row.stock ?? 0),
             reservedStock: Number(row.reservedStock ?? 0),
             availableStock: Number(row.availableStock ?? 0),
-            imageUrl: row.imageUrl,
+            imageUrl: row.variantImageUrls?.[0] ||
+                row.imageUrls?.[0] ||
+                row.imageUrl,
+            imageUrls: Array.isArray(row.imageUrls) ? row.imageUrls : [],
+            variantImageUrls: Array.isArray(row.variantImageUrls) ? row.variantImageUrls : [],
+            tags: Array.isArray(row.tags) ? row.tags : [],
+            isActive: Boolean(row.isActive)
+        }));
+    }
+    /** Catálogo público: solo variantes activas (sin JWT en el consumidor de la página). */
+    async listPublicCatalogByTenant(tenantId) {
+        const rows = (await src_1.prisma.$queryRaw `
+      select
+        v.id as "variantId",
+        p.id as "productId",
+        p.name as "name",
+        p.price as "basePrice",
+        v.price as "variantPrice",
+        coalesce(v.price, p.price) as "effectivePrice",
+        v.sku as "sku",
+        v.attributes as "attributes",
+        v.stock as "stock",
+        v.reserved_stock as "reservedStock",
+        greatest(v.stock - v.reserved_stock, 0) as "availableStock",
+        p.image_url as "imageUrl",
+        p.image_urls as "imageUrls",
+        v.image_urls as "variantImageUrls",
+        p.tags as "tags",
+        v.is_active as "isActive"
+      from public.product_variants v
+      inner join public.products p on p.id = v.product_id
+      where v.tenant_id::text = ${tenantId}
+        and v.is_active = true
+      order by p.updated_at desc, p.name asc, v.sku asc
+    `);
+        return rows.map((row) => ({
+            variantId: row.variantId,
+            productId: row.productId,
+            name: row.name,
+            basePrice: row.basePrice,
+            variantPrice: row.variantPrice,
+            effectivePrice: Number(row.effectivePrice ?? 0),
+            sku: row.sku,
+            attributes: normalizeAttributes(row.attributes),
+            stock: Number(row.stock ?? 0),
+            reservedStock: Number(row.reservedStock ?? 0),
+            availableStock: Number(row.availableStock ?? 0),
+            imageUrl: row.variantImageUrls?.[0] ||
+                row.imageUrls?.[0] ||
+                row.imageUrl,
+            imageUrls: Array.isArray(row.imageUrls) ? row.imageUrls : [],
+            variantImageUrls: Array.isArray(row.variantImageUrls) ? row.variantImageUrls : [],
             tags: Array.isArray(row.tags) ? row.tags : [],
             isActive: Boolean(row.isActive)
         }));
@@ -100,6 +197,7 @@ let ProductsService = class ProductsService {
                     name: payload.name,
                     price: payload.price,
                     imageUrl: payload.imageUrl,
+                    imageUrls: payload.imageUrls ?? [],
                     tags: payload.tags
                 }
             });
@@ -115,7 +213,8 @@ let ProductsService = class ProductsService {
                         price: variant.price === null || variant.price === undefined ? null : variant.price,
                         stock: variant.stock,
                         reservedStock: 0,
-                        isActive: variant.isActive !== false
+                        isActive: variant.isActive !== false,
+                        imageUrls: variant.imageUrls ?? []
                     }
                 });
                 createdVariants.push({ id: created.id, sku: created.sku, stock: created.stock });
@@ -151,7 +250,8 @@ let ProductsService = class ProductsService {
             attributes: body.attributes,
             stock: body.stock,
             price: body.price,
-            isActive: body.isActive
+            isActive: body.isActive,
+            imageUrls: body.imageUrls
         });
         if (!normalized) {
             throw new common_1.BadRequestException("Datos de variante incompletos o SKU vacío");
@@ -174,7 +274,8 @@ let ProductsService = class ProductsService {
                     price: normalized.price === null ? null : normalized.price,
                     stock: normalized.stock,
                     reservedStock: 0,
-                    isActive: normalized.isActive !== false
+                    isActive: normalized.isActive !== false,
+                    imageUrls: normalized.imageUrls ?? []
                 }
             });
             if (Number(created.stock) > 0) {
@@ -203,6 +304,7 @@ let ProductsService = class ProductsService {
         const hasAny = typeof body.name === "string" ||
             typeof body.price === "number" ||
             body.imageUrl !== undefined ||
+            body.imageUrls !== undefined ||
             Array.isArray(body.tags);
         if (!hasAny)
             return { ok: true };
@@ -225,6 +327,22 @@ let ProductsService = class ProductsService {
         if (body.imageUrl !== undefined) {
             const trimmed = String(body.imageUrl ?? "").trim();
             data.imageUrl = trimmed.length > 0 ? trimmed : null;
+        }
+        if (body.imageUrls !== undefined) {
+            if (body.imageUrls === null) {
+                data.imageUrls = [];
+                if (data.imageUrl === undefined)
+                    data.imageUrl = null;
+            }
+            else {
+                const maxProductImages = readNumericEnv("PRODUCT_MAX_IMAGE_UPLOADS", 10);
+                const maxProductChars = readNumericEnv("PRODUCT_IMAGE_MAX_CHARS", 220_000);
+                const normalized = normalizeImageUrls(body.imageUrls, { maxItems: maxProductImages, maxChars: maxProductChars });
+                data.imageUrls = normalized;
+                if (data.imageUrl === undefined) {
+                    data.imageUrl = normalized[0] ? normalized[0] : null;
+                }
+            }
         }
         if (Array.isArray(body.tags)) {
             data.tags = body.tags.map((t) => String(t ?? "").trim()).filter(Boolean);
@@ -283,6 +401,14 @@ let ProductsService = class ProductsService {
                     : Math.max(0, Number(body.price));
         }
         const nextIsActive = typeof body.isActive === "boolean" ? body.isActive : variant.isActive;
+        const nextImageUrls = body.imageUrls !== undefined
+            ? body.imageUrls === null
+                ? []
+                : normalizeImageUrls(body.imageUrls, {
+                    maxItems: readNumericEnv("VARIANT_MAX_IMAGE_UPLOADS", 6),
+                    maxChars: readNumericEnv("VARIANT_IMAGE_MAX_CHARS", 220_000)
+                })
+            : undefined;
         const deltaStock = nextStock - Number(variant.stock);
         return src_1.prisma.$transaction(async (tx) => {
             await tx.productVariant.update({
@@ -293,7 +419,8 @@ let ProductsService = class ProductsService {
                     attributes: nextAttributes,
                     stock: nextStock,
                     ...(nextPrice !== undefined ? { price: nextPrice } : {}),
-                    isActive: nextIsActive
+                    isActive: nextIsActive,
+                    ...(nextImageUrls !== undefined ? { imageUrls: nextImageUrls } : {})
                 }
             });
             if (deltaStock !== 0) {
@@ -324,6 +451,8 @@ let ProductsService = class ProductsService {
           v.reserved_stock as "reservedStock",
           greatest(v.stock - v.reserved_stock, 0) as "availableStock",
           p.image_url as "imageUrl",
+          p.image_urls as "imageUrls",
+          v.image_urls as "variantImageUrls",
           p.tags as "tags",
           v.is_active as "isActive"
         from public.product_variants v
@@ -404,6 +533,8 @@ let ProductsService = class ProductsService {
           v.reserved_stock as "reservedStock",
           greatest(v.stock - v.reserved_stock, 0) as "availableStock",
           p.image_url as "imageUrl",
+          p.image_urls as "imageUrls",
+          v.image_urls as "variantImageUrls",
           p.tags as "tags",
           v.is_active as "isActive"
         from public.product_variants v
