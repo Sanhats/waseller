@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
+import Link from "next/link";
 import { prisma } from "@waseller/db";
 import { getBackendServices } from "@/lib/backend-services";
 
@@ -98,35 +99,41 @@ export default async function TiendaPublicPage({ params }: PageProps) {
               key={p.productId}
               className="flex flex-col overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm"
             >
-              <div className="relative aspect-[4/3] w-full bg-[var(--color-bg)]">
-                {p.imageUrl?.trim() ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={p.imageUrl.trim()}
-                    alt={p.name}
-                    className="h-full w-full object-cover"
-                  />
-                ) : (
-                  <div className="flex h-full w-full items-center justify-center text-sm font-medium text-[var(--color-muted)]">
-                    Sin foto
-                  </div>
-                )}
-              </div>
-              <div className="flex flex-1 flex-col gap-2 p-4">
-                <h2 className="line-clamp-2 text-base font-semibold leading-snug text-[var(--color-text)]">
-                  {p.name}
-                </h2>
-                <p className="text-lg font-semibold text-[var(--color-text)]">
-                  {p.minPrice === p.maxPrice
-                    ? money(p.minPrice)
-                    : `${money(p.minPrice)} — ${money(p.maxPrice)}`}
-                </p>
-                <p className="mt-auto text-xs text-[var(--color-muted)]">
-                  {p.variantCount > 1
-                    ? `${p.variantCount} variantes · ${p.totalAvailable} u. disponibles`
-                    : `${p.totalAvailable} u. disponibles`}
-                </p>
-              </div>
+              <Link
+                href={`/tienda/${slug}/p/${p.productId}`}
+                className="group flex h-full flex-col focus:outline-none"
+                aria-label={`Ver detalles de ${p.name}`}
+              >
+                <div className="relative aspect-[4/3] w-full bg-[var(--color-bg)]">
+                  {p.imageUrl?.trim() ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={p.imageUrl.trim()}
+                      alt={p.name}
+                      className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+                    />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center text-sm font-medium text-[var(--color-muted)]">
+                      Sin foto
+                    </div>
+                  )}
+                </div>
+                <div className="flex flex-1 flex-col gap-2 p-4">
+                  <h2 className="line-clamp-2 text-base font-semibold leading-snug text-[var(--color-text)] group-hover:underline">
+                    {p.name}
+                  </h2>
+                  <p className="text-lg font-semibold text-[var(--color-text)]">
+                    {p.minPrice === p.maxPrice
+                      ? money(p.minPrice)
+                      : `${money(p.minPrice)} — ${money(p.maxPrice)}`}
+                  </p>
+                  <p className="mt-auto text-xs text-[var(--color-muted)]">
+                    {p.variantCount > 1
+                      ? `${p.variantCount} variantes · ${p.totalAvailable} u. disponibles`
+                      : `${p.totalAvailable} u. disponibles`}
+                  </p>
+                </div>
+              </Link>
             </li>
           ))}
         </ul>

@@ -265,6 +265,83 @@ export class ProductsService {
     }));
   }
 
+  /** Detalle público del producto: variantes activas del mismo `productId` (sin JWT). */
+  async getPublicProductDetailsByTenant(
+    tenantId: string,
+    productId: string
+  ): Promise<
+    Array<{
+      productId: string;
+      name: string;
+      basePrice: number;
+      imageUrls: string[];
+      tags: string[];
+      variantId: string;
+      sku: string;
+      attributes: Record<string, string>;
+      variantPrice: number | null;
+      effectivePrice: number;
+      availableStock: number;
+      isActive: boolean;
+      variantImageUrls: string[];
+    }>
+  > {
+    const pid = String(productId ?? "").trim();
+    if (!pid) return [];
+    const rows = (await (prisma as any).$queryRaw`
+      select
+        p.id as "productId",
+        p.name as "name",
+        p.price as "basePrice",
+        p.image_urls as "imageUrls",
+        p.tags as "tags",
+        v.id as "variantId",
+        v.sku as "sku",
+        v.attributes as "attributes",
+        v.price as "variantPrice",
+        coalesce(v.price, p.price) as "effectivePrice",
+        greatest(v.stock - v.reserved_stock, 0) as "availableStock",
+        v.is_active as "isActive",
+        v.image_urls as "variantImageUrls"
+      from public.product_variants v
+      inner join public.products p on p.id = v.product_id
+      where v.tenant_id::text = ${tenantId}
+        and p.id::text = ${pid}
+        and v.is_active = true
+      order by v.sku asc
+    `) as Array<{
+      productId: string;
+      name: string;
+      basePrice: unknown;
+      imageUrls?: string[] | null;
+      tags?: string[] | null;
+      variantId: string;
+      sku: string;
+      attributes: unknown;
+      variantPrice: unknown;
+      effectivePrice: unknown;
+      availableStock: number;
+      isActive: boolean;
+      variantImageUrls?: string[] | null;
+    }>;
+
+    return rows.map((r) => ({
+      productId: r.productId,
+      name: String(r.name ?? ""),
+      basePrice: Number(r.basePrice ?? 0),
+      imageUrls: Array.isArray(r.imageUrls) ? r.imageUrls : [],
+      tags: Array.isArray(r.tags) ? r.tags : [],
+      variantId: r.variantId,
+      sku: String(r.sku ?? ""),
+      attributes: normalizeAttributes(r.attributes),
+      variantPrice: r.variantPrice == null ? null : Number(r.variantPrice),
+      effectivePrice: Number(r.effectivePrice ?? 0),
+      availableStock: Number(r.availableStock ?? 0),
+      isActive: Boolean(r.isActive),
+      variantImageUrls: Array.isArray(r.variantImageUrls) ? r.variantImageUrls : []
+    }));
+  }
+
   async createProduct(
     tenantId: string,
     body: {
