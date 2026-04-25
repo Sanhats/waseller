@@ -74,6 +74,7 @@ Los tipos canónicos viven en [`packages/queue/src/contracts.ts`](../../packages
 |----------|-----|
 | `LLM_SHADOW_MODE` | Por defecto shadow en rollout ([`llm-rollout.service.ts`](../../apps/workers/src/services/llm-rollout.service.ts)). |
 | `LLM_SHADOW_COMPARE_URL` | URL POST a waseller-crew: con ella, por defecto Waseller **delega** interpretación/respuesta al crew (ver [`SINCRONIZACION_CON_WASELLER.md`](../integrations/waseller-crew/SINCRONIZACION_CON_WASELLER.md)). Opt-out: `WASELLER_CREW_DELEGATE_CONVERSATION=false`. |
+| `WASELLER_CREW_MANDATORY` | `true`: con URL, **siempre** delegación NL al crew (anula el opt-out anterior). Objetivo: en Waseller solo queda armado de contexto + POST; la “cabeza” conversacional vive en waseller-crew. |
 | `WASELLER_CREW_DELEGATE_CONVERSATION` | `false` desactiva la delegación automática aunque exista `LLM_SHADOW_COMPARE_URL` (p. ej. solo telemetría). Si no está definida, con URL se delega. |
 | `LLM_SHADOW_COMPARE_TIMEOUT_MS` | Timeout del POST de comparación. |
 | `LLM_SHADOW_COMPARE_SECRET` | Opcional: si está definido, `Authorization: Bearer` en el POST (ver [`CONTRATO_V1_1.md`](../integrations/waseller-crew/CONTRATO_V1_1.md)). |

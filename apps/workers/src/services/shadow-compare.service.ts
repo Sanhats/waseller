@@ -967,13 +967,23 @@ export const isWasellerCrewOrchestrateFirstEnabled = (): boolean =>
   /^(1|true|yes)$/i.test(String(process.env.WASELLER_CREW_ORCHESTRATE_FIRST ?? "").trim());
 
 /**
+ * Producción “solo crew” para **lenguaje natural de leads**: con URL, ignora el opt-out
+ * `WASELLER_CREW_DELEGATE_CONVERSATION=false` y fuerza el mismo camino que la delegación por defecto
+ * (orquestador en modo crew-only: stub + POST; sin OpenAI / self-hosted para NL).
+ */
+export const isWasellerCrewMandatoryForLeadHandling = (): boolean =>
+  /^(1|true|yes)$/i.test(String(process.env.WASELLER_CREW_MANDATORY ?? "").trim());
+
+/**
  * Si hay `LLM_SHADOW_COMPARE_URL`, por defecto la conversación comercial se delega a waseller-crew
  * (sin depender de `WASELLER_CREW_PRIMARY` / `WASELLER_CREW_SOLE_MODE`). Opt-out: `WASELLER_CREW_DELEGATE_CONVERSATION=false`.
+ * **`WASELLER_CREW_MANDATORY=true`** anula ese opt-out (siempre delega con URL).
  * Sin URL nunca delega.
  */
 export function wasellerCrewDelegatesConversation(): boolean {
   const url = String(process.env.LLM_SHADOW_COMPARE_URL ?? "").trim();
   if (!url) return false;
+  if (isWasellerCrewMandatoryForLeadHandling()) return true;
   if (isWasellerCrewPrimaryEnabled() || isWasellerCrewSoleModeEnabled()) return true;
   const raw = String(process.env.WASELLER_CREW_DELEGATE_CONVERSATION ?? "").trim();
   if (/^(0|false|no)$/i.test(raw)) return false;

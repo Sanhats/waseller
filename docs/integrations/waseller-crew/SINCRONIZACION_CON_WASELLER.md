@@ -54,7 +54,8 @@ Si el **dashboard** marca perfil incompleto (`crewCommercialContextComplete === 
 | Variable | Efecto |
 |----------|--------|
 | `LLM_SHADOW_COMPARE_URL` | Habilita POST al crew |
-| `WASELLER_CREW_DELEGATE_CONVERSATION=false` | Opt-out: no asumir delegación total solo por URL |
+| `WASELLER_CREW_MANDATORY=true` | Con URL: delegación NL **siempre** al crew; **anula** `WASELLER_CREW_DELEGATE_CONVERSATION=false` |
+| `WASELLER_CREW_DELEGATE_CONVERSATION=false` | Opt-out: no asumir delegación total solo por URL (salvo que `WASELLER_CREW_MANDATORY` esté activo) |
 | `WASELLER_CREW_PRIMARY` / `WASELLER_CREW_SOLE_MODE` | Modos explícitos legacy; ver README del integración |
 | `LLM_SHADOW_MODE` | Si `true`, el cliente igual puede ver texto del crew cuando la delegación está activa (ver `lead.worker` / orquestador) |
 
