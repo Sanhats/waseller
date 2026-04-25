@@ -32,6 +32,8 @@ export type StockProductVariantRow = {
   tags?: string[];
   basePrice?: unknown;
   variantPrice?: unknown | null;
+  categoryIds?: string[];
+  categoryNames?: string[];
 };
 
 type EditLine = {
@@ -50,6 +52,8 @@ type EditLine = {
 const COMPRESS_OPTS = { maxWidth: 512, maxHeight: 512, quality: 0.85 } as const;
 const MAX_PRODUCT_IMAGES = 10;
 const MAX_VARIANT_IMAGES = 6;
+
+type CategoryOption = { id: string; parentId: string | null; name: string; sortOrder: number };
 
 function authHeaders(): HeadersInit | null {
   if (typeof window === "undefined") return null;
@@ -112,6 +116,24 @@ export function StockEditProductModal({
   const [draftPrice, setDraftPrice] = useState<number | "">("");
   const [saving, setSaving] = useState(false);
   const [apiError, setApiError] = useState("");
+  const [allCategories, setAllCategories] = useState<CategoryOption[]>([]);
+  const [selectedCategoryIds, setSelectedCategoryIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    (async () => {
+      const headers = authHeaders();
+      if (!headers) return;
+      const res = await fetch(`${getClientApiBase()}/categories`, { headers, cache: "no-store" });
+      if (!cancelled && res.ok) {
+        setAllCategories((await res.json()) as CategoryOption[]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open || rows.length === 0) return;
@@ -145,6 +167,9 @@ export function StockEditProductModal({
     setDraftStock("");
     setDraftPrice("");
     setApiError("");
+    setSelectedCategoryIds(
+      Array.isArray(first.categoryIds) ? first.categoryIds.map((x) => String(x)) : [],
+    );
   }, [open, rows]);
 
   const handleProductImagesUpload = async (files: File[]) => {
@@ -237,6 +262,7 @@ export function StockEditProductModal({
               .split(",")
               .map((t) => t.trim())
               .filter(Boolean),
+            categoryIds: selectedCategoryIds,
           }),
         },
       );
@@ -392,6 +418,53 @@ export function StockEditProductModal({
                   className="ws-input"
                 />
               </label>
+              {allCategories.length > 0 ? (
+                <div style={{ gridColumn: isMobile ? undefined : "1 / -1", marginTop: 8 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--color-text)" }}>Categorías</div>
+                  <StockFieldHint style={{ marginTop: 4, marginBottom: 8 }}>
+                    Filtrado en inventario y tienda pública (incluye subcategorías al filtrar).
+                  </StockFieldHint>
+                  <div
+                    style={{
+                      maxHeight: 180,
+                      overflowY: "auto",
+                      border: "1px solid var(--color-border)",
+                      borderRadius: 8,
+                      padding: "8px 10px",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 6,
+                      background: "var(--color-bg)",
+                    }}
+                  >
+                    {[...allCategories]
+                      .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, "es"))
+                      .map((c) => (
+                        <label
+                          key={c.id}
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 8,
+                            fontSize: 13,
+                            cursor: "pointer",
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedCategoryIds.includes(c.id)}
+                            onChange={() =>
+                              setSelectedCategoryIds((prev) =>
+                                prev.includes(c.id) ? prev.filter((x) => x !== c.id) : [...prev, c.id],
+                              )
+                            }
+                          />
+                          <span>{c.name}</span>
+                        </label>
+                      ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
           </FormSection>
 

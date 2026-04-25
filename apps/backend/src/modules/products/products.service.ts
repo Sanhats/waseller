@@ -1,5 +1,10 @@
 import { BadRequestException, ConflictException, Injectable } from "@nestjs/common";
+import { join, sqltag } from "@prisma/client/runtime/library";
+import type { Sql } from "@prisma/client/runtime/library";
 import { prisma } from "../../../../../packages/db/src";
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 type VariantAttributes = Record<string, string>;
 
@@ -38,7 +43,39 @@ type ProductVariantRow = {
   variantImageUrls?: string[] | null;
   tags: string[];
   isActive: boolean;
+  categoryIds: string[];
+  categoryNames: string[];
 };
+
+async function syncProductCategories(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tx: any,
+  tenantId: string,
+  productId: string,
+  categoryIds: string[]
+): Promise<void> {
+  const unique = [...new Set(categoryIds.map((x) => String(x ?? "").trim()).filter(Boolean))];
+  if (unique.some((id) => !UUID_RE.test(id))) {
+    throw new BadRequestException("Algún categoryId no es un UUID válido");
+  }
+  if (unique.length > 0) {
+    const found = await tx.category.findMany({
+      where: { tenantId, id: { in: unique }, isActive: true },
+      select: { id: true }
+    });
+    const ok = new Set(found.map((c: { id: string }) => c.id));
+    const missing = unique.filter((id) => !ok.has(id));
+    if (missing.length) {
+      throw new BadRequestException("Categorías inexistentes, de otro tenant o inactivas");
+    }
+  }
+  await tx.productCategory.deleteMany({ where: { productId } });
+  if (unique.length > 0) {
+    await tx.productCategory.createMany({
+      data: unique.map((categoryId) => ({ productId, categoryId }))
+    });
+  }
+}
 
 function readNumericEnv(key: string, fallback: number): number {
   const n = Number(process.env[key]);
@@ -133,9 +170,80 @@ const normalizeCreatePayload = (body: {
 
 @Injectable()
 export class ProductsService {
-  async listByTenant(tenantId: string): Promise<
-    ProductVariantRow[]
-  > {
+  private async expandCategorySubtreeIds(
+    tenantId: string,
+    rootId: string,
+    requireActiveCategories = false
+  ): Promise<string[]> {
+    if (!UUID_RE.test(rootId)) return [];
+    const root = await prisma.category.findFirst({
+      where: { id: rootId, tenantId, ...(requireActiveCategories ? { isActive: true } : {}) },
+      select: { id: true }
+    });
+    if (!root) return [];
+    const all = await prisma.category.findMany({
+      where: { tenantId, ...(requireActiveCategories ? { isActive: true } : {}) },
+      select: { id: true, parentId: true }
+    });
+    const byParent = new Map<string | null, string[]>();
+    for (const c of all) {
+      const k = c.parentId;
+      if (!byParent.has(k)) byParent.set(k, []);
+      byParent.get(k)!.push(c.id);
+    }
+    const out: string[] = [];
+    const stack = [root.id];
+    while (stack.length) {
+      const id = stack.pop()!;
+      out.push(id);
+      for (const ch of byParent.get(id) ?? []) stack.push(ch);
+    }
+    return out;
+  }
+
+  private async buildProductVariantWhereParts(
+    tenantId: string,
+    opts?: { categoryId?: string; q?: string },
+    activeVariantsOnly?: boolean,
+    requireActiveCategories = false
+  ): Promise<Sql[]> {
+    const parts: Sql[] = [sqltag`v.tenant_id::text = ${tenantId}`];
+    if (activeVariantsOnly) {
+      parts.push(sqltag`v.is_active = true`);
+    }
+    const cid = opts?.categoryId?.trim();
+    if (cid) {
+      const ids = await this.expandCategorySubtreeIds(tenantId, cid, requireActiveCategories);
+      if (ids.length === 0) {
+        parts.push(sqltag`false`);
+      } else {
+        parts.push(sqltag`exists (
+          select 1 from public.product_categories pc
+          where pc.product_id = p.id and pc.category_id in (${join(
+            ids.map((x) => sqltag`${x}::uuid`)
+          )})
+        )`);
+      }
+    }
+    const q = opts?.q?.trim();
+    if (q) {
+      const qv = q.toLowerCase();
+      parts.push(sqltag`(
+        position(${qv} in lower(p.name)) > 0
+        or exists (
+          select 1 from unnest(coalesce(p.tags, array[]::text[])) t
+          where position(${qv} in lower(t)) > 0
+        )
+      )`);
+    }
+    return parts;
+  }
+
+  async listByTenant(
+    tenantId: string,
+    opts?: { categoryId?: string; q?: string }
+  ): Promise<ProductVariantRow[]> {
+    const whereParts = await this.buildProductVariantWhereParts(tenantId, opts, false);
     const rows = (await (prisma as any).$queryRaw`
       select
         v.id as "variantId",
@@ -153,10 +261,24 @@ export class ProductsService {
         p.image_urls as "imageUrls",
         v.image_urls as "variantImageUrls",
         p.tags as "tags",
-        v.is_active as "isActive"
+        v.is_active as "isActive",
+        coalesce(
+          (select array_agg(c.id::text order by c.sort_order, c.name)
+           from public.product_categories pc
+           join public.categories c on c.id = pc.category_id
+           where pc.product_id = p.id),
+          '{}'::text[]
+        ) as "categoryIds",
+        coalesce(
+          (select array_agg(c.name order by c.sort_order, c.name)
+           from public.product_categories pc
+           join public.categories c on c.id = pc.category_id
+           where pc.product_id = p.id),
+          '{}'::text[]
+        ) as "categoryNames"
       from public.product_variants v
       inner join public.products p on p.id = v.product_id
-      where v.tenant_id::text = ${tenantId}
+      where ${join(whereParts, " AND ")}
       order by p.updated_at desc, p.name asc, v.sku asc
     `) as Array<{
       variantId: string;
@@ -175,6 +297,8 @@ export class ProductsService {
       variantImageUrls?: string[] | null;
       tags?: string[] | null;
       isActive: boolean;
+      categoryIds?: string[] | null;
+      categoryNames?: string[] | null;
     }>;
     return rows.map((row) => ({
       variantId: row.variantId,
@@ -195,12 +319,18 @@ export class ProductsService {
       imageUrls: Array.isArray(row.imageUrls) ? row.imageUrls : [],
       variantImageUrls: Array.isArray(row.variantImageUrls) ? row.variantImageUrls : [],
       tags: Array.isArray(row.tags) ? row.tags : [],
-      isActive: Boolean(row.isActive)
+      isActive: Boolean(row.isActive),
+      categoryIds: Array.isArray(row.categoryIds) ? row.categoryIds : [],
+      categoryNames: Array.isArray(row.categoryNames) ? row.categoryNames : []
     }));
   }
 
   /** Catálogo público: solo variantes activas (sin JWT en el consumidor de la página). */
-  async listPublicCatalogByTenant(tenantId: string): Promise<ProductVariantRow[]> {
+  async listPublicCatalogByTenant(
+    tenantId: string,
+    opts?: { categoryId?: string; q?: string }
+  ): Promise<ProductVariantRow[]> {
+    const whereParts = await this.buildProductVariantWhereParts(tenantId, opts, true, true);
     const rows = (await (prisma as any).$queryRaw`
       select
         v.id as "variantId",
@@ -218,11 +348,24 @@ export class ProductsService {
         p.image_urls as "imageUrls",
         v.image_urls as "variantImageUrls",
         p.tags as "tags",
-        v.is_active as "isActive"
+        v.is_active as "isActive",
+        coalesce(
+          (select array_agg(c.id::text order by c.sort_order, c.name)
+           from public.product_categories pc
+           join public.categories c on c.id = pc.category_id
+           where pc.product_id = p.id),
+          '{}'::text[]
+        ) as "categoryIds",
+        coalesce(
+          (select array_agg(c.name order by c.sort_order, c.name)
+           from public.product_categories pc
+           join public.categories c on c.id = pc.category_id
+           where pc.product_id = p.id),
+          '{}'::text[]
+        ) as "categoryNames"
       from public.product_variants v
       inner join public.products p on p.id = v.product_id
-      where v.tenant_id::text = ${tenantId}
-        and v.is_active = true
+      where ${join(whereParts, " AND ")}
       order by p.updated_at desc, p.name asc, v.sku asc
     `) as Array<{
       variantId: string;
@@ -241,6 +384,8 @@ export class ProductsService {
       variantImageUrls?: string[] | null;
       tags?: string[] | null;
       isActive: boolean;
+      categoryIds?: string[] | null;
+      categoryNames?: string[] | null;
     }>;
     return rows.map((row) => ({
       variantId: row.variantId,
@@ -261,7 +406,9 @@ export class ProductsService {
       imageUrls: Array.isArray(row.imageUrls) ? row.imageUrls : [],
       variantImageUrls: Array.isArray(row.variantImageUrls) ? row.variantImageUrls : [],
       tags: Array.isArray(row.tags) ? row.tags : [],
-      isActive: Boolean(row.isActive)
+      isActive: Boolean(row.isActive),
+      categoryIds: Array.isArray(row.categoryIds) ? row.categoryIds : [],
+      categoryNames: Array.isArray(row.categoryNames) ? row.categoryNames : []
     }));
   }
 
@@ -269,8 +416,9 @@ export class ProductsService {
   async getPublicProductDetailsByTenant(
     tenantId: string,
     productId: string
-  ): Promise<
-    Array<{
+  ): Promise<{
+    categories: Array<{ id: string; name: string; slug: string }>;
+    variants: Array<{
       productId: string;
       name: string;
       basePrice: number;
@@ -284,10 +432,21 @@ export class ProductsService {
       availableStock: number;
       isActive: boolean;
       variantImageUrls: string[];
-    }>
-  > {
+    }>;
+  }> {
     const pid = String(productId ?? "").trim();
-    if (!pid) return [];
+    if (!pid) return { categories: [], variants: [] };
+
+    const cats = (await (prisma as any).$queryRaw`
+      select c.id::text as id, c.name, c.slug
+      from public.product_categories pc
+      inner join public.categories c on c.id = pc.category_id
+      where pc.product_id::text = ${pid}
+        and c.tenant_id::text = ${tenantId}
+        and c.is_active = true
+      order by c.sort_order asc, c.name asc
+    `) as Array<{ id: string; name: string; slug: string }>;
+
     const rows = (await (prisma as any).$queryRaw`
       select
         p.id as "productId",
@@ -325,21 +484,24 @@ export class ProductsService {
       variantImageUrls?: string[] | null;
     }>;
 
-    return rows.map((r) => ({
-      productId: r.productId,
-      name: String(r.name ?? ""),
-      basePrice: Number(r.basePrice ?? 0),
-      imageUrls: Array.isArray(r.imageUrls) ? r.imageUrls : [],
-      tags: Array.isArray(r.tags) ? r.tags : [],
-      variantId: r.variantId,
-      sku: String(r.sku ?? ""),
-      attributes: normalizeAttributes(r.attributes),
-      variantPrice: r.variantPrice == null ? null : Number(r.variantPrice),
-      effectivePrice: Number(r.effectivePrice ?? 0),
-      availableStock: Number(r.availableStock ?? 0),
-      isActive: Boolean(r.isActive),
-      variantImageUrls: Array.isArray(r.variantImageUrls) ? r.variantImageUrls : []
-    }));
+    return {
+      categories: cats,
+      variants: rows.map((r) => ({
+        productId: r.productId,
+        name: String(r.name ?? ""),
+        basePrice: Number(r.basePrice ?? 0),
+        imageUrls: Array.isArray(r.imageUrls) ? r.imageUrls : [],
+        tags: Array.isArray(r.tags) ? r.tags : [],
+        variantId: r.variantId,
+        sku: String(r.sku ?? ""),
+        attributes: normalizeAttributes(r.attributes),
+        variantPrice: r.variantPrice == null ? null : Number(r.variantPrice),
+        effectivePrice: Number(r.effectivePrice ?? 0),
+        availableStock: Number(r.availableStock ?? 0),
+        isActive: Boolean(r.isActive),
+        variantImageUrls: Array.isArray(r.variantImageUrls) ? r.variantImageUrls : []
+      }))
+    };
   }
 
   async createProduct(
@@ -351,9 +513,11 @@ export class ProductsService {
       imageUrls?: string[];
       tags?: string[];
       variants?: ProductVariantInput[];
+      categoryIds?: string[];
     }
   ): Promise<unknown> {
     const payload = normalizeCreatePayload(body);
+    const categoryIds = Array.isArray(body.categoryIds) ? body.categoryIds : [];
     return prisma.$transaction(async (tx: any) => {
       const product = await tx.product.create({
         data: {
@@ -398,6 +562,8 @@ export class ProductsService {
           });
         }
       }
+
+      await syncProductCategories(tx, tenantId, product.id, categoryIds);
 
       return {
         ...product,
@@ -479,7 +645,14 @@ export class ProductsService {
   async updateProduct(
     tenantId: string,
     productId: string,
-    body: { name?: string; price?: number; imageUrl?: string | null; imageUrls?: string[] | null; tags?: string[] }
+    body: {
+      name?: string;
+      price?: number;
+      imageUrl?: string | null;
+      imageUrls?: string[] | null;
+      tags?: string[];
+      categoryIds?: string[];
+    }
   ): Promise<{ ok: true } | null> {
     const existing = await prisma.product.findFirst({
       where: { id: productId, tenantId }
@@ -491,7 +664,8 @@ export class ProductsService {
       typeof body.price === "number" ||
       body.imageUrl !== undefined ||
       body.imageUrls !== undefined ||
-      Array.isArray(body.tags);
+      Array.isArray(body.tags) ||
+      Array.isArray(body.categoryIds);
     if (!hasAny) return { ok: true };
 
     const nextName = typeof body.name === "string" ? String(body.name).trim() : existing.name;
@@ -537,12 +711,20 @@ export class ProductsService {
       data.tags = body.tags.map((t) => String(t ?? "").trim()).filter(Boolean);
     }
 
-    if (Object.keys(data).length === 0) return { ok: true };
+    const shouldSyncCategories = Array.isArray(body.categoryIds);
+    if (Object.keys(data).length === 0 && !shouldSyncCategories) return { ok: true };
 
-    await prisma.product.update({
-      where: { id: productId },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      data: data as any
+    await prisma.$transaction(async (tx: any) => {
+      if (Object.keys(data).length > 0) {
+        await tx.product.update({
+          where: { id: productId },
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          data: data as any
+        });
+      }
+      if (shouldSyncCategories) {
+        await syncProductCategories(tx, tenantId, productId, body.categoryIds ?? []);
+      }
     });
     return { ok: true };
   }

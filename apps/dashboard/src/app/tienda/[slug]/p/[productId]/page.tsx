@@ -29,8 +29,8 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
     select: { id: true, name: true }
   });
   if (!tenant?.id) return { title: "Producto" };
-  const rows = await getBackendServices().products.getPublicProductDetailsByTenant(tenant.id, productId);
-  const first = rows[0];
+  const { variants } = await getBackendServices().products.getPublicProductDetailsByTenant(tenant.id, productId);
+  const first = variants[0];
   if (!first) return { title: `${tenant.name} · Producto` };
   return {
     title: `${first.name} · ${tenant.name}`,
@@ -46,7 +46,10 @@ export default async function TiendaProductoPage({ params }: PageProps) {
   });
   if (!tenant?.id) notFound();
 
-  const rows = await getBackendServices().products.getPublicProductDetailsByTenant(tenant.id, productId);
+  const { variants: rows, categories } = await getBackendServices().products.getPublicProductDetailsByTenant(
+    tenant.id,
+    productId,
+  );
   const first = rows[0];
   if (!first) notFound();
 
@@ -80,6 +83,18 @@ export default async function TiendaProductoPage({ params }: PageProps) {
         <aside className="flex flex-col gap-5">
           <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-sm">
             <h1 className="text-2xl font-semibold tracking-tight text-[var(--color-text)]">{first.name}</h1>
+            {categories.length > 0 ? (
+              <nav className="mt-2 flex flex-wrap gap-2" aria-label="Categorías">
+                {categories.map((c) => (
+                  <span
+                    key={c.id}
+                    className="rounded-md bg-[var(--color-bg)] px-2 py-1 text-xs font-medium text-[var(--color-muted)] ring-1 ring-[var(--color-border)]"
+                  >
+                    {c.name}
+                  </span>
+                ))}
+              </nav>
+            ) : null}
             <p className="mt-3 text-3xl font-semibold text-[var(--color-text)]">
               {minPrice === maxPrice ? money(minPrice) : `${money(minPrice)} — ${money(maxPrice)}`}
             </p>

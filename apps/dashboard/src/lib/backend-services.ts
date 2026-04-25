@@ -5,6 +5,7 @@ import { OnboardingService } from "../../../backend/src/modules/onboarding/onboa
 import { ConversationsService } from "../../../backend/src/modules/conversations/conversations.service";
 import { DashboardService } from "../../../backend/src/modules/dashboard/dashboard.service";
 import { ProductsService } from "../../../backend/src/modules/products/products.service";
+import { CategoriesService } from "../../../backend/src/modules/categories/categories.service";
 import { MessageReceiverService } from "../../../backend/src/modules/messages/receiver.service";
 
 export type BackendServices = {
@@ -15,6 +16,7 @@ export type BackendServices = {
   conversations: ConversationsService;
   dashboard: DashboardService;
   products: ProductsService;
+  categories: CategoriesService;
   messages: MessageReceiverService;
 };
 
@@ -29,8 +31,9 @@ export function getBackendServices(): BackendServices {
     const conversations = new ConversationsService(mercadoPago);
     const dashboard = new DashboardService(leads, onboarding);
     const products = new ProductsService();
+    const categories = new CategoriesService();
     const messages = new MessageReceiverService();
-    cached = { leads, mercadoPago, ops, onboarding, conversations, dashboard, products, messages };
+    cached = { leads, mercadoPago, ops, onboarding, conversations, dashboard, products, categories, messages };
   }
   return cached;
 }

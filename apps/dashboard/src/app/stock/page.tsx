@@ -22,6 +22,13 @@ import { getClientApiBase } from "@/lib/api-base";
 
 type VariantRow = StockProductVariantRow;
 
+type CategoryFilterRow = {
+  id: string;
+  parentId: string | null;
+  name: string;
+  sortOrder: number;
+};
+
 const authContext = (): { token: string; tenantId: string } | null => {
   if (typeof window === "undefined") return null;
   const token = window.localStorage.getItem("ws_auth_token") ?? "";
@@ -41,6 +48,9 @@ export default function StockPage() {
   const [editRows, setEditRows] = useState<StockProductVariantRow[] | null>(null);
   const [publicCatalogSlug, setPublicCatalogSlug] = useState<string | null>(null);
   const [catalogShareUrl, setCatalogShareUrl] = useState<string | null>(null);
+  const [filterCategoryId, setFilterCategoryId] = useState("");
+  const [filterSearch, setFilterSearch] = useState("");
+  const [categoryFilterList, setCategoryFilterList] = useState<CategoryFilterRow[]>([]);
 
   useEffect(() => {
     if (!publicCatalogSlug) {
@@ -65,7 +75,7 @@ export default function StockPage() {
     return m;
   }, [rows]);
 
-  const load = async () => {
+  const load = async (snapshot?: { categoryId: string; q: string }) => {
     const auth = authContext();
     if (!auth) {
       window.location.href = "/login";
@@ -73,8 +83,15 @@ export default function StockPage() {
     }
     setLoading(true);
     try {
+      const categoryId = (snapshot?.categoryId ?? filterCategoryId).trim();
+      const q = (snapshot?.q ?? filterSearch).trim();
+      const params = new URLSearchParams();
+      if (categoryId) params.set("categoryId", categoryId);
+      if (q) params.set("q", q);
+      const qs = params.toString();
+
       const [productsRes, knowledgeRes] = await Promise.all([
-        fetch(`${getClientApiBase()}/products`, {
+        fetch(`${getClientApiBase()}/products${qs ? `?${qs}` : ""}`, {
           headers: {
             Authorization: `Bearer ${auth.token}`,
             "x-tenant-id": auth.tenantId,
@@ -118,6 +135,21 @@ export default function StockPage() {
 
   useEffect(() => {
     void load();
+  }, []);
+
+  useEffect(() => {
+    const auth = authContext();
+    if (!auth) return;
+    (async () => {
+      const res = await fetch(`${getClientApiBase()}/categories`, {
+        headers: {
+          Authorization: `Bearer ${auth.token}`,
+          "x-tenant-id": auth.tenantId,
+        },
+        cache: "no-store",
+      });
+      if (res.ok) setCategoryFilterList((await res.json()) as CategoryFilterRow[]);
+    })();
   }, []);
 
   const adjust = async (variantId: string, stockDelta: number) => {
@@ -172,9 +204,24 @@ export default function StockPage() {
             flexWrap: "wrap",
           }}
         >
-          <h1 style={{ margin: 0, fontSize: 26, letterSpacing: -0.3 }}>
-            Inventario
-          </h1>
+          <div>
+            <h1 style={{ margin: 0, fontSize: 26, letterSpacing: -0.3 }}>
+              Inventario
+            </h1>
+            <a
+              href="/stock/categories"
+              style={{
+                display: "inline-block",
+                marginTop: 6,
+                fontSize: 13,
+                fontWeight: 600,
+                color: "var(--color-primary)",
+                textDecoration: "none",
+              }}
+            >
+              Gestionar categorías
+            </a>
+          </div>
           <button
             type="button"
             onClick={() => setShowModal(true)}
@@ -190,6 +237,99 @@ export default function StockPage() {
             }}
           >
             Cargar producto nuevo
+          </button>
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 10,
+            alignItems: "flex-end",
+            marginBottom: 16,
+            padding: "12px 14px",
+            borderRadius: 12,
+            border: "1px solid var(--color-border)",
+            backgroundColor: "var(--color-surface)",
+          }}
+        >
+          <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, fontWeight: 600 }}>
+            Categoría
+            <select
+              value={filterCategoryId}
+              onChange={(e) => setFilterCategoryId(e.target.value)}
+              style={{
+                minWidth: 200,
+                padding: "8px 10px",
+                borderRadius: 8,
+                border: "1px solid var(--color-border)",
+                fontSize: 14,
+                background: "var(--color-bg)",
+                color: "var(--color-text)",
+              }}
+            >
+              <option value="">Todas (incluye subcategorías al filtrar)</option>
+              {[...categoryFilterList]
+                .sort(
+                  (a, b) =>
+                    a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, "es"),
+                )
+                .map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+            </select>
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, fontWeight: 600, flex: "1 1 200px" }}>
+            Buscar
+            <input
+              value={filterSearch}
+              onChange={(e) => setFilterSearch(e.target.value)}
+              placeholder="Nombre o etiqueta"
+              style={{
+                padding: "8px 10px",
+                borderRadius: 8,
+                border: "1px solid var(--color-border)",
+                fontSize: 14,
+                background: "var(--color-bg)",
+                color: "var(--color-text)",
+              }}
+            />
+          </label>
+          <button
+            type="button"
+            onClick={() => void load()}
+            style={{
+              padding: "8px 16px",
+              borderRadius: 8,
+              border: "none",
+              backgroundColor: "var(--color-primary)",
+              color: "var(--color-surface)",
+              fontWeight: 600,
+              cursor: "pointer",
+            }}
+          >
+            Filtrar
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setFilterCategoryId("");
+              setFilterSearch("");
+              void load({ categoryId: "", q: "" });
+            }}
+            style={{
+              padding: "8px 14px",
+              borderRadius: 8,
+              border: "1px solid var(--color-border)",
+              background: "transparent",
+              fontWeight: 600,
+              cursor: "pointer",
+              color: "var(--color-muted)",
+            }}
+          >
+            Limpiar
           </button>
         </div>
 
@@ -300,6 +440,12 @@ export default function StockPage() {
                     Producto
                   </StockTableTh>
                   <StockTableTh
+                    title="Categorías asignadas al producto (compartidas por todas sus variantes)."
+                    hint="Catálogo"
+                  >
+                    Categorías
+                  </StockTableTh>
+                  <StockTableTh
                     title="Código único de inventario de esta variante. Lo usa el bot y los pedidos para identificar la fila exacta."
                     hint="Identificador único"
                   >
@@ -364,7 +510,7 @@ export default function StockPage() {
                 ) : rows.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={11 + axes.length}
+                      colSpan={12 + axes.length}
                       style={{
                         padding: "32px 20px",
                         textAlign: "center",
@@ -415,6 +561,12 @@ export default function StockPage() {
                         </StockGridTd>
                         <StockGridTd emphasize={hi} style={{ fontWeight: 500 }}>
                           {row.name}
+                        </StockGridTd>
+                        <StockGridTd emphasize={hi} style={{ fontSize: 12, color: "var(--color-muted)", maxWidth: 200 }}>
+                          {Array.isArray(row.categoryNames) && row.categoryNames.length > 0
+                            ? row.categoryNames.slice(0, 3).join(", ") +
+                              (row.categoryNames.length > 3 ? "…" : "")
+                            : "—"}
                         </StockGridTd>
                         <StockGridTd
                           emphasize={hi}

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, NotFoundException, Param, Patch, Post, Req } from "@nestjs/common";
+import { Body, Controller, Get, NotFoundException, Param, Patch, Post, Query, Req } from "@nestjs/common";
 import { Request } from "express";
 import { AuthTokenPayload } from "../../../../../packages/shared/src";
 import { requireRole } from "../../common/auth/require-role";
@@ -10,7 +10,9 @@ export class ProductsController {
 
   @Get()
   async list(
-    @Req() req: Request & { tenantId: string; auth?: AuthTokenPayload }
+    @Req() req: Request & { tenantId: string; auth?: AuthTokenPayload },
+    @Query("categoryId") categoryId?: string,
+    @Query("q") q?: string
   ): Promise<
     Array<{
       variantId: string;
@@ -27,10 +29,15 @@ export class ProductsController {
       imageUrl?: string | null;
       tags: string[];
       isActive: boolean;
+      categoryIds: string[];
+      categoryNames: string[];
     }>
   > {
     requireRole(req.auth?.role, ["admin", "vendedor", "viewer"]);
-    return this.productsService.listByTenant(req.tenantId);
+    return this.productsService.listByTenant(req.tenantId, {
+      categoryId: categoryId?.trim() || undefined,
+      q: q?.trim() || undefined
+    });
   }
 
   @Post()
@@ -51,6 +58,7 @@ export class ProductsController {
         isActive?: boolean;
         imageUrls?: string[];
       }>;
+      categoryIds?: string[];
     }
   ): Promise<unknown> {
     requireRole(req.auth?.role, ["admin", "vendedor"]);
@@ -68,6 +76,7 @@ export class ProductsController {
       stock: number;
       price?: number | null;
       isActive?: boolean;
+      imageUrls?: string[];
     }
   ): Promise<unknown> {
     requireRole(req.auth?.role, ["admin", "vendedor"]);
@@ -97,6 +106,7 @@ export class ProductsController {
       stock?: number;
       price?: number | null;
       isActive?: boolean;
+      imageUrls?: string[] | null;
     }
   ): Promise<unknown> {
     requireRole(req.auth?.role, ["admin", "vendedor"]);
@@ -123,6 +133,7 @@ export class ProductsController {
       imageUrl?: string | null;
       imageUrls?: string[] | null;
       tags?: string[];
+      categoryIds?: string[];
     }
   ): Promise<unknown> {
     requireRole(req.auth?.role, ["admin", "vendedor"]);

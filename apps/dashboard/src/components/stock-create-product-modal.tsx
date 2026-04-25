@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { X, Plus } from "lucide-react";
 import {
   formatAxisLabel,
@@ -17,6 +17,8 @@ import { buildGeneratedSku } from "@/lib/stock-sku";
 const MAX_PRODUCT_IMAGES = 10;
 const MAX_VARIANT_IMAGES = 6;
 const COMPRESS_OPTS = { maxWidth: 512, maxHeight: 512, quality: 0.85 } as const;
+
+type CategoryOption = { id: string; parentId: string | null; name: string; sortOrder: number };
 
 type DraftVariant = {
   id: string;
@@ -69,6 +71,30 @@ export function StockCreateProductModal({
   const [variants, setVariants] = useState<DraftVariant[]>([]);
   const [creating, setCreating] = useState(false);
   const [apiError, setApiError] = useState("");
+  const [allCategories, setAllCategories] = useState<CategoryOption[]>([]);
+  const [selectedCategoryIds, setSelectedCategoryIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    (async () => {
+      const auth = authContext();
+      if (!auth) return;
+      const res = await fetch(`${getClientApiBase()}/categories`, {
+        headers: {
+          Authorization: `Bearer ${auth.token}`,
+          "x-tenant-id": auth.tenantId,
+        },
+        cache: "no-store",
+      });
+      if (!cancelled && res.ok) {
+        setAllCategories((await res.json()) as CategoryOption[]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   if (!open) return null;
 
@@ -154,6 +180,7 @@ export function StockCreateProductModal({
     setVariantPrice("");
     setVariantAttrs({});
     setVariantImageUrls([]);
+    setSelectedCategoryIds([]);
     setApiError("");
   };
 
@@ -189,6 +216,7 @@ export function StockCreateProductModal({
             .map((t) => t.trim())
             .filter(Boolean),
           variants: variants.map(({ id, ...v }) => v),
+          categoryIds: selectedCategoryIds,
         }),
       });
       if (!response.ok) throw new Error(await response.text());
@@ -313,6 +341,53 @@ export function StockCreateProductModal({
                 </StockFieldHint>
               </label>
             </div>
+            {allCategories.length > 0 ? (
+              <div style={{ marginTop: 14 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--color-text)" }}>Categorías</div>
+                <StockFieldHint style={{ marginTop: 4, marginBottom: 8 }}>
+                  Podés elegir varias. En la tienda pública, filtrar por una categoría incluye subcategorías.
+                </StockFieldHint>
+                <div
+                  style={{
+                    maxHeight: 180,
+                    overflowY: "auto",
+                    border: "1px solid var(--color-border)",
+                    borderRadius: 8,
+                    padding: "8px 10px",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 6,
+                    background: "var(--color-bg)",
+                  }}
+                >
+                  {[...allCategories]
+                    .sort((a, b) => a.sortOrder - b.sortOrder || a.name.localeCompare(b.name, "es"))
+                    .map((c) => (
+                      <label
+                        key={c.id}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          fontSize: 13,
+                          cursor: "pointer",
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedCategoryIds.includes(c.id)}
+                          onChange={() =>
+                            setSelectedCategoryIds((prev) =>
+                              prev.includes(c.id) ? prev.filter((x) => x !== c.id) : [...prev, c.id],
+                            )
+                          }
+                        />
+                        <span>{c.name}</span>
+                      </label>
+                    ))}
+                </div>
+              </div>
+            ) : null}
           </FormSection>
 
           {/* 2 · Fotos del producto */}

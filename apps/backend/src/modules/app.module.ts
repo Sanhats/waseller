@@ -11,6 +11,8 @@ import { OpsController } from "./ops/ops.controller";
 import { OpsService } from "./ops/ops.service";
 import { ProductsController } from "./products/products.controller";
 import { ProductsService } from "./products/products.service";
+import { CategoriesController } from "./categories/categories.controller";
+import { CategoriesService } from "./categories/categories.service";
 import { OnboardingController } from "./onboarding/onboarding.controller";
 import { OnboardingService } from "./onboarding/onboarding.service";
 import { MercadoPagoController } from "./mercado-pago/mercado-pago.controller";
@@ -26,6 +28,7 @@ import { DashboardService } from "./dashboard/dashboard.service";
     ConversationsController,
     OpsController,
     ProductsController,
+    CategoriesController,
     OnboardingController,
     MercadoPagoController,
     DashboardController
@@ -37,6 +40,7 @@ import { DashboardService } from "./dashboard/dashboard.service";
     ConversationsService,
     OpsService,
     ProductsService,
+    CategoriesService,
     OnboardingService,
     MercadoPagoService,
     DashboardService

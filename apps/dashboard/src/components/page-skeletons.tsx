@@ -153,7 +153,7 @@ export function LeadsKanbanSkeleton({ isMobile, cardsPerColumn = 3 }: { isMobile
 
 /** Filas del stock (usar dentro de un único `<tbody>`). */
 export function StockTableSkeleton({ rows = 8, axisCount = 2 }: { rows?: number; axisCount?: number }) {
-  const cells = 11 + axisCount;
+  const cells = 12 + axisCount;
   return (
     <>
       {Array.from({ length: rows }).map((_, i) => (

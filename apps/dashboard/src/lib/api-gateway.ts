@@ -195,10 +195,33 @@ export async function dispatchApi(
       return NextResponse.json(data);
     }
 
+    /* -------- Categories -------- */
+    if (path === "/categories" && method === "GET") {
+      requireRole(auth?.role, ["admin", "vendedor", "viewer"]);
+      return NextResponse.json(await s.categories.listForTenant(tenantId));
+    }
+    if (path === "/categories" && method === "POST") {
+      requireRole(auth?.role, ["admin", "vendedor"]);
+      const body = await req.json();
+      return NextResponse.json(await s.categories.create(tenantId, body as never));
+    }
+    const categoryById = /^\/categories\/([^/]+)$/.exec(path);
+    if (categoryById && method === "PATCH") {
+      requireRole(auth?.role, ["admin", "vendedor"]);
+      const body = await req.json();
+      return NextResponse.json(await s.categories.update(tenantId, categoryById[1], body as never));
+    }
+    if (categoryById && method === "DELETE") {
+      requireRole(auth?.role, ["admin", "vendedor"]);
+      return NextResponse.json(await s.categories.remove(tenantId, categoryById[1]));
+    }
+
     /* -------- Products -------- */
     if (path === "/products" && method === "GET") {
       requireRole(auth?.role, ["admin", "vendedor", "viewer"]);
-      return NextResponse.json(await s.products.listByTenant(tenantId));
+      const categoryId = url.searchParams.get("categoryId")?.trim() || undefined;
+      const q = url.searchParams.get("q")?.trim() || undefined;
+      return NextResponse.json(await s.products.listByTenant(tenantId, { categoryId, q }));
     }
     if (path === "/products" && method === "POST") {
       requireRole(auth?.role, ["admin", "vendedor"]);
