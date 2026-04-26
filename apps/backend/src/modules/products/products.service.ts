@@ -1,6 +1,4 @@
 import { BadRequestException, ConflictException, Injectable } from "@nestjs/common";
-import { join, sqltag } from "@prisma/client/runtime/library";
-import type { Sql } from "@prisma/client/runtime/library";
 import { prisma } from "../../../../../packages/db/src";
 
 const UUID_RE =
@@ -201,50 +199,76 @@ export class ProductsService {
     return out;
   }
 
-  private async buildProductVariantWhereParts(
+  /**
+   * Listado de variantes con filtros opcionales.
+   * Usamos $queryRawUnsafe + placeholders $n porque componer `Sql` con `join()` desde
+   * `@prisma/client/runtime/library` puede romperse en el bundle de Next (instancias distintas de `Sql`).
+   */
+  private async queryProductVariantRows(
     tenantId: string,
     opts?: { categoryId?: string; q?: string },
-    activeVariantsOnly?: boolean,
+    activeVariantsOnly = false,
     requireActiveCategories = false
-  ): Promise<Sql[]> {
-    const parts: Sql[] = [sqltag`v.tenant_id::text = ${tenantId}`];
+  ): Promise<
+    Array<{
+      variantId: string;
+      productId: string;
+      name: string;
+      basePrice: unknown;
+      variantPrice: unknown;
+      effectivePrice: unknown;
+      sku: string;
+      attributes: unknown;
+      stock: number;
+      reservedStock: number;
+      availableStock: number;
+      imageUrl?: string | null;
+      imageUrls?: string[] | null;
+      variantImageUrls?: string[] | null;
+      tags?: string[] | null;
+      isActive: boolean;
+      categoryIds?: string[] | null;
+      categoryNames?: string[] | null;
+    }>
+  > {
+    if (!UUID_RE.test(tenantId)) {
+      return [];
+    }
+    const params: unknown[] = [tenantId];
+    let next = 2;
+    let extra = "";
     if (activeVariantsOnly) {
-      parts.push(sqltag`v.is_active = true`);
+      extra += " and v.is_active = true ";
     }
     const cid = opts?.categoryId?.trim();
     if (cid) {
       const ids = await this.expandCategorySubtreeIds(tenantId, cid, requireActiveCategories);
-      if (ids.length === 0) {
-        parts.push(sqltag`false`);
+      if (ids.length === 0 || !ids.every((id) => UUID_RE.test(id))) {
+        extra += " and false ";
       } else {
-        parts.push(sqltag`exists (
+        extra += ` and exists (
           select 1 from public.product_categories pc
-          where pc.product_id = p.id and pc.category_id in (${join(
-            ids.map((x) => sqltag`${x}::uuid`)
-          )})
-        )`);
+          where pc.product_id = p.id and pc.category_id = any($${next}::uuid[])
+        ) `;
+        params.push(ids);
+        next += 1;
       }
     }
     const q = opts?.q?.trim();
     if (q) {
       const qv = q.toLowerCase();
-      parts.push(sqltag`(
-        position(${qv} in lower(p.name)) > 0
+      extra += ` and (
+        position($${next} in lower(p.name)) > 0
         or exists (
           select 1 from unnest(coalesce(p.tags, array[]::text[])) t
-          where position(${qv} in lower(t)) > 0
+          where position($${next} in lower(t)) > 0
         )
-      )`);
+      ) `;
+      params.push(qv);
+      next += 1;
     }
-    return parts;
-  }
 
-  async listByTenant(
-    tenantId: string,
-    opts?: { categoryId?: string; q?: string }
-  ): Promise<ProductVariantRow[]> {
-    const whereParts = await this.buildProductVariantWhereParts(tenantId, opts, false);
-    const rows = (await (prisma as any).$queryRaw`
+    const sql = `
       select
         v.id as "variantId",
         p.id as "productId",
@@ -278,9 +302,12 @@ export class ProductsService {
         ) as "categoryNames"
       from public.product_variants v
       inner join public.products p on p.id = v.product_id
-      where ${join(whereParts, " AND ")}
+      where v.tenant_id::text = $1
+      ${extra}
       order by p.updated_at desc, p.name asc, v.sku asc
-    `) as Array<{
+    `;
+
+    return (await (prisma as any).$queryRawUnsafe(sql, ...params)) as Array<{
       variantId: string;
       productId: string;
       name: string;
@@ -300,6 +327,13 @@ export class ProductsService {
       categoryIds?: string[] | null;
       categoryNames?: string[] | null;
     }>;
+  }
+
+  async listByTenant(
+    tenantId: string,
+    opts?: { categoryId?: string; q?: string }
+  ): Promise<ProductVariantRow[]> {
+    const rows = await this.queryProductVariantRows(tenantId, opts, false, false);
     return rows.map((row) => ({
       variantId: row.variantId,
       productId: row.productId,
@@ -330,63 +364,7 @@ export class ProductsService {
     tenantId: string,
     opts?: { categoryId?: string; q?: string }
   ): Promise<ProductVariantRow[]> {
-    const whereParts = await this.buildProductVariantWhereParts(tenantId, opts, true, true);
-    const rows = (await (prisma as any).$queryRaw`
-      select
-        v.id as "variantId",
-        p.id as "productId",
-        p.name as "name",
-        p.price as "basePrice",
-        v.price as "variantPrice",
-        coalesce(v.price, p.price) as "effectivePrice",
-        v.sku as "sku",
-        v.attributes as "attributes",
-        v.stock as "stock",
-        v.reserved_stock as "reservedStock",
-        greatest(v.stock - v.reserved_stock, 0) as "availableStock",
-        p.image_url as "imageUrl",
-        p.image_urls as "imageUrls",
-        v.image_urls as "variantImageUrls",
-        p.tags as "tags",
-        v.is_active as "isActive",
-        coalesce(
-          (select array_agg(c.id::text order by c.sort_order, c.name)
-           from public.product_categories pc
-           join public.categories c on c.id = pc.category_id
-           where pc.product_id = p.id),
-          '{}'::text[]
-        ) as "categoryIds",
-        coalesce(
-          (select array_agg(c.name order by c.sort_order, c.name)
-           from public.product_categories pc
-           join public.categories c on c.id = pc.category_id
-           where pc.product_id = p.id),
-          '{}'::text[]
-        ) as "categoryNames"
-      from public.product_variants v
-      inner join public.products p on p.id = v.product_id
-      where ${join(whereParts, " AND ")}
-      order by p.updated_at desc, p.name asc, v.sku asc
-    `) as Array<{
-      variantId: string;
-      productId: string;
-      name: string;
-      basePrice: unknown;
-      variantPrice: unknown;
-      effectivePrice: unknown;
-      sku: string;
-      attributes: unknown;
-      stock: number;
-      reservedStock: number;
-      availableStock: number;
-      imageUrl?: string | null;
-      imageUrls?: string[] | null;
-      variantImageUrls?: string[] | null;
-      tags?: string[] | null;
-      isActive: boolean;
-      categoryIds?: string[] | null;
-      categoryNames?: string[] | null;
-    }>;
+    const rows = await this.queryProductVariantRows(tenantId, opts, true, true);
     return rows.map((row) => ({
       variantId: row.variantId,
       productId: row.productId,
