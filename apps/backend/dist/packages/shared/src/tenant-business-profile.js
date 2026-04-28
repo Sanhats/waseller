@@ -29,6 +29,7 @@ const SHIPPING_METHOD_SET = new Set([
 const VARIANT_AXIS_SET = new Set([
     "talle",
     "color",
+    "marca",
     "modelo",
     "capacidad",
     "material"
@@ -78,7 +79,8 @@ exports.BUSINESS_PRESETS = {
     indumentaria_calzado: {
         businessLabels: ["venta_minorista", "catalogo_whatsapp"],
         payment: { methods: ["link_pago", "efectivo_retiro"], acceptsInstallments: false },
-        productVariantAxes: ["talle", "color", "modelo"],
+        /** Categoría del producto (tabla `product_categories`); talle/color/marca por variante. */
+        productVariantAxes: ["talle", "color", "marca"],
         policy: { reservationTtlMinutes: 30, allowExchange: true, allowReturns: true }
     },
     electronica: {

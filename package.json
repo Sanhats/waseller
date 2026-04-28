@@ -28,12 +28,14 @@
     "db:migrate": "npm run prisma:migrate --workspace @waseller/db",
     "db:migrate:deploy": "npm run prisma:migrate:deploy --workspace @waseller/db",
     "db:push": "npm run prisma:push --workspace @waseller/db",
+    "db:generate": "node ./node_modules/prisma/build/index.js generate --schema packages/db/prisma/schema.prisma",
     "redis:check": "node scripts/redis-check.mjs"
   },
   "engines": {
     "node": ">=22"
   },
   "devDependencies": {
+    "prisma": "6.19.3",
     "qrcode-terminal": "^0.12.0"
   }
 }

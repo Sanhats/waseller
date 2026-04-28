@@ -24,4 +24,4 @@ __exportStar(require("./mercado-pago"), exports);
 __exportStar(require("./conversation-labels"), exports);
 __exportStar(require("./whatsapp-service-url"), exports);
 __exportStar(require("./phone-variants"), exports);
-__exportStar(require("./tenant-catalog-slug"), exports);
+__exportStar(require("./store-config"), exports);

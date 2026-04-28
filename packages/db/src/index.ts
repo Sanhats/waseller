@@ -33,19 +33,13 @@ function adaptDatabaseUrlForPooledPostgres(url: string): string {
 }
 
 const createClient = (): PrismaClientLike => {
-  // Prioriza cliente generado local del workspace db para evitar conflictos de hoisting.
-  let pkg: { PrismaClient?: new (...args: unknown[]) => PrismaClientLike };
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    pkg = require("../node_modules/@prisma/client") as {
-      PrismaClient?: new (...args: unknown[]) => PrismaClientLike;
-    };
-  } catch {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    pkg = require("@prisma/client") as {
-      PrismaClient?: new (...args: unknown[]) => PrismaClientLike;
-    };
-  }
+  // En monorepos + Turbopack, paths relativos a node_modules suelen romperse.
+  // La resolución de Node encuentra el `@prisma/client` correcto (workspace `@waseller/db`)
+  // siempre que se haya corrido `prisma generate` para ese paquete.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const pkg = require("@prisma/client") as {
+    PrismaClient?: new (...args: unknown[]) => PrismaClientLike;
+  };
   if (!pkg.PrismaClient) {
     throw new Error("PrismaClient no disponible. Ejecuta la generación de cliente Prisma.");
   }

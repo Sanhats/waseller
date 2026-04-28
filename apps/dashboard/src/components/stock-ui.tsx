@@ -4,10 +4,21 @@ import { Upload } from "lucide-react";
 import { useState } from "react";
 import type { CSSProperties, ReactNode, TdHTMLAttributes } from "react";
 
-/** Etiqueta legible para ejes de variante (ej. talle → Talle). */
+const AXIS_LABELS: Record<string, string> = {
+  talle: "Talle",
+  color: "Color",
+  marca: "Marca / modelo",
+  modelo: "Línea / modelo",
+  material: "Material",
+  capacidad: "Capacidad",
+};
+
+/** Etiqueta legible para ejes de variante (p. ej. talle → Talle, modelo → Línea / modelo). */
 export function formatAxisLabel(axis: string): string {
   const t = axis.trim();
   if (!t) return axis;
+  const key = t.toLowerCase();
+  if (AXIS_LABELS[key]) return AXIS_LABELS[key];
   return t.charAt(0).toUpperCase() + t.slice(1);
 }
 
@@ -220,6 +231,22 @@ export async function compressImageToDataUrl(
   return canvas.toDataURL("image/jpeg", opts.quality);
 }
 
+export async function uploadImagesToSupabase(files: File[], tenantId?: string): Promise<string[]> {
+  const form = new FormData();
+  for (const f of files) form.append("files", f, f.name);
+  const res = await fetch("/api/uploads/images", {
+    method: "POST",
+    headers: tenantId ? { "x-tenant-id": tenantId } : undefined,
+    body: form,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || res.statusText);
+  }
+  const data = (await res.json()) as { urls?: unknown };
+  return Array.isArray(data.urls) ? data.urls.map((x) => String(x ?? "").trim()).filter(Boolean) : [];
+}
+
 /** Cabecera de sección con badge numérico y línea divisora. */
 export function FormSection({
   num,
@@ -315,9 +342,11 @@ export function ImageDropZone({
       <span style={{ fontSize: 13, fontWeight: 600, color: "var(--color-text)" }}>
         {count > 0 ? `${count} foto(s) cargada(s) — tocá para sumar más` : label}
       </span>
-      <span style={{ fontSize: 11, color: "var(--color-muted)" }}>
-        {atMax ? `Límite de ${maxCount} imágenes alcanzado` : sublabel}
-      </span>
+      {atMax || (sublabel != null && String(sublabel).trim() !== "") ? (
+        <span style={{ fontSize: 11, color: "var(--color-muted)" }}>
+          {atMax ? `Límite de ${maxCount} imágenes alcanzado` : sublabel}
+        </span>
+      ) : null}
     </label>
   );
 }

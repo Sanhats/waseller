@@ -13,7 +13,7 @@ export type PaymentMethod = "link_pago" | "efectivo_retiro";
 
 export type ShippingMethod = "retiro_local" | "envio_moto" | "correo" | "pickup_point";
 
-export type VariantAxis = "talle" | "color" | "modelo" | "capacidad" | "material";
+export type VariantAxis = "talle" | "color" | "marca" | "modelo" | "capacidad" | "material";
 
 export type TenantBusinessProfile = {
   version: number;
@@ -84,6 +84,7 @@ const SHIPPING_METHOD_SET = new Set<ShippingMethod>([
 const VARIANT_AXIS_SET = new Set<VariantAxis>([
   "talle",
   "color",
+  "marca",
   "modelo",
   "capacidad",
   "material"
@@ -138,7 +139,8 @@ export const BUSINESS_PRESETS: Record<BusinessCategory, Partial<TenantBusinessPr
   indumentaria_calzado: {
     businessLabels: ["venta_minorista", "catalogo_whatsapp"],
     payment: { methods: ["link_pago", "efectivo_retiro"], acceptsInstallments: false },
-    productVariantAxes: ["talle", "color", "modelo"],
+    /** Categoría del producto (tabla `product_categories`); talle/color/marca por variante. */
+    productVariantAxes: ["talle", "color", "marca"],
     policy: { reservationTtlMinutes: 30, allowExchange: true, allowReturns: true }
   },
   electronica: {

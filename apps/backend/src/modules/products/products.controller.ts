@@ -8,11 +8,26 @@ import { ProductsService } from "./products.service";
 export class ProductsController {
   constructor(private readonly productsService: ProductsService) {}
 
+  @Get("facet-options")
+  async facetOptions(
+    @Req() req: Request & { tenantId: string; auth?: AuthTokenPayload },
+    @Query("categoryId") categoryId?: string
+  ): Promise<{ talles: string[]; colors: string[]; marcas: string[] }> {
+    requireRole(req.auth?.role, ["admin", "vendedor", "viewer"]);
+    return this.productsService.listVariantFacetDistinctValues(req.tenantId, {
+      categoryId: categoryId?.trim() || undefined,
+      publicCatalog: false
+    });
+  }
+
   @Get()
   async list(
     @Req() req: Request & { tenantId: string; auth?: AuthTokenPayload },
     @Query("categoryId") categoryId?: string,
-    @Query("q") q?: string
+    @Query("q") q?: string,
+    @Query("talle") talle?: string,
+    @Query("color") color?: string,
+    @Query("marca") marca?: string
   ): Promise<
     Array<{
       variantId: string;
@@ -23,6 +38,9 @@ export class ProductsController {
       effectivePrice: number;
       sku: string;
       attributes: Record<string, string>;
+      variantTalle?: string | null;
+      variantColor?: string | null;
+      variantMarca?: string | null;
       stock: number;
       reservedStock: number;
       availableStock: number;
@@ -36,7 +54,10 @@ export class ProductsController {
     requireRole(req.auth?.role, ["admin", "vendedor", "viewer"]);
     return this.productsService.listByTenant(req.tenantId, {
       categoryId: categoryId?.trim() || undefined,
-      q: q?.trim() || undefined
+      q: q?.trim() || undefined,
+      talle: talle?.trim() || undefined,
+      color: color?.trim() || undefined,
+      marca: marca?.trim() || undefined
     });
   }
 
@@ -57,6 +78,7 @@ export class ProductsController {
         price?: number | null;
         isActive?: boolean;
         imageUrls?: string[];
+        categoryIds?: string[];
       }>;
       categoryIds?: string[];
     }
@@ -77,6 +99,7 @@ export class ProductsController {
       price?: number | null;
       isActive?: boolean;
       imageUrls?: string[];
+      categoryIds?: string[];
     }
   ): Promise<unknown> {
     requireRole(req.auth?.role, ["admin", "vendedor"]);
@@ -107,6 +130,7 @@ export class ProductsController {
       price?: number | null;
       isActive?: boolean;
       imageUrls?: string[] | null;
+      categoryIds?: string[];
     }
   ): Promise<unknown> {
     requireRole(req.auth?.role, ["admin", "vendedor"]);

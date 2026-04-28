@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@nestjs/common": "latest",
+    "@supabase/supabase-js": "latest",
     "@waseller/api-core": "0.1.0",
     "@waseller/db": "0.1.0",
     "@waseller/queue": "0.1.0",

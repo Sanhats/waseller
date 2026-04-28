@@ -13,6 +13,7 @@ type ProductVariantInput = {
   price?: number | null;
   isActive?: boolean;
   imageUrls?: string[];
+  categoryIds?: string[];
 };
 
 type ProductCreateInput = {
@@ -33,6 +34,9 @@ type ProductVariantRow = {
   effectivePrice: number;
   sku: string;
   attributes: VariantAttributes;
+  variantTalle?: string | null;
+  variantColor?: string | null;
+  variantMarca?: string | null;
   stock: number;
   reservedStock: number;
   availableStock: number;
@@ -43,6 +47,10 @@ type ProductVariantRow = {
   isActive: boolean;
   categoryIds: string[];
   categoryNames: string[];
+  /** Solo categorías del producto (sin las de variante). */
+  productCategoryIds: string[];
+  /** Solo categorías enlazadas a esta variante. */
+  variantCategoryIds: string[];
 };
 
 async function syncProductCategories(
@@ -71,6 +79,36 @@ async function syncProductCategories(
   if (unique.length > 0) {
     await tx.productCategory.createMany({
       data: unique.map((categoryId) => ({ productId, categoryId }))
+    });
+  }
+}
+
+async function syncVariantCategories(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  tx: any,
+  tenantId: string,
+  variantId: string,
+  categoryIds: string[]
+): Promise<void> {
+  const unique = [...new Set(categoryIds.map((x) => String(x ?? "").trim()).filter(Boolean))];
+  if (unique.some((id) => !UUID_RE.test(id))) {
+    throw new BadRequestException("Algún categoryId de variante no es un UUID válido");
+  }
+  if (unique.length > 0) {
+    const found = await tx.category.findMany({
+      where: { tenantId, id: { in: unique }, isActive: true },
+      select: { id: true }
+    });
+    const ok = new Set(found.map((c: { id: string }) => c.id));
+    const missing = unique.filter((id) => !ok.has(id));
+    if (missing.length) {
+      throw new BadRequestException("Categorías de variante inexistentes, de otro tenant o inactivas");
+    }
+  }
+  await tx.variantCategory.deleteMany({ where: { variantId } });
+  if (unique.length > 0) {
+    await tx.variantCategory.createMany({
+      data: unique.map((categoryId) => ({ variantId, categoryId }))
     });
   }
 }
@@ -114,18 +152,45 @@ const normalizeAttributes = (raw: unknown): VariantAttributes => {
   return Object.fromEntries(entries);
 };
 
+/** Copias indexadas desde `attributes` (talle/talla, color, marca/modelo). */
+function extractVariantFacets(attrs: VariantAttributes): {
+  variantTalle: string | null;
+  variantColor: string | null;
+  variantMarca: string | null;
+} {
+  const a = normalizeAttributes(attrs);
+  const lower = (k: string) => k.toLowerCase().trim();
+  const byKey = new Map<string, string>();
+  for (const [k, v] of Object.entries(a)) {
+    byKey.set(lower(k), v.trim());
+  }
+  const t = byKey.get("talle") || byKey.get("talla") || "";
+  const c = byKey.get("color") || "";
+  const m = byKey.get("marca") || byKey.get("modelo") || "";
+  const cap = (s: string, n: number) => (s.length > n ? s.slice(0, n) : s);
+  return {
+    variantTalle: t ? cap(t, 160) : null,
+    variantColor: c ? cap(c, 160) : null,
+    variantMarca: m ? cap(m, 200) : null
+  };
+}
+
 const normalizeVariant = (input: ProductVariantInput): ProductVariantInput | null => {
   const sku = String(input.sku ?? "").trim();
   if (!sku) return null;
   const maxVariantImages = readNumericEnv("VARIANT_MAX_IMAGE_UPLOADS", 6);
   const maxVariantChars = readNumericEnv("VARIANT_IMAGE_MAX_CHARS", 220_000);
+  const catIds = Array.isArray(input.categoryIds)
+    ? [...new Set(input.categoryIds.map((x) => String(x ?? "").trim()).filter(Boolean))]
+    : [];
   return {
     sku,
     attributes: normalizeAttributes(input.attributes),
     stock: Math.max(0, Number(input.stock ?? 0)),
     price: input.price === null || input.price === undefined ? null : Math.max(0, Number(input.price)),
     isActive: input.isActive !== false,
-    imageUrls: normalizeImageUrls(input.imageUrls, { maxItems: maxVariantImages, maxChars: maxVariantChars })
+    imageUrls: normalizeImageUrls(input.imageUrls, { maxItems: maxVariantImages, maxChars: maxVariantChars }),
+    categoryIds: catIds
   };
 };
 
@@ -206,7 +271,7 @@ export class ProductsService {
    */
   private async queryProductVariantRows(
     tenantId: string,
-    opts?: { categoryId?: string; q?: string },
+    opts?: { categoryId?: string; q?: string; talle?: string; color?: string; marca?: string },
     activeVariantsOnly = false,
     requireActiveCategories = false
   ): Promise<
@@ -219,6 +284,9 @@ export class ProductsService {
       effectivePrice: unknown;
       sku: string;
       attributes: unknown;
+      variantTalle?: string | null;
+      variantColor?: string | null;
+      variantMarca?: string | null;
       stock: number;
       reservedStock: number;
       availableStock: number;
@@ -246,9 +314,15 @@ export class ProductsService {
       if (ids.length === 0 || !ids.every((id) => UUID_RE.test(id))) {
         extra += " and false ";
       } else {
-        extra += ` and exists (
-          select 1 from public.product_categories pc
-          where pc.product_id = p.id and pc.category_id = any($${next}::uuid[])
+        extra += ` and (
+          exists (
+            select 1 from public.product_categories pc
+            where pc.product_id = p.id and pc.category_id = any($${next}::uuid[])
+          )
+          or exists (
+            select 1 from public.variant_categories vc
+            where vc.variant_id = v.id and vc.category_id = any($${next}::uuid[])
+          )
         ) `;
         params.push(ids);
         next += 1;
@@ -263,8 +337,33 @@ export class ProductsService {
           select 1 from unnest(coalesce(p.tags, array[]::text[])) t
           where position($${next} in lower(t)) > 0
         )
+        or position($${next} in lower(concat_ws(' ',
+          coalesce(v.variant_talle,''),
+          coalesce(v.variant_color,''),
+          coalesce(v.variant_marca,''),
+          coalesce(v.sku,'')
+        ))) > 0
       ) `;
       params.push(qv);
+      next += 1;
+    }
+
+    const talleF = opts?.talle?.trim();
+    if (talleF) {
+      extra += ` and lower(trim(coalesce(v.variant_talle,''))) = lower(trim($${next})) `;
+      params.push(talleF);
+      next += 1;
+    }
+    const colorF = opts?.color?.trim();
+    if (colorF) {
+      extra += ` and lower(trim(coalesce(v.variant_color,''))) = lower(trim($${next})) `;
+      params.push(colorF);
+      next += 1;
+    }
+    const marcaF = opts?.marca?.trim();
+    if (marcaF) {
+      extra += ` and lower(trim(coalesce(v.variant_marca,''))) = lower(trim($${next})) `;
+      params.push(marcaF);
       next += 1;
     }
 
@@ -278,6 +377,9 @@ export class ProductsService {
         coalesce(v.price, p.price) as "effectivePrice",
         v.sku as "sku",
         v.attributes as "attributes",
+        v.variant_talle as "variantTalle",
+        v.variant_color as "variantColor",
+        v.variant_marca as "variantMarca",
         v.stock as "stock",
         v.reserved_stock as "reservedStock",
         greatest(v.stock - v.reserved_stock, 0) as "availableStock",
@@ -288,18 +390,38 @@ export class ProductsService {
         v.is_active as "isActive",
         coalesce(
           (select array_agg(c.id::text order by c.sort_order, c.name)
-           from public.product_categories pc
-           join public.categories c on c.id = pc.category_id
-           where pc.product_id = p.id),
+           from (
+             select category_id from public.product_categories where product_id = p.id
+             union
+             select category_id from public.variant_categories where variant_id = v.id
+           ) x
+           join public.categories c on c.id = x.category_id),
           '{}'::text[]
         ) as "categoryIds",
         coalesce(
           (select array_agg(c.name order by c.sort_order, c.name)
-           from public.product_categories pc
-           join public.categories c on c.id = pc.category_id
-           where pc.product_id = p.id),
+           from (
+             select category_id from public.product_categories where product_id = p.id
+             union
+             select category_id from public.variant_categories where variant_id = v.id
+           ) x
+           join public.categories c on c.id = x.category_id),
           '{}'::text[]
-        ) as "categoryNames"
+        ) as "categoryNames",
+        coalesce(
+          (select array_agg(c.id::text order by c.sort_order, c.name)
+           from public.product_categories pc2
+           join public.categories c on c.id = pc2.category_id
+           where pc2.product_id = p.id),
+          '{}'::text[]
+        ) as "productCategoryIds",
+        coalesce(
+          (select array_agg(c.id::text order by c.sort_order, c.name)
+           from public.variant_categories vc2
+           join public.categories c on c.id = vc2.category_id
+           where vc2.variant_id = v.id),
+          '{}'::text[]
+        ) as "variantCategoryIds"
       from public.product_variants v
       inner join public.products p on p.id = v.product_id
       where v.tenant_id::text = $1
@@ -316,6 +438,9 @@ export class ProductsService {
       effectivePrice: unknown;
       sku: string;
       attributes: unknown;
+      variantTalle?: string | null;
+      variantColor?: string | null;
+      variantMarca?: string | null;
       stock: number;
       reservedStock: number;
       availableStock: number;
@@ -326,15 +451,39 @@ export class ProductsService {
       isActive: boolean;
       categoryIds?: string[] | null;
       categoryNames?: string[] | null;
+      productCategoryIds?: string[] | null;
+      variantCategoryIds?: string[] | null;
     }>;
   }
 
-  async listByTenant(
-    tenantId: string,
-    opts?: { categoryId?: string; q?: string }
-  ): Promise<ProductVariantRow[]> {
-    const rows = await this.queryProductVariantRows(tenantId, opts, false, false);
-    return rows.map((row) => ({
+  private mapVariantRow(row: {
+    variantId: string;
+    productId: string;
+    name: string;
+    basePrice: unknown;
+    variantPrice: unknown;
+    effectivePrice: unknown;
+    sku: string;
+    attributes: unknown;
+    variantTalle?: string | null;
+    variantColor?: string | null;
+    variantMarca?: string | null;
+    stock: number;
+    reservedStock: number;
+    availableStock: number;
+    imageUrl?: string | null;
+    imageUrls?: string[] | null;
+    variantImageUrls?: string[] | null;
+    tags?: string[] | null;
+    isActive: boolean;
+    categoryIds?: string[] | null;
+    categoryNames?: string[] | null;
+    productCategoryIds?: string[] | null;
+    variantCategoryIds?: string[] | null;
+  }): ProductVariantRow {
+    const attrs = normalizeAttributes(row.attributes);
+    const fb = extractVariantFacets(attrs);
+    return {
       variantId: row.variantId,
       productId: row.productId,
       name: row.name,
@@ -342,7 +491,10 @@ export class ProductsService {
       variantPrice: row.variantPrice,
       effectivePrice: Number(row.effectivePrice ?? 0),
       sku: row.sku,
-      attributes: normalizeAttributes(row.attributes),
+      attributes: attrs,
+      variantTalle: (row.variantTalle != null && String(row.variantTalle).trim()) ? String(row.variantTalle).trim() : fb.variantTalle,
+      variantColor: (row.variantColor != null && String(row.variantColor).trim()) ? String(row.variantColor).trim() : fb.variantColor,
+      variantMarca: (row.variantMarca != null && String(row.variantMarca).trim()) ? String(row.variantMarca).trim() : fb.variantMarca,
       stock: Number(row.stock ?? 0),
       reservedStock: Number(row.reservedStock ?? 0),
       availableStock: Number(row.availableStock ?? 0),
@@ -355,39 +507,81 @@ export class ProductsService {
       tags: Array.isArray(row.tags) ? row.tags : [],
       isActive: Boolean(row.isActive),
       categoryIds: Array.isArray(row.categoryIds) ? row.categoryIds : [],
-      categoryNames: Array.isArray(row.categoryNames) ? row.categoryNames : []
-    }));
+      categoryNames: Array.isArray(row.categoryNames) ? row.categoryNames : [],
+      productCategoryIds: Array.isArray(row.productCategoryIds) ? row.productCategoryIds : [],
+      variantCategoryIds: Array.isArray(row.variantCategoryIds) ? row.variantCategoryIds : []
+    };
+  }
+
+  async listByTenant(
+    tenantId: string,
+    opts?: { categoryId?: string; q?: string; talle?: string; color?: string; marca?: string }
+  ): Promise<ProductVariantRow[]> {
+    const rows = await this.queryProductVariantRows(tenantId, opts, false, false);
+    return rows.map((row) => this.mapVariantRow(row));
+  }
+
+  /** Valores distintos de facetas para armar filtros (dashboard / tienda). */
+  async listVariantFacetDistinctValues(
+    tenantId: string,
+    opts?: { categoryId?: string; publicCatalog?: boolean }
+  ): Promise<{ talles: string[]; colors: string[]; marcas: string[] }> {
+    if (!UUID_RE.test(tenantId)) {
+      return { talles: [], colors: [], marcas: [] };
+    }
+    const params: unknown[] = [tenantId];
+    let next = 2;
+    let extra = "";
+    if (opts?.publicCatalog) {
+      extra += " and v.is_active = true and greatest(v.stock - v.reserved_stock, 0) > 0 ";
+    }
+    const cid = opts?.categoryId?.trim();
+    if (cid) {
+      const ids = await this.expandCategorySubtreeIds(tenantId, cid, Boolean(opts?.publicCatalog));
+      if (ids.length === 0 || !ids.every((id) => UUID_RE.test(id))) {
+        return { talles: [], colors: [], marcas: [] };
+      }
+      extra += ` and (
+        exists (
+          select 1 from public.product_categories pc
+          where pc.product_id = p.id and pc.category_id = any($${next}::uuid[])
+        )
+        or exists (
+          select 1 from public.variant_categories vc
+          where vc.variant_id = v.id and vc.category_id = any($${next}::uuid[])
+        )
+      ) `;
+      params.push(ids);
+      next += 1;
+    }
+    const baseFrom = `
+      from public.product_variants v
+      inner join public.products p on p.id = v.product_id
+      where v.tenant_id::text = $1
+      ${extra}
+    `;
+    const run = async (col: "variant_talle" | "variant_color" | "variant_marca"): Promise<string[]> => {
+      const sql = `select distinct trim(v.${col}) as val ${baseFrom}
+        and v.${col} is not null and trim(v.${col}) <> ''
+        order by 1 asc`;
+      const rows = (await (prisma as any).$queryRawUnsafe(sql, ...params)) as Array<{ val: string }>;
+      return rows.map((r) => String(r.val ?? "").trim()).filter(Boolean);
+    };
+    const [talles, colors, marcas] = await Promise.all([
+      run("variant_talle"),
+      run("variant_color"),
+      run("variant_marca")
+    ]);
+    return { talles, colors, marcas };
   }
 
   /** Catálogo público: solo variantes activas (sin JWT en el consumidor de la página). */
   async listPublicCatalogByTenant(
     tenantId: string,
-    opts?: { categoryId?: string; q?: string }
+    opts?: { categoryId?: string; q?: string; talle?: string; color?: string; marca?: string }
   ): Promise<ProductVariantRow[]> {
     const rows = await this.queryProductVariantRows(tenantId, opts, true, true);
-    return rows.map((row) => ({
-      variantId: row.variantId,
-      productId: row.productId,
-      name: row.name,
-      basePrice: row.basePrice,
-      variantPrice: row.variantPrice,
-      effectivePrice: Number(row.effectivePrice ?? 0),
-      sku: row.sku,
-      attributes: normalizeAttributes(row.attributes),
-      stock: Number(row.stock ?? 0),
-      reservedStock: Number(row.reservedStock ?? 0),
-      availableStock: Number(row.availableStock ?? 0),
-      imageUrl:
-        row.variantImageUrls?.[0] ||
-        row.imageUrls?.[0] ||
-        row.imageUrl,
-      imageUrls: Array.isArray(row.imageUrls) ? row.imageUrls : [],
-      variantImageUrls: Array.isArray(row.variantImageUrls) ? row.variantImageUrls : [],
-      tags: Array.isArray(row.tags) ? row.tags : [],
-      isActive: Boolean(row.isActive),
-      categoryIds: Array.isArray(row.categoryIds) ? row.categoryIds : [],
-      categoryNames: Array.isArray(row.categoryNames) ? row.categoryNames : []
-    }));
+    return rows.map((row) => this.mapVariantRow(row));
   }
 
   /** Detalle público del producto: variantes activas del mismo `productId` (sin JWT). */
@@ -405,11 +599,18 @@ export class ProductsService {
       variantId: string;
       sku: string;
       attributes: Record<string, string>;
+      variantTalle?: string | null;
+      variantColor?: string | null;
+      variantMarca?: string | null;
       variantPrice: number | null;
       effectivePrice: number;
       availableStock: number;
       isActive: boolean;
       variantImageUrls: string[];
+      categoryIds: string[];
+      categoryNames: string[];
+      /** Solo categorías enlazadas a esta variante (para badges sin duplicar las del producto). */
+      variantCategoryNames: string[];
     }>;
   }> {
     const pid = String(productId ?? "").trim();
@@ -435,11 +636,41 @@ export class ProductsService {
         v.id as "variantId",
         v.sku as "sku",
         v.attributes as "attributes",
+        v.variant_talle as "variantTalle",
+        v.variant_color as "variantColor",
+        v.variant_marca as "variantMarca",
         v.price as "variantPrice",
         coalesce(v.price, p.price) as "effectivePrice",
         greatest(v.stock - v.reserved_stock, 0) as "availableStock",
         v.is_active as "isActive",
-        v.image_urls as "variantImageUrls"
+        v.image_urls as "variantImageUrls",
+        coalesce(
+          (select array_agg(c.id::text order by c.sort_order, c.name)
+           from (
+             select category_id from public.product_categories where product_id = p.id
+             union
+             select category_id from public.variant_categories where variant_id = v.id
+           ) x
+           join public.categories c on c.id = x.category_id),
+          '{}'::text[]
+        ) as "categoryIds",
+        coalesce(
+          (select array_agg(c.name order by c.sort_order, c.name)
+           from (
+             select category_id from public.product_categories where product_id = p.id
+             union
+             select category_id from public.variant_categories where variant_id = v.id
+           ) x
+           join public.categories c on c.id = x.category_id),
+          '{}'::text[]
+        ) as "categoryNames",
+        coalesce(
+          (select array_agg(c.name order by c.sort_order, c.name)
+           from public.variant_categories vc3
+           join public.categories c on c.id = vc3.category_id
+           where vc3.variant_id = v.id),
+          '{}'::text[]
+        ) as "variantCategoryNames"
       from public.product_variants v
       inner join public.products p on p.id = v.product_id
       where v.tenant_id::text = ${tenantId}
@@ -455,30 +686,46 @@ export class ProductsService {
       variantId: string;
       sku: string;
       attributes: unknown;
+      variantTalle?: string | null;
+      variantColor?: string | null;
+      variantMarca?: string | null;
       variantPrice: unknown;
       effectivePrice: unknown;
       availableStock: number;
       isActive: boolean;
       variantImageUrls?: string[] | null;
+      categoryIds?: string[] | null;
+      categoryNames?: string[] | null;
+      variantCategoryNames?: string[] | null;
     }>;
 
     return {
       categories: cats,
-      variants: rows.map((r) => ({
-        productId: r.productId,
-        name: String(r.name ?? ""),
-        basePrice: Number(r.basePrice ?? 0),
-        imageUrls: Array.isArray(r.imageUrls) ? r.imageUrls : [],
-        tags: Array.isArray(r.tags) ? r.tags : [],
-        variantId: r.variantId,
-        sku: String(r.sku ?? ""),
-        attributes: normalizeAttributes(r.attributes),
-        variantPrice: r.variantPrice == null ? null : Number(r.variantPrice),
-        effectivePrice: Number(r.effectivePrice ?? 0),
-        availableStock: Number(r.availableStock ?? 0),
-        isActive: Boolean(r.isActive),
-        variantImageUrls: Array.isArray(r.variantImageUrls) ? r.variantImageUrls : []
-      }))
+      variants: rows.map((r) => {
+        const attrs = normalizeAttributes(r.attributes);
+        const fb = extractVariantFacets(attrs);
+        return {
+          productId: r.productId,
+          name: String(r.name ?? ""),
+          basePrice: Number(r.basePrice ?? 0),
+          imageUrls: Array.isArray(r.imageUrls) ? r.imageUrls : [],
+          tags: Array.isArray(r.tags) ? r.tags : [],
+          variantId: r.variantId,
+          sku: String(r.sku ?? ""),
+          attributes: attrs,
+          variantTalle: (r.variantTalle != null && String(r.variantTalle).trim()) ? String(r.variantTalle).trim() : fb.variantTalle,
+          variantColor: (r.variantColor != null && String(r.variantColor).trim()) ? String(r.variantColor).trim() : fb.variantColor,
+          variantMarca: (r.variantMarca != null && String(r.variantMarca).trim()) ? String(r.variantMarca).trim() : fb.variantMarca,
+          variantPrice: r.variantPrice == null ? null : Number(r.variantPrice),
+          effectivePrice: Number(r.effectivePrice ?? 0),
+          availableStock: Number(r.availableStock ?? 0),
+          isActive: Boolean(r.isActive),
+          variantImageUrls: Array.isArray(r.variantImageUrls) ? r.variantImageUrls : [],
+          categoryIds: Array.isArray(r.categoryIds) ? r.categoryIds : [],
+          categoryNames: Array.isArray(r.categoryNames) ? r.categoryNames : [],
+          variantCategoryNames: Array.isArray(r.variantCategoryNames) ? r.variantCategoryNames : []
+        };
+      })
     };
   }
 
@@ -510,6 +757,7 @@ export class ProductsService {
 
       const createdVariants: Array<{ id: string; sku: string; stock: number }> = [];
       for (const variant of payload.variants) {
+        const facets = extractVariantFacets(variant.attributes);
         const created = await tx.productVariant.create({
           data: {
             tenantId,
@@ -517,6 +765,9 @@ export class ProductsService {
             sku: variant.sku,
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             attributes: variant.attributes as any,
+            variantTalle: facets.variantTalle,
+            variantColor: facets.variantColor,
+            variantMarca: facets.variantMarca,
             price: variant.price === null || variant.price === undefined ? null : variant.price,
             stock: variant.stock,
             reservedStock: 0,
@@ -524,6 +775,9 @@ export class ProductsService {
             imageUrls: variant.imageUrls ?? []
           }
         });
+        if (Array.isArray(variant.categoryIds) && variant.categoryIds.length > 0) {
+          await syncVariantCategories(tx, tenantId, created.id, variant.categoryIds);
+        }
         createdVariants.push({ id: created.id, sku: created.sku, stock: created.stock });
         if (Number(created.stock) > 0) {
           await tx.stockMovement.create({
@@ -560,6 +814,7 @@ export class ProductsService {
       price?: number | null;
       isActive?: boolean;
       imageUrls?: string[];
+      categoryIds?: string[];
     }
   ): Promise<unknown> {
     const product = await prisma.product.findFirst({
@@ -573,7 +828,8 @@ export class ProductsService {
       stock: body.stock,
       price: body.price,
       isActive: body.isActive,
-      imageUrls: body.imageUrls
+      imageUrls: body.imageUrls,
+      categoryIds: body.categoryIds
     });
     if (!normalized) {
       throw new BadRequestException("Datos de variante incompletos o SKU vacío");
@@ -586,6 +842,7 @@ export class ProductsService {
       throw new ConflictException("Ese SKU ya lo usa otra variante");
     }
 
+    const facets = extractVariantFacets(normalized.attributes);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return prisma.$transaction(async (tx: any) => {
       const created = await tx.productVariant.create({
@@ -595,13 +852,19 @@ export class ProductsService {
           sku: normalized.sku,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           attributes: normalized.attributes as any,
+          variantTalle: facets.variantTalle,
+          variantColor: facets.variantColor,
+          variantMarca: facets.variantMarca,
           price: normalized.price === null ? null : normalized.price,
           stock: normalized.stock,
           reservedStock: 0,
           isActive: normalized.isActive !== false,
           imageUrls: normalized.imageUrls ?? []
         }
-      });
+        });
+      if (Array.isArray(normalized.categoryIds) && normalized.categoryIds.length > 0) {
+        await syncVariantCategories(tx, tenantId, created.id, normalized.categoryIds);
+      }
       if (Number(created.stock) > 0) {
         await tx.stockMovement.create({
           data: {
@@ -717,6 +980,7 @@ export class ProductsService {
       price?: number | null;
       isActive?: boolean;
       imageUrls?: string[] | null;
+      categoryIds?: string[];
     }
   ): Promise<unknown> {
     const variant = await prisma.productVariant.findFirst({
@@ -781,6 +1045,7 @@ export class ProductsService {
         : undefined;
 
     const deltaStock = nextStock - Number(variant.stock);
+    const facetCols = extractVariantFacets(nextAttributes);
 
     return prisma.$transaction(async (tx: any) => {
       await tx.productVariant.update({
@@ -789,6 +1054,9 @@ export class ProductsService {
           sku: newSku,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           attributes: nextAttributes as any,
+          variantTalle: facetCols.variantTalle,
+          variantColor: facetCols.variantColor,
+          variantMarca: facetCols.variantMarca,
           stock: nextStock,
           ...(nextPrice !== undefined ? { price: nextPrice } : {}),
           isActive: nextIsActive,
@@ -809,6 +1077,9 @@ export class ProductsService {
           }
         });
       }
+      if (Array.isArray(body.categoryIds)) {
+        await syncVariantCategories(tx, tenantId, variantId, body.categoryIds);
+      }
       const updatedRows = (await tx.$queryRaw`
         select
           v.id as "variantId",
@@ -819,6 +1090,9 @@ export class ProductsService {
           coalesce(v.price, p.price) as "effectivePrice",
           v.sku as "sku",
           v.attributes as "attributes",
+          v.variant_talle as "variantTalle",
+          v.variant_color as "variantColor",
+          v.variant_marca as "variantMarca",
           v.stock as "stock",
           v.reserved_stock as "reservedStock",
           greatest(v.stock - v.reserved_stock, 0) as "availableStock",
@@ -826,13 +1100,34 @@ export class ProductsService {
           p.image_urls as "imageUrls",
           v.image_urls as "variantImageUrls",
           p.tags as "tags",
-          v.is_active as "isActive"
+          v.is_active as "isActive",
+          coalesce(
+            (select array_agg(c.id::text order by c.sort_order, c.name)
+             from (
+               select category_id from public.product_categories where product_id = p.id
+               union
+               select category_id from public.variant_categories where variant_id = v.id
+             ) x
+             join public.categories c on c.id = x.category_id),
+            '{}'::text[]
+          ) as "categoryIds",
+          coalesce(
+            (select array_agg(c.name order by c.sort_order, c.name)
+             from (
+               select category_id from public.product_categories where product_id = p.id
+               union
+               select category_id from public.variant_categories where variant_id = v.id
+             ) x
+             join public.categories c on c.id = x.category_id),
+            '{}'::text[]
+          ) as "categoryNames"
         from public.product_variants v
         inner join public.products p on p.id = v.product_id
         where v.id::text = ${variant.id}
         limit 1
-      `) as ProductVariantRow[];
-      return updatedRows[0] ?? null;
+      `) as Array<ProductVariantRow>;
+      const row = updatedRows[0];
+      return row ? this.mapVariantRow(row) : null;
     });
   }
 
@@ -910,6 +1205,9 @@ export class ProductsService {
           coalesce(v.price, p.price) as "effectivePrice",
           v.sku as "sku",
           v.attributes as "attributes",
+          v.variant_talle as "variantTalle",
+          v.variant_color as "variantColor",
+          v.variant_marca as "variantMarca",
           v.stock as "stock",
           v.reserved_stock as "reservedStock",
           greatest(v.stock - v.reserved_stock, 0) as "availableStock",

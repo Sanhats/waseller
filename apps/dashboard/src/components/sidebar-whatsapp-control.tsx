@@ -50,6 +50,7 @@ function isConnectedLike(s: WhatsappState | null): boolean {
 }
 
 export function SidebarWhatsappControl({ compact = false }: { compact?: boolean }) {
+  const [mounted, setMounted] = useState(false);
   const [role, setRole] = useState<string | null>(null);
   const [state, setState] = useState<WhatsappState | null>(null);
   const [loading, setLoading] = useState(true);
@@ -57,6 +58,7 @@ export function SidebarWhatsappControl({ compact = false }: { compact?: boolean 
   const [error, setError] = useState("");
 
   useEffect(() => {
+    setMounted(true);
     setRole(readJwtRole());
   }, []);
 
@@ -123,9 +125,12 @@ export function SidebarWhatsappControl({ compact = false }: { compact?: boolean 
     }
   };
 
+  // Evita mismatch de hidratación: en SSR no existe `window/localStorage`.
+  // Renderizamos null hasta montar, y recién ahí decidimos si mostrar el control.
+  if (!mounted) return null;
   if (role === "viewer") return null;
-
-  if (!authHeaders()) return null;
+  const headersOnClient = authHeaders();
+  if (!headersOnClient) return null;
 
   const connectedLike = isConnectedLike(state);
   const statusLabel =

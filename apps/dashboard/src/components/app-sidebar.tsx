@@ -1,13 +1,14 @@
 "use client";
 
 import Image from "next/image";
-import { Activity, Boxes, Building2, Home, MessagesSquare } from "lucide-react";
+import { Activity, Boxes, Building2, Home, LogOut, MessagesSquare, Store } from "lucide-react";
 import { ComponentType } from "react";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/cn";
 import { BusinessProfileIncompleteBanner } from "@/components/business-profile-incomplete-banner";
 import { SidebarWhatsappControl } from "@/components/sidebar-whatsapp-control";
 
-type SectionKey = "home" | "leads" | "conversations" | "ops" | "stock";
+type SectionKey = "home" | "leads" | "conversations" | "ops" | "stock" | "tienda";
 
 type NavIcon = ComponentType<{ size?: number; className?: string }>;
 
@@ -27,10 +28,34 @@ const navItems: Array<{
   },
   { key: "ops", href: "/ops", label: "Negocio", icon: Activity },
   { key: "stock", href: "/stock", label: "Stock", icon: Boxes },
+  { key: "tienda", href: "/tienda-config", label: "Tienda", icon: Store },
 ];
 
 const LOGO_SRC_WIDTH = 2000;
 const LOGO_SRC_HEIGHT = 2000;
+
+function readJwtExpMs(token: string): number | null {
+  try {
+    const part = token.split(".")[1];
+    if (!part) return null;
+    const json = atob(part.replace(/-/g, "+").replace(/_/g, "/"));
+    const payload = JSON.parse(json) as { exp?: number };
+    if (!payload.exp || !Number.isFinite(payload.exp)) return null;
+    return payload.exp * 1000;
+  } catch {
+    return null;
+  }
+}
+
+function clearAuthAndRedirect(): void {
+  try {
+    window.localStorage.removeItem("ws_auth_token");
+    window.localStorage.removeItem("ws_tenant_id");
+  } catch {
+    // ignore
+  }
+  window.location.href = "/login";
+}
 
 function BrandMark({ compact }: { compact: boolean }) {
   return (
@@ -69,6 +94,26 @@ export function AppSidebar({
   leadsCount?: number;
   compact?: boolean;
 }) {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+    try {
+      const token = window.localStorage.getItem("ws_auth_token") ?? "";
+      const tenantId = window.localStorage.getItem("ws_tenant_id") ?? "";
+      if (!token || !tenantId) {
+        clearAuthAndRedirect();
+        return;
+      }
+      const exp = readJwtExpMs(token);
+      if (exp && Date.now() >= exp) {
+        clearAuthAndRedirect();
+      }
+    } catch {
+      clearAuthAndRedirect();
+    }
+  }, []);
+
   if (compact) {
     return (
       <>
@@ -212,6 +257,22 @@ export function AppSidebar({
 
         {/* Divider */}
         <div className="mx-1 mt-3 mb-1 h-px bg-white/[0.08]" />
+
+        <button
+          type="button"
+          onClick={() => clearAuthAndRedirect()}
+          disabled={!mounted}
+          className={cn(
+            "mx-1 mb-2 flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold",
+            "border border-white/15 bg-white/5 text-white/80",
+            "hover:bg-white/10 hover:text-white",
+            "focus-visible:ring-2 focus-visible:ring-white/60 focus-visible:ring-offset-2 focus-visible:ring-offset-primary",
+          )}
+          aria-label="Cerrar sesión"
+        >
+          <LogOut size={16} aria-hidden />
+          Cerrar sesión
+        </button>
 
         <SidebarWhatsappControl />
       </aside>

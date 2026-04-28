@@ -217,15 +217,34 @@ export async function dispatchApi(
     }
 
     /* -------- Products -------- */
+    if (path === "/products/facet-options" && method === "GET") {
+      requireRole(auth?.role, ["admin", "vendedor", "viewer"]);
+      const categoryId = url.searchParams.get("categoryId")?.trim() || undefined;
+      return NextResponse.json(await s.products.listVariantFacetDistinctValues(tenantId, { categoryId }));
+    }
     if (path === "/products" && method === "GET") {
       requireRole(auth?.role, ["admin", "vendedor", "viewer"]);
       const categoryId = url.searchParams.get("categoryId")?.trim() || undefined;
       const q = url.searchParams.get("q")?.trim() || undefined;
-      return NextResponse.json(await s.products.listByTenant(tenantId, { categoryId, q }));
+      const talle = url.searchParams.get("talle")?.trim() || undefined;
+      const color = url.searchParams.get("color")?.trim() || undefined;
+      const marca = url.searchParams.get("marca")?.trim() || undefined;
+      return NextResponse.json(
+        await s.products.listByTenant(tenantId, { categoryId, q, talle, color, marca }),
+      );
     }
     if (path === "/products" && method === "POST") {
       requireRole(auth?.role, ["admin", "vendedor"]);
-      const body = await req.json();
+      let body: unknown = {};
+      try {
+        body = await req.json();
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return jsonMessage(
+          400,
+          `No se pudo leer el payload del producto. Si estás subiendo muchas fotos, probá con menos imágenes o con menor tamaño. Detalle: ${msg}`
+        );
+      }
       return NextResponse.json(await s.products.createProduct(tenantId, body as never));
     }
     if (path === "/products/movements" && method === "GET") {
@@ -500,6 +519,17 @@ export async function dispatchApi(
         label?: string;
       };
       return NextResponse.json(await s.ops.promoteEvalDatasetFromFeedback(tenantId, body ?? {}));
+    }
+
+    /* -------- Tienda Config -------- */
+    if (path === "/tienda-config" && method === "GET") {
+      requireRole(auth?.role, ["admin", "vendedor", "viewer"]);
+      return NextResponse.json(await s.tiendaConfig.getConfig(tenantId));
+    }
+    if (path === "/tienda-config" && method === "PUT") {
+      requireRole(auth?.role, ["admin"]);
+      const body = await req.json();
+      return NextResponse.json(await s.tiendaConfig.upsertConfig(tenantId, body));
     }
 
     return jsonMessage(404, "Not found");

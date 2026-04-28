@@ -46,11 +46,13 @@ if (prismaArgs.length === 0) {
   process.exit(1);
 }
 
-const child = spawn("npx", ["prisma", ...prismaArgs], {
+// Monorepo: el CLI `prisma` vive en la raíz del repo (evita npx en Windows y deps rotas en `packages/db/node_modules`).
+const repoRoot = resolve(__dirname, "../../..");
+const prismaCli = resolve(repoRoot, "node_modules/prisma/build/index.js");
+const child = spawn(process.execPath, [prismaCli, ...prismaArgs], {
   stdio: "inherit",
-  shell: true,
   env: process.env,
-  cwd: resolve(__dirname, "..")
+  cwd: resolve(__dirname, ".."),
 });
 
 child.on("exit", (code) => process.exit(code ?? 1));

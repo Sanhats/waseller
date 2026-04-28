@@ -20,6 +20,8 @@ const ops_controller_1 = require("./ops/ops.controller");
 const ops_service_1 = require("./ops/ops.service");
 const products_controller_1 = require("./products/products.controller");
 const products_service_1 = require("./products/products.service");
+const categories_controller_1 = require("./categories/categories.controller");
+const categories_service_1 = require("./categories/categories.service");
 const onboarding_controller_1 = require("./onboarding/onboarding.controller");
 const onboarding_service_1 = require("./onboarding/onboarding.service");
 const mercado_pago_controller_1 = require("./mercado-pago/mercado-pago.controller");
@@ -38,6 +40,7 @@ exports.AppModule = AppModule = __decorate([
             conversations_controller_1.ConversationsController,
             ops_controller_1.OpsController,
             products_controller_1.ProductsController,
+            categories_controller_1.CategoriesController,
             onboarding_controller_1.OnboardingController,
             mercado_pago_controller_1.MercadoPagoController,
             dashboard_controller_1.DashboardController
@@ -49,6 +52,7 @@ exports.AppModule = AppModule = __decorate([
             conversations_service_1.ConversationsService,
             ops_service_1.OpsService,
             products_service_1.ProductsService,
+            categories_service_1.CategoriesService,
             onboarding_service_1.OnboardingService,
             mercado_pago_service_1.MercadoPagoService,
             dashboard_service_1.DashboardService

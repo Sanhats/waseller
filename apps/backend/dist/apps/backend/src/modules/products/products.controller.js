@@ -21,9 +21,22 @@ let ProductsController = class ProductsController {
     constructor(productsService) {
         this.productsService = productsService;
     }
-    async list(req) {
+    async facetOptions(req, categoryId) {
         (0, require_role_1.requireRole)(req.auth?.role, ["admin", "vendedor", "viewer"]);
-        return this.productsService.listByTenant(req.tenantId);
+        return this.productsService.listVariantFacetDistinctValues(req.tenantId, {
+            categoryId: categoryId?.trim() || undefined,
+            publicCatalog: false
+        });
+    }
+    async list(req, categoryId, q, talle, color, marca) {
+        (0, require_role_1.requireRole)(req.auth?.role, ["admin", "vendedor", "viewer"]);
+        return this.productsService.listByTenant(req.tenantId, {
+            categoryId: categoryId?.trim() || undefined,
+            q: q?.trim() || undefined,
+            talle: talle?.trim() || undefined,
+            color: color?.trim() || undefined,
+            marca: marca?.trim() || undefined
+        });
     }
     async create(req, body) {
         (0, require_role_1.requireRole)(req.auth?.role, ["admin", "vendedor"]);
@@ -56,10 +69,23 @@ let ProductsController = class ProductsController {
 };
 exports.ProductsController = ProductsController;
 __decorate([
+    (0, common_1.Get)("facet-options"),
+    __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Query)("categoryId")),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:returntype", Promise)
+], ProductsController.prototype, "facetOptions", null);
+__decorate([
     (0, common_1.Get)(),
     __param(0, (0, common_1.Req)()),
+    __param(1, (0, common_1.Query)("categoryId")),
+    __param(2, (0, common_1.Query)("q")),
+    __param(3, (0, common_1.Query)("talle")),
+    __param(4, (0, common_1.Query)("color")),
+    __param(5, (0, common_1.Query)("marca")),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object]),
+    __metadata("design:paramtypes", [Object, String, String, String, String, String]),
     __metadata("design:returntype", Promise)
 ], ProductsController.prototype, "list", null);
 __decorate([

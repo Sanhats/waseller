@@ -20,8 +20,8 @@ export function ProductGallery({
 
   if (gallery.length === 0) {
     return (
-      <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-        <div className="flex aspect-square w-full items-center justify-center overflow-hidden rounded-xl bg-[var(--color-bg)] text-sm font-medium text-[var(--color-muted)]">
+      <div className="rounded-2xl border border-[var(--ts-border)] bg-[var(--ts-surface)] p-4">
+        <div className="flex aspect-square w-full items-center justify-center overflow-hidden rounded-xl bg-[var(--ts-bg)] text-sm font-medium text-[var(--ts-muted)]">
           Sin fotos
         </div>
       </div>
@@ -30,8 +30,8 @@ export function ProductGallery({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-        <div className="relative aspect-square w-full overflow-hidden rounded-xl bg-[var(--color-bg)]">
+      <div className="rounded-2xl border border-[var(--ts-border)] bg-[var(--ts-surface)] p-4">
+        <div className="relative aspect-square w-full overflow-hidden rounded-xl bg-[var(--ts-bg)]">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src={activeSrc} alt={name} className="h-full w-full object-contain" />
         </div>
@@ -52,10 +52,10 @@ export function ProductGallery({
               >
                 <div
                   className={[
-                    "h-20 w-20 overflow-hidden rounded-xl bg-[var(--color-surface)]",
+                    "h-20 w-20 overflow-hidden rounded-xl bg-[var(--ts-surface)]",
                     isActive
-                      ? "border-2 border-[var(--color-primary)]"
-                      : "border border-[var(--color-border)] hover:border-[var(--color-primary)]",
+                      ? "border-2 border-[var(--ts-primary)]"
+                      : "border border-[var(--ts-border)] hover:border-[var(--ts-primary)]",
                   ].join(" ")}
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}

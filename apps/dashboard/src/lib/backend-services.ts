@@ -7,6 +7,7 @@ import { DashboardService } from "../../../backend/src/modules/dashboard/dashboa
 import { ProductsService } from "../../../backend/src/modules/products/products.service";
 import { CategoriesService } from "../../../backend/src/modules/categories/categories.service";
 import { MessageReceiverService } from "../../../backend/src/modules/messages/receiver.service";
+import { TiendaConfigService } from "../../../backend/src/modules/tienda-config/tienda-config.service";
 
 export type BackendServices = {
   leads: LeadsService;
@@ -18,6 +19,7 @@ export type BackendServices = {
   products: ProductsService;
   categories: CategoriesService;
   messages: MessageReceiverService;
+  tiendaConfig: TiendaConfigService;
 };
 
 let cached: BackendServices | null = null;
@@ -33,7 +35,8 @@ export function getBackendServices(): BackendServices {
     const products = new ProductsService();
     const categories = new CategoriesService();
     const messages = new MessageReceiverService();
-    cached = { leads, mercadoPago, ops, onboarding, conversations, dashboard, products, categories, messages };
+    const tiendaConfig = new TiendaConfigService();
+    cached = { leads, mercadoPago, ops, onboarding, conversations, dashboard, products, categories, messages, tiendaConfig };
   }
   return cached;
 }

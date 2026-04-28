@@ -27,3 +27,8 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ slug: str
   const { slug } = await ctx.params;
   return dispatchApi(req, "PATCH", slug ?? []);
 }
+
+export async function DELETE(req: NextRequest, ctx: { params: Promise<{ slug: string[] }> }) {
+  const { slug } = await ctx.params;
+  return dispatchApi(req, "DELETE", slug ?? []);
+}

@@ -27,16 +27,22 @@ function authHeaders(): HeadersInit | null {
   };
 }
 
-function categoryDepth(id: string, byId: Map<string, CategoryRow>, memo: Map<string, number>): number {
-  if (memo.has(id)) return memo.get(id)!;
-  const row = byId.get(id);
-  if (!row || !row.parentId) {
-    memo.set(id, 0);
-    return 0;
+function buildCategoryTreeIndex(rows: CategoryRow[]) {
+  const byId = new Map<string, CategoryRow>();
+  const childrenByParent = new Map<string | null, CategoryRow[]>();
+  for (const r of rows) {
+    byId.set(r.id, r);
+    const k = r.parentId ?? null;
+    if (!childrenByParent.has(k)) childrenByParent.set(k, []);
+    childrenByParent.get(k)!.push(r);
   }
-  const d = 1 + categoryDepth(row.parentId, byId, memo);
-  memo.set(id, d);
-  return d;
+  for (const [, list] of childrenByParent) {
+    list.sort(
+      (a, b) =>
+        (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.name.localeCompare(b.name, "es"),
+    );
+  }
+  return { byId, childrenByParent };
 }
 
 export default function StockCategoriesPage() {
@@ -52,6 +58,7 @@ export default function StockCategoriesPage() {
   const [editParentId, setEditParentId] = useState("");
   const [editSort, setEditSort] = useState(0);
   const [editActive, setEditActive] = useState(true);
+  const [collapsedIds, setCollapsedIds] = useState<Set<string>>(() => new Set());
 
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth < 1024);
@@ -83,27 +90,51 @@ export default function StockCategoriesPage() {
     void load();
   }, [load]);
 
-  const byId = useMemo(() => new Map(rows.map((r) => [r.id, r])), [rows]);
-  const depthMemo = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const r of rows) categoryDepth(r.id, byId, m);
-    return m;
-  }, [rows, byId]);
+  const treeIndex = useMemo(() => buildCategoryTreeIndex(rows), [rows]);
 
-  const sortedRows = useMemo(
-    () =>
-      [...rows].sort((a, b) => {
-        const da = depthMemo.get(a.id) ?? 0;
-        const db = depthMemo.get(b.id) ?? 0;
-        if (da !== db) return da - db;
-        if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
-        return a.name.localeCompare(b.name, "es");
-      }),
-    [rows, depthMemo],
-  );
+  const flattened = useMemo(() => {
+    const out: Array<{ row: CategoryRow; depth: number; isLast: boolean }> = [];
+    const visit = (parentId: string | null, depth: number) => {
+      const kids = treeIndex.childrenByParent.get(parentId) ?? [];
+      kids.forEach((kid, idx) => {
+        const isLast = idx === kids.length - 1;
+        out.push({ row: kid, depth, isLast });
+        visit(kid.id, depth + 1);
+      });
+    };
+    visit(null, 0);
+    return out;
+  }, [treeIndex]);
+
+  const depthById = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const it of flattened) m.set(it.row.id, it.depth);
+    return m;
+  }, [flattened]);
+
+  const hasChildren = useMemo(() => {
+    const s = new Set<string>();
+    for (const r of rows) {
+      if (r.parentId) s.add(r.parentId);
+    }
+    return s;
+  }, [rows]);
+
+  const visible = useMemo(() => {
+    if (collapsedIds.size === 0) return flattened;
+    const isHidden = (row: CategoryRow): boolean => {
+      let cur = row.parentId ? treeIndex.byId.get(row.parentId) ?? null : null;
+      while (cur) {
+        if (collapsedIds.has(cur.id)) return true;
+        cur = cur.parentId ? treeIndex.byId.get(cur.parentId) ?? null : null;
+      }
+      return false;
+    };
+    return flattened.filter((x) => !isHidden(x.row));
+  }, [collapsedIds, flattened, treeIndex.byId]);
 
   const parentOptions = (excludeId?: string) =>
-    sortedRows.filter((r) => !excludeId || r.id !== excludeId);
+    flattened.map((x) => x.row).filter((r) => !excludeId || r.id !== excludeId);
 
   const createCategory = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -268,7 +299,7 @@ export default function StockCategoriesPage() {
             >
               <option value="">— Raíz —</option>
               {parentOptions().map((r) => {
-                const depth = depthMemo.get(r.id) ?? 0;
+                const depth = depthById.get(r.id) ?? 0;
                 const pad = `${"— ".repeat(depth)}`;
                 return (
                   <option key={r.id} value={r.id}>
@@ -317,10 +348,14 @@ export default function StockCategoriesPage() {
               </tr>
             </thead>
             <tbody>
-              {sortedRows.map((r) => {
-                const depth = depthMemo.get(r.id) ?? 0;
-                const pad = depth > 0 ? `${" ".repeat(depth)}↳ ` : "";
+              {visible.map(({ row: r, depth, isLast }) => {
+                const prefix =
+                  depth === 0
+                    ? ""
+                    : `${"│ ".repeat(Math.max(0, depth - 1))}${isLast ? "└─ " : "├─ "}`;
                 const isEdit = editingId === r.id;
+                const canToggle = hasChildren.has(r.id);
+                const isCollapsed = collapsedIds.has(r.id);
                 return (
                   <tr key={r.id} style={{ borderTop: "1px solid var(--color-border)" }}>
                     <td style={{ padding: "10px 12px", fontWeight: 500 }}>
@@ -332,7 +367,46 @@ export default function StockCategoriesPage() {
                         />
                       ) : (
                         <>
-                          {pad}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!canToggle) return;
+                              setCollapsedIds((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(r.id)) next.delete(r.id);
+                                else next.add(r.id);
+                                return next;
+                              });
+                            }}
+                            aria-label={
+                              canToggle
+                                ? isCollapsed
+                                  ? `Expandir ${r.name}`
+                                  : `Colapsar ${r.name}`
+                                : `Sin subcategorías`
+                            }
+                            disabled={!canToggle}
+                            style={{
+                              width: 22,
+                              height: 22,
+                              marginRight: 6,
+                              borderRadius: 6,
+                              border: "1px solid var(--color-border)",
+                              background: canToggle ? "var(--color-surface)" : "transparent",
+                              color: "var(--color-muted)",
+                              cursor: canToggle ? "pointer" : "default",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              justifyContent: "center",
+                              verticalAlign: "middle",
+                              opacity: canToggle ? 1 : 0.35
+                            }}
+                          >
+                            {canToggle ? (isCollapsed ? "▶" : "▼") : "•"}
+                          </button>
+                          <span style={{ fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", color: "var(--color-muted)" }}>
+                            {prefix}
+                          </span>
                           {r.name}
                         </>
                       )}
@@ -377,7 +451,7 @@ export default function StockCategoriesPage() {
                               <option value="">— Raíz —</option>
                               {parentOptions(r.id).map((o) => (
                                 <option key={o.id} value={o.id}>
-                                  {("— ".repeat(depthMemo.get(o.id) ?? 0)) + o.name}
+                                  {("— ".repeat(depthById.get(o.id) ?? 0)) + o.name}
                                 </option>
                               ))}
                             </select>
@@ -421,7 +495,7 @@ export default function StockCategoriesPage() {
               })}
             </tbody>
           </table>
-          {!loading && sortedRows.length === 0 ? (
+          {!loading && visible.length === 0 ? (
             <p style={{ padding: 20, margin: 0, color: "var(--color-muted)" }}>Todavía no hay categorías.</p>
           ) : null}
         </div>

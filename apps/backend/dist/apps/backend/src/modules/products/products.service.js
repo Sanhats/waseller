@@ -9,6 +9,32 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.ProductsService = void 0;
 const common_1 = require("@nestjs/common");
 const src_1 = require("../../../../../packages/db/src");
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+async function syncProductCategories(
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+tx, tenantId, productId, categoryIds) {
+    const unique = [...new Set(categoryIds.map((x) => String(x ?? "").trim()).filter(Boolean))];
+    if (unique.some((id) => !UUID_RE.test(id))) {
+        throw new common_1.BadRequestException("Algún categoryId no es un UUID válido");
+    }
+    if (unique.length > 0) {
+        const found = await tx.category.findMany({
+            where: { tenantId, id: { in: unique }, isActive: true },
+            select: { id: true }
+        });
+        const ok = new Set(found.map((c) => c.id));
+        const missing = unique.filter((id) => !ok.has(id));
+        if (missing.length) {
+            throw new common_1.BadRequestException("Categorías inexistentes, de otro tenant o inactivas");
+        }
+    }
+    await tx.productCategory.deleteMany({ where: { productId } });
+    if (unique.length > 0) {
+        await tx.productCategory.createMany({
+            data: unique.map((categoryId) => ({ productId, categoryId }))
+        });
+    }
+}
 function readNumericEnv(key, fallback) {
     const n = Number(process.env[key]);
     return Number.isFinite(n) && n > 0 ? n : fallback;
@@ -52,6 +78,24 @@ const normalizeAttributes = (raw) => {
         .filter(([key, value]) => key.length > 0 && value.length > 0);
     return Object.fromEntries(entries);
 };
+/** Copias indexadas desde `attributes` (talle/talla, color, marca/modelo). */
+function extractVariantFacets(attrs) {
+    const a = normalizeAttributes(attrs);
+    const lower = (k) => k.toLowerCase().trim();
+    const byKey = new Map();
+    for (const [k, v] of Object.entries(a)) {
+        byKey.set(lower(k), v.trim());
+    }
+    const t = byKey.get("talle") || byKey.get("talla") || "";
+    const c = byKey.get("color") || "";
+    const m = byKey.get("marca") || byKey.get("modelo") || "";
+    const cap = (s, n) => (s.length > n ? s.slice(0, n) : s);
+    return {
+        variantTalle: t ? cap(t, 160) : null,
+        variantColor: c ? cap(c, 160) : null,
+        variantMarca: m ? cap(m, 200) : null
+    };
+}
 const normalizeVariant = (input) => {
     const sku = String(input.sku ?? "").trim();
     if (!sku)
@@ -96,8 +140,104 @@ const normalizeCreatePayload = (body) => {
     };
 };
 let ProductsService = class ProductsService {
-    async listByTenant(tenantId) {
-        const rows = (await src_1.prisma.$queryRaw `
+    async expandCategorySubtreeIds(tenantId, rootId, requireActiveCategories = false) {
+        if (!UUID_RE.test(rootId))
+            return [];
+        const root = await src_1.prisma.category.findFirst({
+            where: { id: rootId, tenantId, ...(requireActiveCategories ? { isActive: true } : {}) },
+            select: { id: true }
+        });
+        if (!root)
+            return [];
+        const all = await src_1.prisma.category.findMany({
+            where: { tenantId, ...(requireActiveCategories ? { isActive: true } : {}) },
+            select: { id: true, parentId: true }
+        });
+        const byParent = new Map();
+        for (const c of all) {
+            const k = c.parentId;
+            if (!byParent.has(k))
+                byParent.set(k, []);
+            byParent.get(k).push(c.id);
+        }
+        const out = [];
+        const stack = [root.id];
+        while (stack.length) {
+            const id = stack.pop();
+            out.push(id);
+            for (const ch of byParent.get(id) ?? [])
+                stack.push(ch);
+        }
+        return out;
+    }
+    /**
+     * Listado de variantes con filtros opcionales.
+     * Usamos $queryRawUnsafe + placeholders $n porque componer `Sql` con `join()` desde
+     * `@prisma/client/runtime/library` puede romperse en el bundle de Next (instancias distintas de `Sql`).
+     */
+    async queryProductVariantRows(tenantId, opts, activeVariantsOnly = false, requireActiveCategories = false) {
+        if (!UUID_RE.test(tenantId)) {
+            return [];
+        }
+        const params = [tenantId];
+        let next = 2;
+        let extra = "";
+        if (activeVariantsOnly) {
+            extra += " and v.is_active = true ";
+        }
+        const cid = opts?.categoryId?.trim();
+        if (cid) {
+            const ids = await this.expandCategorySubtreeIds(tenantId, cid, requireActiveCategories);
+            if (ids.length === 0 || !ids.every((id) => UUID_RE.test(id))) {
+                extra += " and false ";
+            }
+            else {
+                extra += ` and exists (
+          select 1 from public.product_categories pc
+          where pc.product_id = p.id and pc.category_id = any($${next}::uuid[])
+        ) `;
+                params.push(ids);
+                next += 1;
+            }
+        }
+        const q = opts?.q?.trim();
+        if (q) {
+            const qv = q.toLowerCase();
+            extra += ` and (
+        position($${next} in lower(p.name)) > 0
+        or exists (
+          select 1 from unnest(coalesce(p.tags, array[]::text[])) t
+          where position($${next} in lower(t)) > 0
+        )
+        or position($${next} in lower(concat_ws(' ',
+          coalesce(v.variant_talle,''),
+          coalesce(v.variant_color,''),
+          coalesce(v.variant_marca,''),
+          coalesce(v.sku,'')
+        ))) > 0
+      ) `;
+            params.push(qv);
+            next += 1;
+        }
+        const talleF = opts?.talle?.trim();
+        if (talleF) {
+            extra += ` and lower(trim(coalesce(v.variant_talle,''))) = lower(trim($${next})) `;
+            params.push(talleF);
+            next += 1;
+        }
+        const colorF = opts?.color?.trim();
+        if (colorF) {
+            extra += ` and lower(trim(coalesce(v.variant_color,''))) = lower(trim($${next})) `;
+            params.push(colorF);
+            next += 1;
+        }
+        const marcaF = opts?.marca?.trim();
+        if (marcaF) {
+            extra += ` and lower(trim(coalesce(v.variant_marca,''))) = lower(trim($${next})) `;
+            params.push(marcaF);
+            next += 1;
+        }
+        const sql = `
       select
         v.id as "variantId",
         p.id as "productId",
@@ -107,6 +247,9 @@ let ProductsService = class ProductsService {
         coalesce(v.price, p.price) as "effectivePrice",
         v.sku as "sku",
         v.attributes as "attributes",
+        v.variant_talle as "variantTalle",
+        v.variant_color as "variantColor",
+        v.variant_marca as "variantMarca",
         v.stock as "stock",
         v.reserved_stock as "reservedStock",
         greatest(v.stock - v.reserved_stock, 0) as "availableStock",
@@ -114,13 +257,33 @@ let ProductsService = class ProductsService {
         p.image_urls as "imageUrls",
         v.image_urls as "variantImageUrls",
         p.tags as "tags",
-        v.is_active as "isActive"
+        v.is_active as "isActive",
+        coalesce(
+          (select array_agg(c.id::text order by c.sort_order, c.name)
+           from public.product_categories pc
+           join public.categories c on c.id = pc.category_id
+           where pc.product_id = p.id),
+          '{}'::text[]
+        ) as "categoryIds",
+        coalesce(
+          (select array_agg(c.name order by c.sort_order, c.name)
+           from public.product_categories pc
+           join public.categories c on c.id = pc.category_id
+           where pc.product_id = p.id),
+          '{}'::text[]
+        ) as "categoryNames"
       from public.product_variants v
       inner join public.products p on p.id = v.product_id
-      where v.tenant_id::text = ${tenantId}
+      where v.tenant_id::text = $1
+      ${extra}
       order by p.updated_at desc, p.name asc, v.sku asc
-    `);
-        return rows.map((row) => ({
+    `;
+        return (await src_1.prisma.$queryRawUnsafe(sql, ...params));
+    }
+    mapVariantRow(row) {
+        const attrs = normalizeAttributes(row.attributes);
+        const fb = extractVariantFacets(attrs);
+        return {
             variantId: row.variantId,
             productId: row.productId,
             name: row.name,
@@ -128,7 +291,10 @@ let ProductsService = class ProductsService {
             variantPrice: row.variantPrice,
             effectivePrice: Number(row.effectivePrice ?? 0),
             sku: row.sku,
-            attributes: normalizeAttributes(row.attributes),
+            attributes: attrs,
+            variantTalle: (row.variantTalle != null && String(row.variantTalle).trim()) ? String(row.variantTalle).trim() : fb.variantTalle,
+            variantColor: (row.variantColor != null && String(row.variantColor).trim()) ? String(row.variantColor).trim() : fb.variantColor,
+            variantMarca: (row.variantMarca != null && String(row.variantMarca).trim()) ? String(row.variantMarca).trim() : fb.variantMarca,
             stock: Number(row.stock ?? 0),
             reservedStock: Number(row.reservedStock ?? 0),
             availableStock: Number(row.availableStock ?? 0),
@@ -138,58 +304,132 @@ let ProductsService = class ProductsService {
             imageUrls: Array.isArray(row.imageUrls) ? row.imageUrls : [],
             variantImageUrls: Array.isArray(row.variantImageUrls) ? row.variantImageUrls : [],
             tags: Array.isArray(row.tags) ? row.tags : [],
-            isActive: Boolean(row.isActive)
-        }));
+            isActive: Boolean(row.isActive),
+            categoryIds: Array.isArray(row.categoryIds) ? row.categoryIds : [],
+            categoryNames: Array.isArray(row.categoryNames) ? row.categoryNames : []
+        };
+    }
+    async listByTenant(tenantId, opts) {
+        const rows = await this.queryProductVariantRows(tenantId, opts, false, false);
+        return rows.map((row) => this.mapVariantRow(row));
+    }
+    /** Valores distintos de facetas para armar filtros (dashboard / tienda). */
+    async listVariantFacetDistinctValues(tenantId, opts) {
+        if (!UUID_RE.test(tenantId)) {
+            return { talles: [], colors: [], marcas: [] };
+        }
+        const params = [tenantId];
+        let next = 2;
+        let extra = "";
+        if (opts?.publicCatalog) {
+            extra += " and v.is_active = true and greatest(v.stock - v.reserved_stock, 0) > 0 ";
+        }
+        const cid = opts?.categoryId?.trim();
+        if (cid) {
+            const ids = await this.expandCategorySubtreeIds(tenantId, cid, Boolean(opts?.publicCatalog));
+            if (ids.length === 0 || !ids.every((id) => UUID_RE.test(id))) {
+                return { talles: [], colors: [], marcas: [] };
+            }
+            extra += ` and exists (
+        select 1 from public.product_categories pc
+        where pc.product_id = p.id and pc.category_id = any($${next}::uuid[])
+      ) `;
+            params.push(ids);
+            next += 1;
+        }
+        const baseFrom = `
+      from public.product_variants v
+      inner join public.products p on p.id = v.product_id
+      where v.tenant_id::text = $1
+      ${extra}
+    `;
+        const run = async (col) => {
+            const sql = `select distinct trim(v.${col}) as val ${baseFrom}
+        and v.${col} is not null and trim(v.${col}) <> ''
+        order by 1 asc`;
+            const rows = (await src_1.prisma.$queryRawUnsafe(sql, ...params));
+            return rows.map((r) => String(r.val ?? "").trim()).filter(Boolean);
+        };
+        const [talles, colors, marcas] = await Promise.all([
+            run("variant_talle"),
+            run("variant_color"),
+            run("variant_marca")
+        ]);
+        return { talles, colors, marcas };
     }
     /** Catálogo público: solo variantes activas (sin JWT en el consumidor de la página). */
-    async listPublicCatalogByTenant(tenantId) {
+    async listPublicCatalogByTenant(tenantId, opts) {
+        const rows = await this.queryProductVariantRows(tenantId, opts, true, true);
+        return rows.map((row) => this.mapVariantRow(row));
+    }
+    /** Detalle público del producto: variantes activas del mismo `productId` (sin JWT). */
+    async getPublicProductDetailsByTenant(tenantId, productId) {
+        const pid = String(productId ?? "").trim();
+        if (!pid)
+            return { categories: [], variants: [] };
+        const cats = (await src_1.prisma.$queryRaw `
+      select c.id::text as id, c.name, c.slug
+      from public.product_categories pc
+      inner join public.categories c on c.id = pc.category_id
+      where pc.product_id::text = ${pid}
+        and c.tenant_id::text = ${tenantId}
+        and c.is_active = true
+      order by c.sort_order asc, c.name asc
+    `);
         const rows = (await src_1.prisma.$queryRaw `
       select
-        v.id as "variantId",
         p.id as "productId",
         p.name as "name",
         p.price as "basePrice",
-        v.price as "variantPrice",
-        coalesce(v.price, p.price) as "effectivePrice",
+        p.image_urls as "imageUrls",
+        p.tags as "tags",
+        v.id as "variantId",
         v.sku as "sku",
         v.attributes as "attributes",
-        v.stock as "stock",
-        v.reserved_stock as "reservedStock",
+        v.variant_talle as "variantTalle",
+        v.variant_color as "variantColor",
+        v.variant_marca as "variantMarca",
+        v.price as "variantPrice",
+        coalesce(v.price, p.price) as "effectivePrice",
         greatest(v.stock - v.reserved_stock, 0) as "availableStock",
-        p.image_url as "imageUrl",
-        p.image_urls as "imageUrls",
-        v.image_urls as "variantImageUrls",
-        p.tags as "tags",
-        v.is_active as "isActive"
+        v.is_active as "isActive",
+        v.image_urls as "variantImageUrls"
       from public.product_variants v
       inner join public.products p on p.id = v.product_id
       where v.tenant_id::text = ${tenantId}
+        and p.id::text = ${pid}
         and v.is_active = true
-      order by p.updated_at desc, p.name asc, v.sku asc
+      order by v.sku asc
     `);
-        return rows.map((row) => ({
-            variantId: row.variantId,
-            productId: row.productId,
-            name: row.name,
-            basePrice: row.basePrice,
-            variantPrice: row.variantPrice,
-            effectivePrice: Number(row.effectivePrice ?? 0),
-            sku: row.sku,
-            attributes: normalizeAttributes(row.attributes),
-            stock: Number(row.stock ?? 0),
-            reservedStock: Number(row.reservedStock ?? 0),
-            availableStock: Number(row.availableStock ?? 0),
-            imageUrl: row.variantImageUrls?.[0] ||
-                row.imageUrls?.[0] ||
-                row.imageUrl,
-            imageUrls: Array.isArray(row.imageUrls) ? row.imageUrls : [],
-            variantImageUrls: Array.isArray(row.variantImageUrls) ? row.variantImageUrls : [],
-            tags: Array.isArray(row.tags) ? row.tags : [],
-            isActive: Boolean(row.isActive)
-        }));
+        return {
+            categories: cats,
+            variants: rows.map((r) => {
+                const attrs = normalizeAttributes(r.attributes);
+                const fb = extractVariantFacets(attrs);
+                return {
+                    productId: r.productId,
+                    name: String(r.name ?? ""),
+                    basePrice: Number(r.basePrice ?? 0),
+                    imageUrls: Array.isArray(r.imageUrls) ? r.imageUrls : [],
+                    tags: Array.isArray(r.tags) ? r.tags : [],
+                    variantId: r.variantId,
+                    sku: String(r.sku ?? ""),
+                    attributes: attrs,
+                    variantTalle: (r.variantTalle != null && String(r.variantTalle).trim()) ? String(r.variantTalle).trim() : fb.variantTalle,
+                    variantColor: (r.variantColor != null && String(r.variantColor).trim()) ? String(r.variantColor).trim() : fb.variantColor,
+                    variantMarca: (r.variantMarca != null && String(r.variantMarca).trim()) ? String(r.variantMarca).trim() : fb.variantMarca,
+                    variantPrice: r.variantPrice == null ? null : Number(r.variantPrice),
+                    effectivePrice: Number(r.effectivePrice ?? 0),
+                    availableStock: Number(r.availableStock ?? 0),
+                    isActive: Boolean(r.isActive),
+                    variantImageUrls: Array.isArray(r.variantImageUrls) ? r.variantImageUrls : []
+                };
+            })
+        };
     }
     async createProduct(tenantId, body) {
         const payload = normalizeCreatePayload(body);
+        const categoryIds = Array.isArray(body.categoryIds) ? body.categoryIds : [];
         return src_1.prisma.$transaction(async (tx) => {
             const product = await tx.product.create({
                 data: {
@@ -203,6 +443,7 @@ let ProductsService = class ProductsService {
             });
             const createdVariants = [];
             for (const variant of payload.variants) {
+                const facets = extractVariantFacets(variant.attributes);
                 const created = await tx.productVariant.create({
                     data: {
                         tenantId,
@@ -210,6 +451,9 @@ let ProductsService = class ProductsService {
                         sku: variant.sku,
                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
                         attributes: variant.attributes,
+                        variantTalle: facets.variantTalle,
+                        variantColor: facets.variantColor,
+                        variantMarca: facets.variantMarca,
                         price: variant.price === null || variant.price === undefined ? null : variant.price,
                         stock: variant.stock,
                         reservedStock: 0,
@@ -233,6 +477,7 @@ let ProductsService = class ProductsService {
                     });
                 }
             }
+            await syncProductCategories(tx, tenantId, product.id, categoryIds);
             return {
                 ...product,
                 variants: createdVariants
@@ -262,6 +507,7 @@ let ProductsService = class ProductsService {
         if (clash) {
             throw new common_1.ConflictException("Ese SKU ya lo usa otra variante");
         }
+        const facets = extractVariantFacets(normalized.attributes);
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         return src_1.prisma.$transaction(async (tx) => {
             const created = await tx.productVariant.create({
@@ -271,6 +517,9 @@ let ProductsService = class ProductsService {
                     sku: normalized.sku,
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     attributes: normalized.attributes,
+                    variantTalle: facets.variantTalle,
+                    variantColor: facets.variantColor,
+                    variantMarca: facets.variantMarca,
                     price: normalized.price === null ? null : normalized.price,
                     stock: normalized.stock,
                     reservedStock: 0,
@@ -305,7 +554,8 @@ let ProductsService = class ProductsService {
             typeof body.price === "number" ||
             body.imageUrl !== undefined ||
             body.imageUrls !== undefined ||
-            Array.isArray(body.tags);
+            Array.isArray(body.tags) ||
+            Array.isArray(body.categoryIds);
         if (!hasAny)
             return { ok: true };
         const nextName = typeof body.name === "string" ? String(body.name).trim() : existing.name;
@@ -347,12 +597,20 @@ let ProductsService = class ProductsService {
         if (Array.isArray(body.tags)) {
             data.tags = body.tags.map((t) => String(t ?? "").trim()).filter(Boolean);
         }
-        if (Object.keys(data).length === 0)
+        const shouldSyncCategories = Array.isArray(body.categoryIds);
+        if (Object.keys(data).length === 0 && !shouldSyncCategories)
             return { ok: true };
-        await src_1.prisma.product.update({
-            where: { id: productId },
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            data: data
+        await src_1.prisma.$transaction(async (tx) => {
+            if (Object.keys(data).length > 0) {
+                await tx.product.update({
+                    where: { id: productId },
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    data: data
+                });
+            }
+            if (shouldSyncCategories) {
+                await syncProductCategories(tx, tenantId, productId, body.categoryIds ?? []);
+            }
         });
         return { ok: true };
     }
@@ -410,6 +668,7 @@ let ProductsService = class ProductsService {
                 })
             : undefined;
         const deltaStock = nextStock - Number(variant.stock);
+        const facetCols = extractVariantFacets(nextAttributes);
         return src_1.prisma.$transaction(async (tx) => {
             await tx.productVariant.update({
                 where: { id: variantId },
@@ -417,6 +676,9 @@ let ProductsService = class ProductsService {
                     sku: newSku,
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     attributes: nextAttributes,
+                    variantTalle: facetCols.variantTalle,
+                    variantColor: facetCols.variantColor,
+                    variantMarca: facetCols.variantMarca,
                     stock: nextStock,
                     ...(nextPrice !== undefined ? { price: nextPrice } : {}),
                     isActive: nextIsActive,
@@ -447,6 +709,9 @@ let ProductsService = class ProductsService {
           coalesce(v.price, p.price) as "effectivePrice",
           v.sku as "sku",
           v.attributes as "attributes",
+          v.variant_talle as "variantTalle",
+          v.variant_color as "variantColor",
+          v.variant_marca as "variantMarca",
           v.stock as "stock",
           v.reserved_stock as "reservedStock",
           greatest(v.stock - v.reserved_stock, 0) as "availableStock",
@@ -529,6 +794,9 @@ let ProductsService = class ProductsService {
           coalesce(v.price, p.price) as "effectivePrice",
           v.sku as "sku",
           v.attributes as "attributes",
+          v.variant_talle as "variantTalle",
+          v.variant_color as "variantColor",
+          v.variant_marca as "variantMarca",
           v.stock as "stock",
           v.reserved_stock as "reservedStock",
           greatest(v.stock - v.reserved_stock, 0) as "availableStock",
