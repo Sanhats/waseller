@@ -5,7 +5,11 @@
       "Bash(cat postcss.config.js)",
       "Bash(cat postcss.config.mjs)",
       "Bash(cat postcss.config.ts)",
-      "Bash(node *)"
+      "Bash(node *)",
+      "Bash(echo \"EXITCODE=$?\")",
+      "Bash(echo \"SHARED=$?\")",
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(npm run *)"
     ]
   }
 }

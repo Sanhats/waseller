@@ -3,10 +3,18 @@ import { JobsOptions, Queue } from "bullmq";
 import IORedis from "ioredis";
 import type { RedisOptions } from "ioredis";
 
-/** Cierres de TCP por idle, redeploy o balanceador; ioredis/BullMQ reconectan. */
+/**
+ * Errores de socket que ioredis/BullMQ suelen reintentar sin acción humana inmediata.
+ * Incluye `ECONNREFUSED` (p. ej. Redis apagado en local sin Docker) para no spamear stderr en cada cola.
+ */
 function isTransientRedisSocketError(err: unknown): boolean {
   const code = err && typeof err === "object" && "code" in err ? (err as NodeJS.ErrnoException).code : undefined;
-  return code === "ECONNRESET" || code === "EPIPE" || code === "ETIMEDOUT";
+  return (
+    code === "ECONNRESET" ||
+    code === "EPIPE" ||
+    code === "ETIMEDOUT" ||
+    code === "ECONNREFUSED"
+  );
 }
 
 export type RedisErrorEmitter = { on(event: "error", listener: (err: unknown) => void): unknown };

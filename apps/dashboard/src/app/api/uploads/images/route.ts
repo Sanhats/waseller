@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { authTokenEnvFromProcess, verifyAuthToken } from "@waseller/api-core";
+import { TENANT_HEADER } from "@waseller/shared";
 
 export const runtime = "nodejs";
 
@@ -12,6 +14,22 @@ function json(status: number, message: string) {
 }
 
 export async function POST(req: NextRequest) {
+  /** Auth: solo usuarios logueados con un JWT válido pueden subir imágenes a su propio tenant. */
+  const authHeader = req.headers.get("authorization");
+  if (!authHeader?.startsWith("Bearer ")) {
+    return json(401, "Missing Bearer token");
+  }
+  const token = authHeader.slice("Bearer ".length).trim();
+  const payload = verifyAuthToken(authTokenEnvFromProcess(process.env), token);
+  if (!payload) {
+    return json(401, "Invalid or expired token");
+  }
+  const headerTenant = req.headers.get(TENANT_HEADER)?.trim();
+  if (headerTenant && headerTenant !== payload.tenantId) {
+    return json(403, "Token tenant mismatch");
+  }
+  const tenantId = headerTenant || payload.tenantId;
+
   const supabaseUrl = env("SUPABASE_URL");
   const serviceRoleKey = env("SUPABASE_SERVICE_ROLE_KEY");
   const bucket = env("SUPABASE_STORAGE_BUCKET") || "product-images";
@@ -41,8 +59,7 @@ export async function POST(req: NextRequest) {
     auth: { persistSession: false },
   });
 
-  const tenantId = String(req.headers.get("x-tenant-id") ?? "").trim();
-  const prefix = tenantId ? `tenants/${tenantId}` : "tenants/unknown";
+  const prefix = `tenants/${tenantId}`;
   const now = Date.now();
 
   const urls: string[] = [];

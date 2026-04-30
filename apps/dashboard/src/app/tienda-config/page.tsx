@@ -3,15 +3,34 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { AppSidebar } from "@/components/app-sidebar";
 import {
-  Store, Globe, Palette, Type, Phone, ImageIcon, Star,
-  ChevronDown, ChevronRight, Save, ExternalLink, Check,
-  AlertCircle, Upload, X, Loader2, Search, LayoutGrid
+  Store,
+  Globe,
+  Palette,
+  Type,
+  Phone,
+  ImageIcon,
+  Star,
+  ChevronDown,
+  ChevronRight,
+  ChevronUp,
+  Save,
+  ExternalLink,
+  Check,
+  AlertCircle,
+  Upload,
+  X,
+  Loader2,
+  Search,
+  LayoutGrid,
+  Plus,
+  Trash2,
+  GalleryHorizontalEnd,
 } from "lucide-react";
 import { getClientApiBase } from "@/lib/api-base";
 import {
   type StoreConfig,
   DEFAULT_STORE_CONFIG,
-  normalizeStoreConfig
+  normalizeStoreConfig,
 } from "@waseller/shared";
 
 type StoreConfigBrand = StoreConfig["brand"];
@@ -20,6 +39,9 @@ type StoreConfigColors = StoreConfig["colors"];
 type StoreConfigTypography = StoreConfig["typography"];
 type StoreConfigContact = StoreConfig["contact"];
 type StoreConfigUiTexts = StoreConfig["uiTexts"];
+type StoreConfigBanner = NonNullable<StoreConfig["banners"]>[number];
+
+const MAX_EXTRA_BANNERS = 5;
 
 type ProductSummary = {
   productId: string;
@@ -41,134 +63,372 @@ type Palette = {
   swatches: string[];
   colors: StoreConfigColors;
 };
-
 const PALETTES: Palette[] = [
   {
     name: "noir",
     label: "Noir",
-    swatches: ["#1a1a1a", "#c9a84c", "#f8f8f8", "#ffffff"],
-    colors: { primary: "#1a1a1a", secondary: "#c9a84c", background: "#f8f8f8", surface: "#ffffff", textPrimary: "#1a1a1a", textSecondary: "#666666", border: "#e0e0e0" },
+    swatches: ["#1a1a1a", "#c9a84c", "#242424", "#2e2e2e"],
+    colors: {
+      primary: "#1a1a1a",
+      secondary: "#c9a84c",
+      background: "#242424",
+      surface: "#2e2e2e",
+      textPrimary: "#ffffff",
+      textSecondary: "#c8c8c8",
+      border: "#3a3a3a",
+    },
   },
   {
-    name: "crema",
-    label: "Crema",
-    swatches: ["#8b6f47", "#c4956a", "#faf6f0", "#ffffff"],
-    colors: { primary: "#8b6f47", secondary: "#c4956a", background: "#faf6f0", surface: "#ffffff", textPrimary: "#2c1810", textSecondary: "#7a6055", border: "#e8ddd4" },
+    name: "blush",
+    label: "Blush",
+    swatches: ["#c86b85", "#f4b6c2", "#fde8ee", "#fff1f5"],
+    colors: {
+      primary: "#c86b85",
+      secondary: "#f4b6c2",
+      background: "#fde8ee",
+      surface: "#fff1f5",
+      textPrimary: "#4a2230",
+      textSecondary: "#8b6170",
+      border: "#f2ccd8",
+    },
   },
   {
-    name: "bosque",
-    label: "Bosque",
-    swatches: ["#2d5016", "#6b8f3e", "#f4f7f0", "#ffffff"],
-    colors: { primary: "#2d5016", secondary: "#6b8f3e", background: "#f4f7f0", surface: "#ffffff", textPrimary: "#1a2e0a", textSecondary: "#5a7040", border: "#d4e0c8" },
+    name: "rosegold",
+    label: "Rose Gold",
+    swatches: ["#b76e79", "#e8b4bc", "#f8e6e8", "#fff0f2"],
+    colors: {
+      primary: "#b76e79",
+      secondary: "#e8b4bc",
+      background: "#f8e6e8",
+      surface: "#fff0f2",
+      textPrimary: "#4a2a30",
+      textSecondary: "#8f6d74",
+      border: "#eacfd5",
+    },
   },
   {
-    name: "oceano",
-    label: "Océano",
-    swatches: ["#1d4e6b", "#4a9ebe", "#f0f6fa", "#ffffff"],
-    colors: { primary: "#1d4e6b", secondary: "#4a9ebe", background: "#f0f6fa", surface: "#ffffff", textPrimary: "#0d2d40", textSecondary: "#5a8099", border: "#ccdde8" },
+    name: "champagne",
+    label: "Champagne",
+    swatches: ["#b08d57", "#e6c99a", "#f5ead6", "#fff6e7"],
+    colors: {
+      primary: "#b08d57",
+      secondary: "#e6c99a",
+      background: "#f5ead6",
+      surface: "#fff6e7",
+      textPrimary: "#47351a",
+      textSecondary: "#7d6a4d",
+      border: "#ead9ba",
+    },
+  },
+  {
+    name: "ivory",
+    label: "Ivory",
+    swatches: ["#8e7c68", "#d8cfc4", "#f2ede7", "#fbf7f1"],
+    colors: {
+      primary: "#8e7c68",
+      secondary: "#d8cfc4",
+      background: "#f2ede7",
+      surface: "#fbf7f1",
+      textPrimary: "#3a3128",
+      textSecondary: "#7b7268",
+      border: "#e2d8cb",
+    },
+  },
+  {
+    name: "nude",
+    label: "Nude",
+    swatches: ["#b08968", "#ddb892", "#f4e4d6", "#fff1e8"],
+    colors: {
+      primary: "#b08968",
+      secondary: "#ddb892",
+      background: "#f4e4d6",
+      surface: "#fff1e8",
+      textPrimary: "#4a3324",
+      textSecondary: "#866756",
+      border: "#ead3c2",
+    },
+  },
+  {
+    name: "lavender",
+    label: "Lavender",
+    swatches: ["#8f7ac0", "#c8b6ff", "#ece6ff", "#f6f2ff"],
+    colors: {
+      primary: "#8f7ac0",
+      secondary: "#c8b6ff",
+      background: "#ece6ff",
+      surface: "#f6f2ff",
+      textPrimary: "#34284f",
+      textSecondary: "#766c95",
+      border: "#ddd2fa",
+    },
+  },
+  {
+    name: "lila",
+    label: "Lila",
+    swatches: ["#9d7bd8", "#dbc8ff", "#efe7ff", "#f8f4ff"],
+    colors: {
+      primary: "#9d7bd8",
+      secondary: "#dbc8ff",
+      background: "#efe7ff",
+      surface: "#f8f4ff",
+      textPrimary: "#3c285f",
+      textSecondary: "#7f6da0",
+      border: "#e3d6fb",
+    },
   },
   {
     name: "petalo",
     label: "Pétalo",
-    swatches: ["#9e5b6b", "#d4849a", "#fdf5f6", "#ffffff"],
-    colors: { primary: "#9e5b6b", secondary: "#d4849a", background: "#fdf5f6", surface: "#ffffff", textPrimary: "#3d1a22", textSecondary: "#9e7280", border: "#f0d8de" },
+    swatches: ["#d96c8a", "#f8b7c7", "#fde4ea", "#fff0f4"],
+    colors: {
+      primary: "#d96c8a",
+      secondary: "#f8b7c7",
+      background: "#fde4ea",
+      surface: "#fff0f4",
+      textPrimary: "#4f2230",
+      textSecondary: "#916675",
+      border: "#f3ccd8",
+    },
   },
   {
-    name: "carbon",
-    label: "Carbón",
-    swatches: ["#e0b56b", "#c49b4a", "#141414", "#1e1e1e"],
-    colors: { primary: "#e0b56b", secondary: "#c49b4a", background: "#141414", surface: "#1e1e1e", textPrimary: "#f0f0f0", textSecondary: "#999999", border: "#2a2a2a" },
+    name: "ruby",
+    label: "Ruby",
+    swatches: ["#9f1239", "#f43f5e", "#fde6ec", "#fff0f4"],
+    colors: {
+      primary: "#9f1239",
+      secondary: "#f43f5e",
+      background: "#fde6ec",
+      surface: "#fff0f4",
+      textPrimary: "#4a0d1e",
+      textSecondary: "#91626f",
+      border: "#f4cfd8",
+    },
   },
   {
-    name: "lavanda",
-    label: "Lavanda",
-    swatches: ["#6b5b8e", "#9b84be", "#f6f4fc", "#ffffff"],
-    colors: { primary: "#6b5b8e", secondary: "#9b84be", background: "#f6f4fc", surface: "#ffffff", textPrimary: "#2a1f3d", textSecondary: "#7a6b9a", border: "#ddd6ee" },
+    name: "berry",
+    label: "Berry",
+    swatches: ["#7c2d5a", "#d946ef", "#f7e5fb", "#fcf0ff"],
+    colors: {
+      primary: "#7c2d5a",
+      secondary: "#d946ef",
+      background: "#f7e5fb",
+      surface: "#fcf0ff",
+      textPrimary: "#3f1530",
+      textSecondary: "#866c88",
+      border: "#efd0f5",
+    },
   },
   {
-    name: "hueso",
-    label: "Hueso",
-    swatches: ["#3d3530", "#7a6a5a", "#f7f3ee", "#ffffff"],
-    colors: { primary: "#3d3530", secondary: "#7a6a5a", background: "#f7f3ee", surface: "#ffffff", textPrimary: "#1a1410", textSecondary: "#7a6a5a", border: "#e4ddd6" },
+    name: "caramel",
+    label: "Caramel",
+    swatches: ["#8b5e34", "#d4a373", "#f4e7d8", "#fff3e8"],
+    colors: {
+      primary: "#8b5e34",
+      secondary: "#d4a373",
+      background: "#f4e7d8",
+      surface: "#fff3e8",
+      textPrimary: "#3d2613",
+      textSecondary: "#836857",
+      border: "#ead8c4",
+    },
   },
   {
-    name: "terracota",
-    label: "Terracota",
-    swatches: ["#b85c38", "#e8a87c", "#fdf8f5", "#ffffff"],
-    colors: { primary: "#b85c38", secondary: "#e8a87c", background: "#fdf8f5", surface: "#ffffff", textPrimary: "#3d2418", textSecondary: "#8b6a5a", border: "#eddcd3" },
+    name: "terracotta",
+    label: "Terracotta",
+    swatches: ["#c65d3b", "#e8a87c", "#f8e4da", "#fff1ea"],
+    colors: {
+      primary: "#c65d3b",
+      secondary: "#e8a87c",
+      background: "#f8e4da",
+      surface: "#fff1ea",
+      textPrimary: "#4a2618",
+      textSecondary: "#8d6a5b",
+      border: "#efd2c4",
+    },
   },
   {
-    name: "arrecife",
-    label: "Arrecife",
-    swatches: ["#0077b6", "#48cae4", "#f0fbff", "#ffffff"],
-    colors: { primary: "#0077b6", secondary: "#48cae4", background: "#f0fbff", surface: "#ffffff", textPrimary: "#023e8a", textSecondary: "#5c8dad", border: "#caf0f8" },
+    name: "sage",
+    label: "Sage",
+    swatches: ["#6b7a52", "#b7c4a8", "#e8eddc", "#f4f7ec"],
+    colors: {
+      primary: "#6b7a52",
+      secondary: "#b7c4a8",
+      background: "#e8eddc",
+      surface: "#f4f7ec",
+      textPrimary: "#2e3522",
+      textSecondary: "#6d7561",
+      border: "#d9e0cb",
+    },
   },
   {
-    name: "granate",
-    label: "Granate",
-    swatches: ["#722f37", "#c9a227", "#faf7f2", "#ffffff"],
-    colors: { primary: "#722f37", secondary: "#c9a227", background: "#faf7f2", surface: "#ffffff", textPrimary: "#2a1215", textSecondary: "#7a5c60", border: "#e8dfd9" },
+    name: "olive",
+    label: "Olive",
+    swatches: ["#556b2f", "#a3b18a", "#e7edd8", "#f3f7ea"],
+    colors: {
+      primary: "#556b2f",
+      secondary: "#a3b18a",
+      background: "#e7edd8",
+      surface: "#f3f7ea",
+      textPrimary: "#273118",
+      textSecondary: "#6b735e",
+      border: "#d8e0ca",
+    },
   },
   {
-    name: "oliva",
-    label: "Oliva",
-    swatches: ["#606c38", "#bc6c25", "#fefae0", "#ffffff"],
-    colors: { primary: "#606c38", secondary: "#bc6c25", background: "#fefae0", surface: "#ffffff", textPrimary: "#283618", textSecondary: "#6b705c", border: "#dde5c4" },
+    name: "mint",
+    label: "Mint",
+    swatches: ["#4f9d8f", "#9fe2d0", "#dff6ef", "#eefcf7"],
+    colors: {
+      primary: "#4f9d8f",
+      secondary: "#9fe2d0",
+      background: "#dff6ef",
+      surface: "#eefcf7",
+      textPrimary: "#1e453d",
+      textSecondary: "#64837c",
+      border: "#c8eadf",
+    },
   },
   {
-    name: "ciruela",
-    label: "Ciruela",
-    swatches: ["#3d0c11", "#9e2a2b", "#fff5f5", "#ffffff"],
-    colors: { primary: "#3d0c11", secondary: "#9e2a2b", background: "#fff5f5", surface: "#ffffff", textPrimary: "#1a0508", textSecondary: "#8b5a5c", border: "#f0d6d8" },
-  },
-  {
-    name: "hormigon",
-    label: "Hormigón",
-    swatches: ["#495057", "#adb5bd", "#f8f9fa", "#ffffff"],
-    colors: { primary: "#495057", secondary: "#adb5bd", background: "#f8f9fa", surface: "#ffffff", textPrimary: "#212529", textSecondary: "#6c757d", border: "#dee2e6" },
-  },
-  {
-    name: "carmesi",
-    label: "Carmesí",
-    swatches: ["#9d174d", "#d63384", "#fff0f6", "#ffffff"],
-    colors: { primary: "#9d174d", secondary: "#d63384", background: "#fff0f6", surface: "#ffffff", textPrimary: "#3d0a1f", textSecondary: "#a66884", border: "#f3d4e1" },
-  },
-  {
-    name: "musgo",
-    label: "Musgo",
-    swatches: ["#415d43", "#7d9b76", "#f4faf4", "#ffffff"],
-    colors: { primary: "#415d43", secondary: "#7d9b76", background: "#f4faf4", surface: "#ffffff", textPrimary: "#1e2a1f", textSecondary: "#5f7160", border: "#d8e6d9" },
-  },
-  {
-    name: "papaya",
-    label: "Papaya",
-    swatches: ["#e85d04", "#f48c06", "#fff8f3", "#ffffff"],
-    colors: { primary: "#e85d04", secondary: "#f48c06", background: "#fff8f3", surface: "#ffffff", textPrimary: "#3d1f0a", textSecondary: "#9a6b4a", border: "#ffe4d6" },
+    name: "aqua",
+    label: "Aqua",
+    swatches: ["#0284c7", "#7dd3fc", "#dff3ff", "#eef8ff"],
+    colors: {
+      primary: "#0284c7",
+      secondary: "#7dd3fc",
+      background: "#dff3ff",
+      surface: "#eef8ff",
+      textPrimary: "#0c3b57",
+      textSecondary: "#5f7d90",
+      border: "#cce9fa",
+    },
   },
   {
     name: "cielo",
     label: "Cielo",
-    swatches: ["#5c6bc0", "#7e57c2", "#f3f5ff", "#ffffff"],
-    colors: { primary: "#5c6bc0", secondary: "#7e57c2", background: "#f3f5ff", surface: "#ffffff", textPrimary: "#1a237e", textSecondary: "#6a6f9e", border: "#d7ddf0" },
+    swatches: ["#4f7cac", "#a9d6ff", "#e4f1ff", "#f1f8ff"],
+    colors: {
+      primary: "#4f7cac",
+      secondary: "#a9d6ff",
+      background: "#e4f1ff",
+      surface: "#f1f8ff",
+      textPrimary: "#21364d",
+      textSecondary: "#64778c",
+      border: "#d2e5f7",
+    },
   },
   {
-    name: "esmeralda",
-    label: "Esmeralda",
-    swatches: ["#047857", "#34d399", "#ecfdf5", "#ffffff"],
-    colors: { primary: "#047857", secondary: "#34d399", background: "#ecfdf5", surface: "#ffffff", textPrimary: "#064e3b", textSecondary: "#4c7c6f", border: "#c5ebe0" },
+    name: "midnight",
+    label: "Midnight",
+    swatches: ["#1e293b", "#64748b", "#263244", "#313d50"],
+    colors: {
+      primary: "#1e293b",
+      secondary: "#64748b",
+      background: "#263244",
+      surface: "#313d50",
+      textPrimary: "#ffffff",
+      textSecondary: "#c7d0db",
+      border: "#415066",
+    },
   },
   {
-    name: "caramelo",
-    label: "Caramelo",
-    swatches: ["#78350f", "#d97706", "#fffbeb", "#ffffff"],
-    colors: { primary: "#78350f", secondary: "#d97706", background: "#fffbeb", surface: "#ffffff", textPrimary: "#422006", textSecondary: "#a16207", border: "#fde6c4" },
+    name: "carbon",
+    label: "Carbon",
+    swatches: ["#111111", "#444444", "#1d1d1d", "#292929"],
+    colors: {
+      primary: "#111111",
+      secondary: "#444444",
+      background: "#1d1d1d",
+      surface: "#292929",
+      textPrimary: "#ffffff",
+      textSecondary: "#c9c9c9",
+      border: "#3a3a3a",
+    },
+  },
+  {
+    name: "golden",
+    label: "Golden",
+    swatches: ["#9a6b00", "#f2c14e", "#f5e7bf", "#fff4d6"],
+    colors: {
+      primary: "#9a6b00",
+      secondary: "#f2c14e",
+      background: "#f5e7bf",
+      surface: "#fff4d6",
+      textPrimary: "#473000",
+      textSecondary: "#7b6840",
+      border: "#ebd8a1",
+    },
+  },
+  {
+    name: "pearl",
+    label: "Pearl",
+    swatches: ["#8d99ae", "#dee2e6", "#edf0f3", "#f7f8fa"],
+    colors: {
+      primary: "#8d99ae",
+      secondary: "#dee2e6",
+      background: "#edf0f3",
+      surface: "#f7f8fa",
+      textPrimary: "#2b2d42",
+      textSecondary: "#70788a",
+      border: "#d9dde3",
+    },
+  },
+  {
+    name: "sunset",
+    label: "Sunset",
+    swatches: ["#f97316", "#fdba74", "#ffe6d2", "#fff1e5"],
+    colors: {
+      primary: "#f97316",
+      secondary: "#fdba74",
+      background: "#ffe6d2",
+      surface: "#fff1e5",
+      textPrimary: "#4a2308",
+      textSecondary: "#8c6b58",
+      border: "#f7cfb0",
+    },
+  },
+  {
+    name: "fuchsia",
+    label: "Fuchsia",
+    swatches: ["#c026d3", "#e879f9", "#f7ddfb", "#fcf0ff"],
+    colors: {
+      primary: "#c026d3",
+      secondary: "#e879f9",
+      background: "#f7ddfb",
+      surface: "#fcf0ff",
+      textPrimary: "#4a1452",
+      textSecondary: "#87688c",
+      border: "#efd0f7",
+    },
+  },
+  {
+    name: "mocha",
+    label: "Mocha",
+    swatches: ["#6f4e37", "#b08968", "#e8d8ca", "#f4e9df"],
+    colors: {
+      primary: "#6f4e37",
+      secondary: "#b08968",
+      background: "#e8d8ca",
+      surface: "#f4e9df",
+      textPrimary: "#2e1d12",
+      textSecondary: "#766353",
+      border: "#ddcabc",
+    },
   },
 ];
 
 const FONT_OPTIONS = [
-  "Inter", "Geist", "Playfair Display", "Cormorant Garamond",
-  "Libre Baskerville", "Raleway", "Montserrat", "Lato",
-  "Open Sans", "Nunito", "DM Sans", "Plus Jakarta Sans",
+  "Inter",
+  "Geist",
+  "Playfair Display",
+  "Cormorant Garamond",
+  "Libre Baskerville",
+  "Raleway",
+  "Montserrat",
+  "Lato",
+  "Open Sans",
+  "Nunito",
+  "DM Sans",
+  "Plus Jakarta Sans",
 ];
 
 function authContext(): { token: string; tenantId: string } | null {
@@ -179,7 +439,16 @@ function authContext(): { token: string; tenantId: string } | null {
   return { token, tenantId };
 }
 
-type SectionKey = "brand" | "hero" | "colors" | "typography" | "home" | "contact" | "ui" | "featured";
+type SectionKey =
+  | "brand"
+  | "hero"
+  | "banners"
+  | "colors"
+  | "typography"
+  | "home"
+  | "contact"
+  | "ui"
+  | "featured";
 
 /* ── Image upload hook ─────────────────────────────────────────── */
 function useImageUpload(folder: string) {
@@ -196,28 +465,43 @@ function useImageUpload(folder: string) {
         const form = new FormData();
         form.append("files", file);
         form.append("folder", folder);
-        const res = await fetch(`${window.location.origin}/api/uploads/images`, {
-          method: "POST",
-          headers: { "x-tenant-id": ctx.tenantId },
-          body: form,
-        });
+        const res = await fetch(
+          `${window.location.origin}/api/uploads/images`,
+          {
+            method: "POST",
+            headers: {
+              "x-tenant-id": ctx.tenantId,
+              Authorization: `Bearer ${ctx.token}`,
+            },
+            body: form,
+          },
+        );
         if (!res.ok) {
-          const d = await res.json().catch(() => ({})) as { message?: string };
+          const d = (await res.json().catch(() => ({}))) as {
+            message?: string;
+          };
           throw new Error(d.message ?? "Error al subir imagen");
         }
-        const data = await res.json() as { urls: string[] };
+        const data = (await res.json()) as { urls: string[] };
         return data.urls[0] ?? null;
       } catch (e) {
-        setUploadError(e instanceof Error ? e.message : "Error al subir imagen");
+        setUploadError(
+          e instanceof Error ? e.message : "Error al subir imagen",
+        );
         return null;
       } finally {
         setUploading(false);
       }
     },
-    [folder]
+    [folder],
   );
 
-  return { upload, uploading, uploadError, clearError: () => setUploadError("") };
+  return {
+    upload,
+    uploading,
+    uploadError,
+    clearError: () => setUploadError(""),
+  };
 }
 
 /* ── ImageField: URL input + upload button ──────────────────────── */
@@ -268,7 +552,11 @@ function ImageField({
           title="Subir desde dispositivo"
           className="flex shrink-0 items-center gap-1.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-2 text-xs font-medium text-[var(--color-muted)] transition-colors hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] disabled:opacity-60"
         >
-          {uploading ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
+          {uploading ? (
+            <Loader2 size={13} className="animate-spin" />
+          ) : (
+            <Upload size={13} />
+          )}
           {uploading ? "Subiendo…" : "Subir"}
         </button>
         <input
@@ -282,7 +570,14 @@ function ImageField({
       {value?.trim() && (
         <div className="relative mt-1 h-20 w-32 overflow-hidden rounded-lg border border-[var(--color-border)]">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={value.trim()} alt="" className="h-full w-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+          <img
+            src={value.trim()}
+            alt=""
+            className="h-full w-full object-cover"
+            onError={(e) => {
+              (e.target as HTMLImageElement).style.display = "none";
+            }}
+          />
           <button
             type="button"
             onClick={() => onChange("")}
@@ -292,12 +587,16 @@ function ImageField({
           </button>
         </div>
       )}
-      {hint && !uploadError && <p className="text-xs text-[var(--color-muted)]">{hint}</p>}
+      {hint && !uploadError && (
+        <p className="text-xs text-[var(--color-muted)]">{hint}</p>
+      )}
       {uploadError && (
         <p className="flex items-center gap-1 text-xs text-red-500">
           <AlertCircle size={11} />
           {uploadError}
-          <button type="button" onClick={clearError} className="ml-1 underline">Cerrar</button>
+          <button type="button" onClick={clearError} className="ml-1 underline">
+            Cerrar
+          </button>
         </p>
       )}
     </div>
@@ -306,10 +605,17 @@ function ImageField({
 
 /* ── Generic helpers ────────────────────────────────────────────── */
 function SectionHeader({
-  icon: Icon, title, subtitle, expanded, onToggle
+  icon: Icon,
+  title,
+  subtitle,
+  expanded,
+  onToggle,
 }: {
   icon: React.ComponentType<{ size?: number; className?: string }>;
-  title: string; subtitle: string; expanded: boolean; onToggle: () => void;
+  title: string;
+  subtitle: string;
+  expanded: boolean;
+  onToggle: () => void;
 }) {
   return (
     <button
@@ -319,20 +625,37 @@ function SectionHeader({
     >
       <Icon size={18} className="shrink-0 text-[var(--color-primary)]" />
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-semibold text-[var(--color-text)]">{title}</p>
+        <p className="text-sm font-semibold text-[var(--color-text)]">
+          {title}
+        </p>
         <p className="text-xs text-[var(--color-muted)]">{subtitle}</p>
       </div>
-      {expanded
-        ? <ChevronDown size={16} className="shrink-0 text-[var(--color-muted)]" />
-        : <ChevronRight size={16} className="shrink-0 text-[var(--color-muted)]" />}
+      {expanded ? (
+        <ChevronDown size={16} className="shrink-0 text-[var(--color-muted)]" />
+      ) : (
+        <ChevronRight
+          size={16}
+          className="shrink-0 text-[var(--color-muted)]"
+        />
+      )}
     </button>
   );
 }
 
-function FormField({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+function FormField({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="flex flex-col gap-1.5">
-      <label className="text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">{label}</label>
+      <label className="text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
+        {label}
+      </label>
       {children}
       {hint && <p className="text-xs text-[var(--color-muted)]">{hint}</p>}
     </div>
@@ -346,7 +669,13 @@ const textareaCls = inputCls + " resize-none leading-relaxed";
 
 function paletteMatchesActive(p: Palette, active: StoreConfigColors): boolean {
   const keys: (keyof StoreConfigColors)[] = [
-    "primary", "secondary", "background", "surface", "textPrimary", "textSecondary", "border"
+    "primary",
+    "secondary",
+    "background",
+    "surface",
+    "textPrimary",
+    "textSecondary",
+    "border",
   ];
   return keys.every((k) => (p.colors[k] ?? "") === (active[k] ?? ""));
 }
@@ -376,8 +705,12 @@ function PaletteGrid({
               title={palette.label}
               className="group relative flex flex-col items-center gap-1.5 rounded-xl border p-2 transition-all hover:border-[var(--color-primary)]"
               style={{
-                borderColor: isActive ? "var(--color-primary)" : "var(--color-border)",
-                backgroundColor: isActive ? "var(--color-primary)/5" : "var(--color-bg)",
+                borderColor: isActive
+                  ? "var(--color-primary)"
+                  : "var(--color-border)",
+                backgroundColor: isActive
+                  ? "var(--color-primary)/5"
+                  : "var(--color-bg)",
               }}
             >
               {/* 4 swatch squares */}
@@ -392,14 +725,24 @@ function PaletteGrid({
               </div>
               <span
                 className="text-[9px] font-semibold uppercase tracking-wide leading-none"
-                style={{ color: isActive ? "var(--color-primary)" : "var(--color-muted)" }}
+                style={{
+                  color: isActive
+                    ? "var(--color-primary)"
+                    : "var(--color-muted)",
+                }}
               >
                 {palette.label}
               </span>
               {isActive && (
                 <div className="absolute -top-1 -right-1 h-3.5 w-3.5 rounded-full bg-[var(--color-primary)] flex items-center justify-center">
                   <svg width="8" height="8" viewBox="0 0 8 8" fill="white">
-                    <path d="M1.5 4l2 2 3-3" stroke="white" strokeWidth="1.2" strokeLinecap="round" fill="none"/>
+                    <path
+                      d="M1.5 4l2 2 3-3"
+                      stroke="white"
+                      strokeWidth="1.2"
+                      strokeLinecap="round"
+                      fill="none"
+                    />
                   </svg>
                 </div>
               )}
@@ -411,7 +754,13 @@ function PaletteGrid({
   );
 }
 
-function ColorInput({ value, onChange }: { value?: string; onChange: (v: string) => void }) {
+function ColorInput({
+  value,
+  onChange,
+}: {
+  value?: string;
+  onChange: (v: string) => void;
+}) {
   return (
     <div className="flex items-center gap-2">
       <input
@@ -437,7 +786,7 @@ function ProductPicker({
   badgeColor,
   selectedIds,
   allProducts,
-  onToggle
+  onToggle,
 }: {
   label: string;
   badgeColor: string;
@@ -456,7 +805,9 @@ function ProductPicker({
 
   return (
     <div className="flex flex-col gap-3">
-      <label className="text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">{label}</label>
+      <label className="text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
+        {label}
+      </label>
 
       {/* Selected chips */}
       {selected.length > 0 && (
@@ -469,7 +820,11 @@ function ProductPicker({
             >
               {p.imageUrl?.trim() && (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={p.imageUrl.trim()} alt="" className="h-4 w-4 rounded-full object-cover" />
+                <img
+                  src={p.imageUrl.trim()}
+                  alt=""
+                  className="h-4 w-4 rounded-full object-cover"
+                />
               )}
               <span className="max-w-[140px] truncate">{p.name}</span>
               <button
@@ -499,7 +854,9 @@ function ProductPicker({
         <div className="max-h-48 overflow-y-auto">
           {filtered.length === 0 ? (
             <p className="px-3 py-3 text-xs text-[var(--color-muted)]">
-              {search ? "Sin resultados" : "Todos los productos ya están seleccionados"}
+              {search
+                ? "Sin resultados"
+                : "Todos los productos ya están seleccionados"}
             </p>
           ) : (
             filtered.map((p) => (
@@ -511,13 +868,22 @@ function ProductPicker({
               >
                 {p.imageUrl?.trim() ? (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={p.imageUrl.trim()} alt="" className="h-8 w-8 shrink-0 rounded-lg object-cover" />
+                  <img
+                    src={p.imageUrl.trim()}
+                    alt=""
+                    className="h-8 w-8 shrink-0 rounded-lg object-cover"
+                  />
                 ) : (
                   <div className="h-8 w-8 shrink-0 rounded-lg bg-[var(--color-border)]" />
                 )}
-                <span className="min-w-0 flex-1 truncate font-medium text-[var(--color-text)]">{p.name}</span>
+                <span className="min-w-0 flex-1 truncate font-medium text-[var(--color-text)]">
+                  {p.name}
+                </span>
                 <span className="shrink-0 text-xs text-[var(--color-muted)]">
-                  ${new Intl.NumberFormat("es-AR", { maximumFractionDigits: 0 }).format(p.minPrice)}
+                  $
+                  {new Intl.NumberFormat("es-AR", {
+                    maximumFractionDigits: 0,
+                  }).format(p.minPrice)}
                 </span>
               </button>
             ))
@@ -542,7 +908,9 @@ export default function TiendaConfigPage() {
   const [publicSlug, setPublicSlug] = useState<string | null>(null);
   const [allProducts, setAllProducts] = useState<ProductSummary[]>([]);
   const [allCategories, setAllCategories] = useState<CategoryRow[]>([]);
-  const [expandedSections, setExpandedSections] = useState<Set<SectionKey>>(new Set(["brand", "home"]));
+  const [expandedSections, setExpandedSections] = useState<Set<SectionKey>>(
+    new Set(["brand", "home"]),
+  );
   const [isMobile, setIsMobile] = useState(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -559,27 +927,46 @@ export default function TiendaConfigPage() {
     const base = getClientApiBase();
     Promise.all([
       fetch(`${base}/tienda-config`, {
-        headers: { Authorization: `Bearer ${ctx.token}`, "x-tenant-id": ctx.tenantId }
+        headers: {
+          Authorization: `Bearer ${ctx.token}`,
+          "x-tenant-id": ctx.tenantId,
+        },
       }).then((r) => (r.ok ? r.json() : null)),
       fetch(`${base}/ops/tenant-knowledge`, {
-        headers: { Authorization: `Bearer ${ctx.token}`, "x-tenant-id": ctx.tenantId }
-      }).then((r) => (r.ok ? r.json() : null))
-    ]).then(([cfg, knowledge]) => {
-      if (cfg) setConfig(mergeLoadedConfig(cfg as Record<string, unknown>));
-      if ((knowledge as Record<string, unknown>)?.publicCatalogSlug)
-        setPublicSlug((knowledge as Record<string, unknown>).publicCatalogSlug as string);
-      setLoading(false);
-    }).catch(() => setLoading(false));
+        headers: {
+          Authorization: `Bearer ${ctx.token}`,
+          "x-tenant-id": ctx.tenantId,
+        },
+      }).then((r) => (r.ok ? r.json() : null)),
+    ])
+      .then(([cfg, knowledge]) => {
+        if (cfg) setConfig(mergeLoadedConfig(cfg as Record<string, unknown>));
+        if ((knowledge as Record<string, unknown>)?.publicCatalogSlug)
+          setPublicSlug(
+            (knowledge as Record<string, unknown>).publicCatalogSlug as string,
+          );
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
 
     // Load products for the picker (don't block the form loading)
     const ctx2 = authContext();
     if (ctx2) {
       fetch(`${getClientApiBase()}/products`, {
-        headers: { Authorization: `Bearer ${ctx2.token}`, "x-tenant-id": ctx2.tenantId }
-      }).then((r) => r.ok ? r.json() : null)
+        headers: {
+          Authorization: `Bearer ${ctx2.token}`,
+          "x-tenant-id": ctx2.tenantId,
+        },
+      })
+        .then((r) => (r.ok ? r.json() : null))
         .then((data: unknown) => {
           if (!Array.isArray(data)) return;
-          type RawVariant = { productId: string; name: string; imageUrl?: string | null; effectivePrice?: number };
+          type RawVariant = {
+            productId: string;
+            name: string;
+            imageUrl?: string | null;
+            effectivePrice?: number;
+          };
           const variants = data as RawVariant[];
           const map = new Map<string, ProductSummary>();
           for (const v of variants) {
@@ -588,17 +975,21 @@ export default function TiendaConfigPage() {
                 productId: v.productId,
                 name: v.name,
                 imageUrl: v.imageUrl ?? null,
-                minPrice: v.effectivePrice ?? 0
+                minPrice: v.effectivePrice ?? 0,
               });
             }
           }
           setAllProducts([...map.values()]);
-        }).catch(() => null);
+        })
+        .catch(() => null);
     }
 
     if (ctx) {
       fetch(`${getClientApiBase()}/categories`, {
-        headers: { Authorization: `Bearer ${ctx.token}`, "x-tenant-id": ctx.tenantId }
+        headers: {
+          Authorization: `Bearer ${ctx.token}`,
+          "x-tenant-id": ctx.tenantId,
+        },
       })
         .then((r) => (r.ok ? r.json() : null))
         .then((data: unknown) => {
@@ -612,7 +1003,8 @@ export default function TiendaConfigPage() {
   function toggleSection(key: SectionKey) {
     setExpandedSections((prev) => {
       const next = new Set(prev);
-      if (next.has(key)) next.delete(key); else next.add(key);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   }
@@ -629,12 +1021,12 @@ export default function TiendaConfigPage() {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${ctx.token}`,
-          "x-tenant-id": ctx.tenantId
+          "x-tenant-id": ctx.tenantId,
         },
-        body: JSON.stringify(config)
+        body: JSON.stringify(config),
       });
       if (!res.ok) {
-        const d = await res.json().catch(() => ({})) as { message?: string };
+        const d = (await res.json().catch(() => ({}))) as { message?: string };
         throw new Error(d.message ?? "Error al guardar");
       }
       setSaved(true);
@@ -660,17 +1052,51 @@ export default function TiendaConfigPage() {
   const setUiTexts = (patch: Partial<StoreConfigUiTexts>) =>
     setConfig((c) => ({ ...c, uiTexts: { ...c.uiTexts, ...patch } }));
 
-  const updateHomeSlot = (index: number, patch: { categoryId?: string; imageUrl?: string }) => {
+  const updateHomeSlot = (
+    index: number,
+    patch: { categoryId?: string; imageUrl?: string },
+  ) => {
     setConfig((c) => {
       const cur = [...(c.home?.categoryShowcase ?? [])];
-      while (cur.length < 3) cur.push({});
+      while (cur.length < 6) cur.push({});
       cur[index] = { ...cur[index], ...patch };
       return {
         ...c,
-        home: { categoryShowcase: cur.slice(0, 3) }
+        home: { categoryShowcase: cur.slice(0, 6) },
       };
     });
   };
+
+  const banners: StoreConfigBanner[] = config.banners ?? [];
+  const updateBanner = (idx: number, patch: Partial<StoreConfigBanner>) =>
+    setConfig((c) => {
+      const cur = [...(c.banners ?? [])];
+      if (idx < 0 || idx >= cur.length) return c;
+      cur[idx] = { ...cur[idx], ...patch };
+      return { ...c, banners: cur };
+    });
+  const addBanner = () =>
+    setConfig((c) => {
+      const cur = [...(c.banners ?? [])];
+      if (cur.length >= MAX_EXTRA_BANNERS) return c;
+      cur.push({});
+      return { ...c, banners: cur };
+    });
+  const removeBanner = (idx: number) =>
+    setConfig((c) => {
+      const cur = [...(c.banners ?? [])];
+      if (idx < 0 || idx >= cur.length) return c;
+      cur.splice(idx, 1);
+      return { ...c, banners: cur.length > 0 ? cur : undefined };
+    });
+  const moveBanner = (idx: number, dir: -1 | 1) =>
+    setConfig((c) => {
+      const cur = [...(c.banners ?? [])];
+      const j = idx + dir;
+      if (idx < 0 || idx >= cur.length || j < 0 || j >= cur.length) return c;
+      [cur[idx], cur[j]] = [cur[j], cur[idx]];
+      return { ...c, banners: cur };
+    });
 
   const activeCategories = allCategories
     .filter((x) => x.isActive)
@@ -683,8 +1109,10 @@ export default function TiendaConfigPage() {
         ...c,
         featured: {
           ...c.featured,
-          newProductIds: ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]
-        }
+          newProductIds: ids.includes(id)
+            ? ids.filter((x) => x !== id)
+            : [...ids, id],
+        },
       };
     });
 
@@ -695,8 +1123,10 @@ export default function TiendaConfigPage() {
         ...c,
         featured: {
           ...c.featured,
-          saleProductIds: ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]
-        }
+          saleProductIds: ids.includes(id)
+            ? ids.filter((x) => x !== id)
+            : [...ids, id],
+        },
       };
     });
 
@@ -713,9 +1143,12 @@ export default function TiendaConfigPage() {
           <div className="flex items-center gap-3">
             <Store size={20} className="text-[var(--color-primary)]" />
             <div>
-              <h1 className="text-base font-semibold text-[var(--color-text)]">Configurar Tienda Pública</h1>
+              <h1 className="text-base font-semibold text-[var(--color-text)]">
+                Configurar Tienda Pública
+              </h1>
               <p className="text-xs text-[var(--color-muted)]">
-                Marca, colores, portada, categorías en la home y productos destacados
+                Marca, colores, portada, categorías en la home y productos
+                destacados
               </p>
             </div>
           </div>
@@ -738,11 +1171,20 @@ export default function TiendaConfigPage() {
               className="flex items-center gap-1.5 rounded-lg bg-[var(--color-primary)] px-4 py-2 text-sm font-semibold text-white transition-opacity disabled:opacity-60"
             >
               {saved ? (
-                <><Check size={14} />Guardado</>
+                <>
+                  <Check size={14} />
+                  Guardado
+                </>
               ) : saving ? (
-                <><Loader2 size={14} className="animate-spin" />Guardando…</>
+                <>
+                  <Loader2 size={14} className="animate-spin" />
+                  Guardando…
+                </>
               ) : (
-                <><Save size={14} />Guardar cambios</>
+                <>
+                  <Save size={14} />
+                  Guardar cambios
+                </>
               )}
             </button>
           </div>
@@ -757,27 +1199,43 @@ export default function TiendaConfigPage() {
 
         {loading ? (
           <div className="flex flex-1 items-center justify-center">
-            <Loader2 size={24} className="animate-spin text-[var(--color-primary)]" />
+            <Loader2
+              size={24}
+              className="animate-spin text-[var(--color-primary)]"
+            />
           </div>
         ) : (
           <div className="mx-auto w-full max-w-3xl px-6 py-6 space-y-3">
-
             {/* ── IDENTIDAD DE MARCA ── */}
             <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
               <SectionHeader
-                icon={Store} title="Identidad de marca"
+                icon={Store}
+                title="Identidad de marca"
                 subtitle="Nombre, tipo de tienda, logo y slogan"
-                expanded={expandedSections.has("brand")} onToggle={() => toggleSection("brand")}
+                expanded={expandedSections.has("brand")}
+                onToggle={() => toggleSection("brand")}
               />
               {expandedSections.has("brand") && (
                 <div className="border-t border-[var(--color-border)] px-4 py-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <FormField label="Nombre de la tienda">
-                    <input className={inputCls} placeholder="Ej: MAISON ÉLÉGANCE"
-                      value={config.brand.storeName ?? ""} onChange={(e) => setBrand({ storeName: e.target.value })} />
+                    <input
+                      className={inputCls}
+                      placeholder="Ej: MAISON ÉLÉGANCE"
+                      value={config.brand.storeName ?? ""}
+                      onChange={(e) => setBrand({ storeName: e.target.value })}
+                    />
                   </FormField>
                   <FormField label="Tipo de tienda">
-                    <select className={inputCls} value={config.brand.storeType ?? ""}
-                      onChange={(e) => setBrand({ storeType: e.target.value as StoreConfigBrand["storeType"] })}>
+                    <select
+                      className={inputCls}
+                      value={config.brand.storeType ?? ""}
+                      onChange={(e) =>
+                        setBrand({
+                          storeType: e.target
+                            .value as StoreConfigBrand["storeType"],
+                        })
+                      }
+                    >
                       <option value="">Seleccionar…</option>
                       <option value="women">Mujer</option>
                       <option value="men">Hombre</option>
@@ -785,9 +1243,16 @@ export default function TiendaConfigPage() {
                       <option value="general">General</option>
                     </select>
                   </FormField>
-                  <FormField label="Slogan / Tagline" hint="Frase corta que define la marca">
-                    <input className={inputCls} placeholder="Donde la elegancia encuentra su expresión"
-                      value={config.brand.tagline ?? ""} onChange={(e) => setBrand({ tagline: e.target.value })} />
+                  <FormField
+                    label="Slogan / Tagline"
+                    hint="Frase corta que define la marca"
+                  >
+                    <input
+                      className={inputCls}
+                      placeholder="Donde la elegancia encuentra su expresión"
+                      value={config.brand.tagline ?? ""}
+                      onChange={(e) => setBrand({ tagline: e.target.value })}
+                    />
                   </FormField>
                   <div />
                   <div className="sm:col-span-2">
@@ -800,10 +1265,19 @@ export default function TiendaConfigPage() {
                     />
                   </div>
                   <div className="sm:col-span-2">
-                    <FormField label="Descripción de la marca" hint="Aparece en el footer y mejora el SEO">
-                      <textarea className={textareaCls} rows={3}
+                    <FormField
+                      label="Descripción de la marca"
+                      hint="Aparece en el footer y mejora el SEO"
+                    >
+                      <textarea
+                        className={textareaCls}
+                        rows={3}
                         placeholder="Colección curada de moda femenina premium…"
-                        value={config.brand.description ?? ""} onChange={(e) => setBrand({ description: e.target.value })} />
+                        value={config.brand.description ?? ""}
+                        onChange={(e) =>
+                          setBrand({ description: e.target.value })
+                        }
+                      />
                     </FormField>
                   </div>
                 </div>
@@ -813,59 +1287,129 @@ export default function TiendaConfigPage() {
             {/* ── COLORES ── */}
             <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
               <SectionHeader
-                icon={Palette} title="Paleta de colores"
+                icon={Palette}
+                title="Paleta de colores"
                 subtitle="Colores principales del tema visual"
-                expanded={expandedSections.has("colors")} onToggle={() => toggleSection("colors")}
+                expanded={expandedSections.has("colors")}
+                onToggle={() => toggleSection("colors")}
               />
               {expandedSections.has("colors") && (
                 <div className="border-t border-[var(--color-border)] px-4 py-5 flex flex-col gap-5">
                   <PaletteGrid active={config.colors} onSelect={setColors} />
-                  <div className="h-px" style={{ backgroundColor: "var(--color-border)" }} />
+                  <div
+                    className="h-px"
+                    style={{ backgroundColor: "var(--color-border)" }}
+                  />
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <FormField label="Color primario" hint="Color principal de la marca">
-                    <ColorInput value={config.colors.primary} onChange={(v) => setColors({ primary: v })} />
-                  </FormField>
-                  <FormField label="Color secundario" hint="Acentos y detalles">
-                    <ColorInput value={config.colors.secondary} onChange={(v) => setColors({ secondary: v })} />
-                  </FormField>
-                  <FormField label="Color de fondo" hint="Background de la página">
-                    <ColorInput value={config.colors.background} onChange={(v) => setColors({ background: v })} />
-                  </FormField>
-                  <FormField label="Color de superficie" hint="Fondo de tarjetas">
-                    <ColorInput value={config.colors.surface} onChange={(v) => setColors({ surface: v })} />
-                  </FormField>
-                  <FormField label="Texto principal">
-                    <ColorInput value={config.colors.textPrimary} onChange={(v) => setColors({ textPrimary: v })} />
-                  </FormField>
-                  <FormField label="Texto secundario">
-                    <ColorInput value={config.colors.textSecondary} onChange={(v) => setColors({ textSecondary: v })} />
-                  </FormField>
-                  <FormField label="Color de bordes">
-                    <ColorInput value={config.colors.border} onChange={(v) => setColors({ border: v })} />
-                  </FormField>
+                    <FormField
+                      label="Color primario"
+                      hint="Color principal de la marca"
+                    >
+                      <ColorInput
+                        value={config.colors.primary}
+                        onChange={(v) => setColors({ primary: v })}
+                      />
+                    </FormField>
+                    <FormField
+                      label="Color secundario"
+                      hint="Acentos y detalles"
+                    >
+                      <ColorInput
+                        value={config.colors.secondary}
+                        onChange={(v) => setColors({ secondary: v })}
+                      />
+                    </FormField>
+                    <FormField
+                      label="Color de fondo"
+                      hint="Background de la página"
+                    >
+                      <ColorInput
+                        value={config.colors.background}
+                        onChange={(v) => setColors({ background: v })}
+                      />
+                    </FormField>
+                    <FormField
+                      label="Color de superficie"
+                      hint="Fondo de tarjetas"
+                    >
+                      <ColorInput
+                        value={config.colors.surface}
+                        onChange={(v) => setColors({ surface: v })}
+                      />
+                    </FormField>
+                    <FormField label="Texto principal">
+                      <ColorInput
+                        value={config.colors.textPrimary}
+                        onChange={(v) => setColors({ textPrimary: v })}
+                      />
+                    </FormField>
+                    <FormField label="Texto secundario">
+                      <ColorInput
+                        value={config.colors.textSecondary}
+                        onChange={(v) => setColors({ textSecondary: v })}
+                      />
+                    </FormField>
+                    <FormField label="Color de bordes">
+                      <ColorInput
+                        value={config.colors.border}
+                        onChange={(v) => setColors({ border: v })}
+                      />
+                    </FormField>
 
-                  {/* Live preview */}
-                  <div className="sm:col-span-2">
-                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">Preview</p>
-                    <div className="rounded-xl border p-4 flex items-center gap-3"
-                      style={{ backgroundColor: config.colors.background || "#fafafa", borderColor: config.colors.border || "#e5e5e5" }}>
-                      <div className="h-10 w-10 rounded-lg flex items-center justify-center text-white text-sm font-bold"
-                        style={{ backgroundColor: config.colors.primary || "#1a1a1a" }}>A</div>
-                      <div>
-                        <p className="text-sm font-semibold" style={{ color: config.colors.textPrimary || "#1a1a1a" }}>
-                          {config.brand.storeName || "Nombre de tienda"}
-                        </p>
-                        <p className="text-xs" style={{ color: config.colors.textSecondary || "#6b6b6b" }}>
-                          {config.brand.tagline || "Tu slogan aquí"}
-                        </p>
-                      </div>
-                      <div className="ml-auto rounded-lg px-3 py-1.5 text-xs font-semibold text-white"
-                        style={{ backgroundColor: config.colors.secondary || config.colors.primary || "#d4af37" }}>
-                        Ver más
+                    {/* Live preview */}
+                    <div className="sm:col-span-2">
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--color-muted)]">
+                        Preview
+                      </p>
+                      <div
+                        className="rounded-xl border p-4 flex items-center gap-3"
+                        style={{
+                          backgroundColor:
+                            config.colors.background || "#fafafa",
+                          borderColor: config.colors.border || "#e5e5e5",
+                        }}
+                      >
+                        <div
+                          className="h-10 w-10 rounded-lg flex items-center justify-center text-white text-sm font-bold"
+                          style={{
+                            backgroundColor: config.colors.primary || "#1a1a1a",
+                          }}
+                        >
+                          A
+                        </div>
+                        <div>
+                          <p
+                            className="text-sm font-semibold"
+                            style={{
+                              color: config.colors.textPrimary || "#1a1a1a",
+                            }}
+                          >
+                            {config.brand.storeName || "Nombre de tienda"}
+                          </p>
+                          <p
+                            className="text-xs"
+                            style={{
+                              color: config.colors.textSecondary || "#6b6b6b",
+                            }}
+                          >
+                            {config.brand.tagline || "Tu slogan aquí"}
+                          </p>
+                        </div>
+                        <div
+                          className="ml-auto rounded-lg px-3 py-1.5 text-xs font-semibold text-white"
+                          style={{
+                            backgroundColor:
+                              config.colors.secondary ||
+                              config.colors.primary ||
+                              "#d4af37",
+                          }}
+                        >
+                          Ver más
+                        </div>
                       </div>
                     </div>
                   </div>
-                  </div>{/* end grid */}
+                  {/* end grid */}
                 </div>
               )}
             </div>
@@ -873,35 +1417,74 @@ export default function TiendaConfigPage() {
             {/* ── TIPOGRAFÍA ── */}
             <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
               <SectionHeader
-                icon={Type} title="Tipografía"
+                icon={Type}
+                title="Tipografía"
                 subtitle="Fuentes para títulos y textos"
-                expanded={expandedSections.has("typography")} onToggle={() => toggleSection("typography")}
+                expanded={expandedSections.has("typography")}
+                onToggle={() => toggleSection("typography")}
               />
               {expandedSections.has("typography") && (
                 <div className="border-t border-[var(--color-border)] px-4 py-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  <FormField label="Fuente principal" hint="Para títulos y headers">
-                    <select className={inputCls} value={config.typography.headingFont ?? ""}
-                      onChange={(e) => setTypography({ headingFont: e.target.value })}>
+                  <FormField
+                    label="Fuente principal"
+                    hint="Para títulos y headers"
+                  >
+                    <select
+                      className={inputCls}
+                      value={config.typography.headingFont ?? ""}
+                      onChange={(e) =>
+                        setTypography({ headingFont: e.target.value })
+                      }
+                    >
                       <option value="">Por defecto (Geist)</option>
-                      {FONT_OPTIONS.map((f) => <option key={f} value={f}>{f}</option>)}
+                      {FONT_OPTIONS.map((f) => (
+                        <option key={f} value={f}>
+                          {f}
+                        </option>
+                      ))}
                     </select>
                   </FormField>
-                  <FormField label="Fuente secundaria" hint="Para textos y body">
-                    <select className={inputCls} value={config.typography.bodyFont ?? ""}
-                      onChange={(e) => setTypography({ bodyFont: e.target.value })}>
+                  <FormField
+                    label="Fuente secundaria"
+                    hint="Para textos y body"
+                  >
+                    <select
+                      className={inputCls}
+                      value={config.typography.bodyFont ?? ""}
+                      onChange={(e) =>
+                        setTypography({ bodyFont: e.target.value })
+                      }
+                    >
                       <option value="">Por defecto (Geist)</option>
-                      {FONT_OPTIONS.map((f) => <option key={f} value={f}>{f}</option>)}
+                      {FONT_OPTIONS.map((f) => (
+                        <option key={f} value={f}>
+                          {f}
+                        </option>
+                      ))}
                     </select>
                   </FormField>
-                  {(config.typography.headingFont || config.typography.bodyFont) && (
+                  {(config.typography.headingFont ||
+                    config.typography.bodyFont) && (
                     <div className="sm:col-span-2 rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
                       <style>{`@import url('https://fonts.googleapis.com/css2?family=${encodeURIComponent(config.typography.headingFont || "Inter")}:wght@400;600;700&family=${encodeURIComponent(config.typography.bodyFont || "Inter")}:wght@400;500&display=swap');`}</style>
-                      <p className="text-xl font-bold mb-1"
-                        style={{ fontFamily: config.typography.headingFont ? `"${config.typography.headingFont}", serif` : undefined }}>
+                      <p
+                        className="text-xl font-bold mb-1"
+                        style={{
+                          fontFamily: config.typography.headingFont
+                            ? `"${config.typography.headingFont}", serif`
+                            : undefined,
+                        }}
+                      >
                         {config.brand.storeName || "Nombre de la tienda"}
                       </p>
-                      <p className="text-sm text-[var(--color-muted)]"
-                        style={{ fontFamily: config.typography.bodyFont ? `"${config.typography.bodyFont}", sans-serif` : undefined }}>
+                      <p
+                        className="text-sm text-[var(--color-muted)]"
+                        style={{
+                          fontFamily: config.typography.bodyFont
+                            ? `"${config.typography.bodyFont}", sans-serif`
+                            : undefined,
+                        }}
+                      >
                         Texto de ejemplo con la tipografía seleccionada.
                       </p>
                     </div>
@@ -913,37 +1496,205 @@ export default function TiendaConfigPage() {
             {/* ── HERO ── */}
             <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
               <SectionHeader
-                icon={ImageIcon} title="Portada principal (Hero)"
+                icon={ImageIcon}
+                title="Portada principal (Hero)"
                 subtitle="Carrusel superior: título, imagen de fondo y botón"
-                expanded={expandedSections.has("hero")} onToggle={() => toggleSection("hero")}
+                expanded={expandedSections.has("hero")}
+                onToggle={() => toggleSection("hero")}
               />
               {expandedSections.has("hero") && (
                 <div className="border-t border-[var(--color-border)] px-4 py-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <FormField label="Título principal">
-                    <input className={inputCls} placeholder="Nueva Colección Primavera"
-                      value={config.hero.title ?? ""} onChange={(e) => setHero({ title: e.target.value })} />
+                    <input
+                      className={inputCls}
+                      placeholder="Nueva Colección Primavera"
+                      value={config.hero.title ?? ""}
+                      onChange={(e) => setHero({ title: e.target.value })}
+                    />
                   </FormField>
                   <FormField label="Subtítulo">
-                    <input className={inputCls} placeholder="Piezas únicas que definen tu estilo…"
-                      value={config.hero.subtitle ?? ""} onChange={(e) => setHero({ subtitle: e.target.value })} />
+                    <input
+                      className={inputCls}
+                      placeholder="Piezas únicas que definen tu estilo…"
+                      value={config.hero.subtitle ?? ""}
+                      onChange={(e) => setHero({ subtitle: e.target.value })}
+                    />
                   </FormField>
                   <div className="sm:col-span-2">
                     <ImageField
                       label="Imagen de fondo del Hero"
-                      hint="Recomendado: 1920×600 px. Podés sumar más diapositivas desde banners en el JSON avanzado si lo necesitás."
+                      hint={`Recomendado: 1920×600 px. Podés sumar hasta ${MAX_EXTRA_BANNERS} diapositivas más en la sección "Diapositivas adicionales" debajo.`}
                       value={config.hero.backgroundImageUrl}
                       onChange={(url) => setHero({ backgroundImageUrl: url })}
                       folder="store-config"
                     />
                   </div>
                   <FormField label="Texto del botón CTA">
-                    <input className={inputCls} placeholder="Explorar Colección"
-                      value={config.hero.ctaText ?? ""} onChange={(e) => setHero({ ctaText: e.target.value })} />
+                    <input
+                      className={inputCls}
+                      placeholder="Explorar Colección"
+                      value={config.hero.ctaText ?? ""}
+                      onChange={(e) => setHero({ ctaText: e.target.value })}
+                    />
                   </FormField>
-                  <FormField label="Link del botón CTA" hint="Ruta interna o URL">
-                    <input className={inputCls} placeholder="/tienda/mi-slug/catalogo"
-                      value={config.hero.ctaLink ?? ""} onChange={(e) => setHero({ ctaLink: e.target.value })} />
+                  <FormField
+                    label="Link del botón CTA"
+                    hint="Ruta interna o URL"
+                  >
+                    <input
+                      className={inputCls}
+                      placeholder="/tienda/mi-slug/catalogo"
+                      value={config.hero.ctaLink ?? ""}
+                      onChange={(e) => setHero({ ctaLink: e.target.value })}
+                    />
                   </FormField>
+                </div>
+              )}
+            </div>
+
+            {/* ── DIAPOSITIVAS ADICIONALES (banners del carrusel hero) ── */}
+            <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
+              <SectionHeader
+                icon={GalleryHorizontalEnd}
+                title="Diapositivas adicionales"
+                subtitle={`Sumá hasta ${MAX_EXTRA_BANNERS} slides extra al carrusel del hero`}
+                expanded={expandedSections.has("banners")}
+                onToggle={() => toggleSection("banners")}
+              />
+              {expandedSections.has("banners") && (
+                <div className="border-t border-[var(--color-border)] px-4 py-5 space-y-4">
+                  <p className="text-xs text-[var(--color-muted)] leading-relaxed">
+                    El Hero principal aparece como primera diapositiva del
+                    carrusel. Estas diapositivas se agregan después, en el orden
+                    que las dejes acá.
+                  </p>
+
+                  {banners.length === 0 ? (
+                    <p className="text-xs text-[var(--color-muted)] italic">
+                      Aún no hay diapositivas adicionales. El hero principal se
+                      muestra solo.
+                    </p>
+                  ) : (
+                    <div className="space-y-4">
+                      {banners.map((b, idx) => (
+                        <div
+                          key={idx}
+                          className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg)] p-4 space-y-3"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-[11px] font-bold uppercase tracking-wide text-[var(--color-muted)]">
+                              Diapositiva {idx + 2}
+                            </p>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => moveBanner(idx, -1)}
+                                disabled={idx === 0}
+                                title="Mover arriba"
+                                className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--color-muted)] transition-colors hover:bg-[var(--color-surface)] hover:text-[var(--color-text)] disabled:opacity-40 disabled:hover:bg-transparent"
+                              >
+                                <ChevronUp size={14} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => moveBanner(idx, 1)}
+                                disabled={idx === banners.length - 1}
+                                title="Mover abajo"
+                                className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--color-muted)] transition-colors hover:bg-[var(--color-surface)] hover:text-[var(--color-text)] disabled:opacity-40 disabled:hover:bg-transparent"
+                              >
+                                <ChevronDown size={14} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => removeBanner(idx)}
+                                title="Eliminar diapositiva"
+                                className="flex h-7 w-7 items-center justify-center rounded-md text-[var(--color-muted)] transition-colors hover:bg-red-50 hover:text-red-600"
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                            <FormField label="Título">
+                              <input
+                                className={inputCls}
+                                placeholder="Nueva colección"
+                                value={b.title ?? ""}
+                                onChange={(e) =>
+                                  updateBanner(idx, { title: e.target.value })
+                                }
+                              />
+                            </FormField>
+                            <FormField label="Subtítulo">
+                              <input
+                                className={inputCls}
+                                placeholder="Edición limitada"
+                                value={b.subtitle ?? ""}
+                                onChange={(e) =>
+                                  updateBanner(idx, {
+                                    subtitle: e.target.value,
+                                  })
+                                }
+                              />
+                            </FormField>
+                            <div className="sm:col-span-2">
+                              <ImageField
+                                label="Imagen de fondo"
+                                hint="Recomendado: 1920×600 px"
+                                value={b.backgroundImageUrl}
+                                onChange={(url) =>
+                                  updateBanner(idx, {
+                                    backgroundImageUrl: url,
+                                  })
+                                }
+                                folder="store-config"
+                              />
+                            </div>
+                            <FormField label="Texto del botón">
+                              <input
+                                className={inputCls}
+                                placeholder="Ver colección"
+                                value={b.ctaText ?? ""}
+                                onChange={(e) =>
+                                  updateBanner(idx, {
+                                    ctaText: e.target.value,
+                                  })
+                                }
+                              />
+                            </FormField>
+                            <FormField
+                              label="Link del botón"
+                              hint="Ruta interna o URL"
+                            >
+                              <input
+                                className={inputCls}
+                                placeholder="/tienda/mi-slug/catalogo"
+                                value={b.ctaLink ?? ""}
+                                onChange={(e) =>
+                                  updateBanner(idx, {
+                                    ctaLink: e.target.value,
+                                  })
+                                }
+                              />
+                            </FormField>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={addBanner}
+                    disabled={banners.length >= MAX_EXTRA_BANNERS}
+                    className="flex w-full items-center justify-center gap-1.5 rounded-xl border border-dashed border-[var(--color-border)] px-4 py-3 text-sm font-medium text-[var(--color-muted)] transition-colors hover:border-[var(--color-primary)] hover:text-[var(--color-primary)] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Plus size={14} />
+                    {banners.length >= MAX_EXTRA_BANNERS
+                      ? `Máximo ${MAX_EXTRA_BANNERS} diapositivas adicionales`
+                      : "Agregar diapositiva"}
+                  </button>
                 </div>
               )}
             </div>
@@ -951,18 +1702,23 @@ export default function TiendaConfigPage() {
             {/* ── HOME: CATEGORÍAS DESTACADAS ── */}
             <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
               <SectionHeader
-                icon={LayoutGrid} title="Categorías en la página de inicio"
-                subtitle="Elegí hasta 3 categorías y una imagen opcional por tarjeta"
-                expanded={expandedSections.has("home")} onToggle={() => toggleSection("home")}
+                icon={LayoutGrid}
+                title="Categorías en la página de inicio"
+                subtitle="Elegí hasta 6 categorías y una imagen opcional por tarjeta"
+                expanded={expandedSections.has("home")}
+                onToggle={() => toggleSection("home")}
               />
               {expandedSections.has("home") && (
                 <div className="border-t border-[var(--color-border)] px-4 py-5 space-y-4">
                   <p className="text-xs text-[var(--color-muted)] leading-relaxed">
-                    Si no configurás ninguna categoría aquí, la tienda muestra automáticamente las tres primeras categorías raíz.
-                    Las imágenes se muestran en la grilla &quot;Categorías&quot; de la home pública.
+                    Si no configurás ninguna categoría aquí, la tienda muestra
+                    automáticamente las primeras categorías raíz. Las imágenes
+                    se muestran en la grilla &quot;Categorías&quot; de la home
+                    pública. Las tarjetas vacías (sin categoría seleccionada)
+                    no se renderizan.
                   </p>
-                  <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
-                    {[0, 1, 2].map((idx) => {
+                  <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                    {[0, 1, 2, 3, 4, 5].map((idx) => {
                       const slot = config.home?.categoryShowcase?.[idx] ?? {};
                       return (
                         <div
@@ -977,7 +1733,9 @@ export default function TiendaConfigPage() {
                               className={inputCls}
                               value={slot.categoryId ?? ""}
                               onChange={(e) =>
-                                updateHomeSlot(idx, { categoryId: e.target.value || undefined })
+                                updateHomeSlot(idx, {
+                                  categoryId: e.target.value || undefined,
+                                })
                               }
                             >
                               <option value="">— Sin seleccionar —</option>
@@ -992,7 +1750,9 @@ export default function TiendaConfigPage() {
                             label="Imagen de la tarjeta"
                             hint="Cuadrada o vertical, se recorta al centro"
                             value={slot.imageUrl}
-                            onChange={(url) => updateHomeSlot(idx, { imageUrl: url })}
+                            onChange={(url) =>
+                              updateHomeSlot(idx, { imageUrl: url })
+                            }
                             folder="store-config"
                           />
                         </div>
@@ -1006,31 +1766,61 @@ export default function TiendaConfigPage() {
             {/* ── TEXTOS DE INTERFAZ ── */}
             <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
               <SectionHeader
-                icon={Globe} title="Textos de la interfaz"
+                icon={Globe}
+                title="Textos de la interfaz"
                 subtitle="Etiquetas, moneda y buscador"
-                expanded={expandedSections.has("ui")} onToggle={() => toggleSection("ui")}
+                expanded={expandedSections.has("ui")}
+                onToggle={() => toggleSection("ui")}
               />
               {expandedSections.has("ui") && (
                 <div className="border-t border-[var(--color-border)] px-4 py-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <FormField label="Símbolo de moneda">
-                    <input className={inputCls} placeholder="$" value={config.uiTexts.currencySymbol ?? ""}
-                      onChange={(e) => setUiTexts({ currencySymbol: e.target.value })} />
+                    <input
+                      className={inputCls}
+                      placeholder="$"
+                      value={config.uiTexts.currencySymbol ?? ""}
+                      onChange={(e) =>
+                        setUiTexts({ currencySymbol: e.target.value })
+                      }
+                    />
                   </FormField>
                   <FormField label="Placeholder del buscador">
-                    <input className={inputCls} placeholder="Buscar productos…" value={config.uiTexts.searchPlaceholder ?? ""}
-                      onChange={(e) => setUiTexts({ searchPlaceholder: e.target.value })} />
+                    <input
+                      className={inputCls}
+                      placeholder="Buscar productos…"
+                      value={config.uiTexts.searchPlaceholder ?? ""}
+                      onChange={(e) =>
+                        setUiTexts({ searchPlaceholder: e.target.value })
+                      }
+                    />
                   </FormField>
                   <FormField label='Etiqueta "Nuevo"'>
-                    <input className={inputCls} placeholder="Nuevo" value={config.uiTexts.newBadge ?? ""}
-                      onChange={(e) => setUiTexts({ newBadge: e.target.value })} />
+                    <input
+                      className={inputCls}
+                      placeholder="Nuevo"
+                      value={config.uiTexts.newBadge ?? ""}
+                      onChange={(e) => setUiTexts({ newBadge: e.target.value })}
+                    />
                   </FormField>
                   <FormField label='Etiqueta "Oferta"'>
-                    <input className={inputCls} placeholder="Oferta" value={config.uiTexts.saleBadge ?? ""}
-                      onChange={(e) => setUiTexts({ saleBadge: e.target.value })} />
+                    <input
+                      className={inputCls}
+                      placeholder="Oferta"
+                      value={config.uiTexts.saleBadge ?? ""}
+                      onChange={(e) =>
+                        setUiTexts({ saleBadge: e.target.value })
+                      }
+                    />
                   </FormField>
                   <FormField label="Texto del botón filtrar">
-                    <input className={inputCls} placeholder="Filtrar" value={config.uiTexts.filterText ?? ""}
-                      onChange={(e) => setUiTexts({ filterText: e.target.value })} />
+                    <input
+                      className={inputCls}
+                      placeholder="Filtrar"
+                      value={config.uiTexts.filterText ?? ""}
+                      onChange={(e) =>
+                        setUiTexts({ filterText: e.target.value })
+                      }
+                    />
                   </FormField>
                 </div>
               )}
@@ -1039,9 +1829,11 @@ export default function TiendaConfigPage() {
             {/* ── PRODUCTOS DESTACADOS ── */}
             <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
               <SectionHeader
-                icon={Star} title="Productos destacados"
+                icon={Star}
+                title="Productos destacados"
                 subtitle="Novedades y ofertas que aparecen en la página principal"
-                expanded={expandedSections.has("featured")} onToggle={() => toggleSection("featured")}
+                expanded={expandedSections.has("featured")}
+                onToggle={() => toggleSection("featured")}
               />
               {expandedSections.has("featured") && (
                 <div className="border-t border-[var(--color-border)] px-4 py-5 space-y-6">
@@ -1066,7 +1858,9 @@ export default function TiendaConfigPage() {
                         onToggle={toggleFeaturedSale}
                       />
                       <p className="text-xs text-[var(--color-muted)]">
-                        Definí acá las insignias &quot;Nuevo&quot; y &quot;Oferta&quot; y los bloques de últimos ingresos en la home.
+                        Definí acá las insignias &quot;Nuevo&quot; y
+                        &quot;Oferta&quot; y los bloques de últimos ingresos en
+                        la home.
                       </p>
                     </>
                   )}
@@ -1077,42 +1871,82 @@ export default function TiendaConfigPage() {
             {/* ── CONTACTO / FOOTER ── */}
             <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] overflow-hidden">
               <SectionHeader
-                icon={Phone} title="Información de contacto"
+                icon={Phone}
+                title="Información de contacto"
                 subtitle="Footer público: redes y datos de contacto"
-                expanded={expandedSections.has("contact")} onToggle={() => toggleSection("contact")}
+                expanded={expandedSections.has("contact")}
+                onToggle={() => toggleSection("contact")}
               />
               {expandedSections.has("contact") && (
                 <div className="border-t border-[var(--color-border)] px-4 py-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div className="sm:col-span-2">
-                    <FormField label="Sobre nosotros" hint="Descripción corta que aparece en el footer">
-                      <textarea className={textareaCls} rows={3}
+                    <FormField
+                      label="Sobre nosotros"
+                      hint="Descripción corta que aparece en el footer"
+                    >
+                      <textarea
+                        className={textareaCls}
+                        rows={3}
                         placeholder="MAISON ÉLÉGANCE representa lo mejor de la moda local…"
-                        value={config.contact.aboutText ?? ""} onChange={(e) => setContact({ aboutText: e.target.value })} />
+                        value={config.contact.aboutText ?? ""}
+                        onChange={(e) =>
+                          setContact({ aboutText: e.target.value })
+                        }
+                      />
                     </FormField>
                   </div>
                   <FormField label="Email de contacto">
-                    <input className={inputCls} type="email" placeholder="hello@tienda.com"
-                      value={config.contact.email ?? ""} onChange={(e) => setContact({ email: e.target.value })} />
+                    <input
+                      className={inputCls}
+                      type="email"
+                      placeholder="hello@tienda.com"
+                      value={config.contact.email ?? ""}
+                      onChange={(e) => setContact({ email: e.target.value })}
+                    />
                   </FormField>
                   <FormField label="Teléfono">
-                    <input className={inputCls} placeholder="+54 11 1234-5678"
-                      value={config.contact.phone ?? ""} onChange={(e) => setContact({ phone: e.target.value })} />
+                    <input
+                      className={inputCls}
+                      placeholder="+54 11 1234-5678"
+                      value={config.contact.phone ?? ""}
+                      onChange={(e) => setContact({ phone: e.target.value })}
+                    />
                   </FormField>
                   <FormField label="Instagram" hint="Solo el usuario, sin @">
-                    <input className={inputCls} placeholder="mitienda"
-                      value={config.contact.instagram ?? ""} onChange={(e) => setContact({ instagram: e.target.value })} />
+                    <input
+                      className={inputCls}
+                      placeholder="mitienda"
+                      value={config.contact.instagram ?? ""}
+                      onChange={(e) =>
+                        setContact({ instagram: e.target.value })
+                      }
+                    />
                   </FormField>
                   <FormField label="Facebook" hint="Solo el usuario">
-                    <input className={inputCls} placeholder="mitienda"
-                      value={config.contact.facebook ?? ""} onChange={(e) => setContact({ facebook: e.target.value })} />
+                    <input
+                      className={inputCls}
+                      placeholder="mitienda"
+                      value={config.contact.facebook ?? ""}
+                      onChange={(e) => setContact({ facebook: e.target.value })}
+                    />
                   </FormField>
                   <FormField label="TikTok" hint="Solo el usuario, sin @">
-                    <input className={inputCls} placeholder="mitienda"
-                      value={config.contact.tiktok ?? ""} onChange={(e) => setContact({ tiktok: e.target.value })} />
+                    <input
+                      className={inputCls}
+                      placeholder="mitienda"
+                      value={config.contact.tiktok ?? ""}
+                      onChange={(e) => setContact({ tiktok: e.target.value })}
+                    />
                   </FormField>
                   <FormField label="Pinterest" hint="Solo el usuario">
-                    <input className={inputCls} placeholder="mitienda"
-                      value={config.contact.pinterest ?? ""} onChange={(e) => setContact({ pinterest: e.target.value })} />
+                    <input
+                      className={inputCls}
+                      placeholder="mitienda"
+                      value={config.contact.pinterest ?? ""}
+                      onChange={(e) =>
+                        setContact({ pinterest: e.target.value })
+                      }
+                    />
                   </FormField>
                 </div>
               )}
@@ -1121,9 +1955,15 @@ export default function TiendaConfigPage() {
             {/* Catalog URL */}
             {publicSlug && (
               <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-4">
-                <p className="text-xs text-[var(--color-muted)] mb-1">URL de tu tienda pública</p>
-                <a href={`/tienda/${publicSlug}`} target="_blank" rel="noopener noreferrer"
-                  className="flex items-center gap-1.5 text-sm font-medium text-[var(--color-primary)] hover:underline">
+                <p className="text-xs text-[var(--color-muted)] mb-1">
+                  URL de tu tienda pública
+                </p>
+                <a
+                  href={`/tienda/${publicSlug}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1.5 text-sm font-medium text-[var(--color-primary)] hover:underline"
+                >
                   <Globe size={13} />
                   {`/tienda/${publicSlug}`}
                 </a>

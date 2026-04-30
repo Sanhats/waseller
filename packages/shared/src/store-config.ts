@@ -50,7 +50,7 @@ export type StoreConfig = {
   };
   /** Bloques editables de la home pública (p. ej. categorías con imagen). */
   home?: {
-    /** Hasta 3 entradas en orden; vacío = la tienda usa categorías raíz por defecto. */
+    /** Hasta 6 entradas en orden; vacío = la tienda usa categorías raíz por defecto. */
     categoryShowcase?: Array<{
       categoryId?: string;
       imageUrl?: string;
@@ -109,7 +109,7 @@ export function normalizeStoreConfig(raw: unknown): StoreConfig {
   const homeIn = input.home && typeof input.home === "object" ? (input.home as Record<string, unknown>) : {};
   const rawShowcase = Array.isArray(homeIn.categoryShowcase) ? homeIn.categoryShowcase : [];
   const categoryShowcase = rawShowcase
-    .slice(0, 3)
+    .slice(0, 6)
     .filter((x): x is Record<string, unknown> => x !== null && typeof x === "object")
     .map((row) => {
       const cid = str(row.categoryId);

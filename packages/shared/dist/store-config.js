@@ -37,7 +37,7 @@ function normalizeStoreConfig(raw) {
     const homeIn = input.home && typeof input.home === "object" ? input.home : {};
     const rawShowcase = Array.isArray(homeIn.categoryShowcase) ? homeIn.categoryShowcase : [];
     const categoryShowcase = rawShowcase
-        .slice(0, 3)
+        .slice(0, 6)
         .filter((x) => x !== null && typeof x === "object")
         .map((row) => {
         const cid = str(row.categoryId);

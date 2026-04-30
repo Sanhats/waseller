@@ -8,10 +8,16 @@ exports.bindTransientRedisSocketErrors = bindTransientRedisSocketErrors;
 const node_fs_1 = require("node:fs");
 const bullmq_1 = require("bullmq");
 const ioredis_1 = __importDefault(require("ioredis"));
-/** Cierres de TCP por idle, redeploy o balanceador; ioredis/BullMQ reconectan. */
+/**
+ * Errores de socket que ioredis/BullMQ suelen reintentar sin acción humana inmediata.
+ * Incluye `ECONNREFUSED` (p. ej. Redis apagado en local sin Docker) para no spamear stderr en cada cola.
+ */
 function isTransientRedisSocketError(err) {
     const code = err && typeof err === "object" && "code" in err ? err.code : undefined;
-    return code === "ECONNRESET" || code === "EPIPE" || code === "ETIMEDOUT";
+    return (code === "ECONNRESET" ||
+        code === "EPIPE" ||
+        code === "ETIMEDOUT" ||
+        code === "ECONNREFUSED");
 }
 /**
  * BullMQ reenvía errores de Redis al `Queue`/`Worker`. Sin ningún listener, Node trata `error` como no manejado y spamea stderr.

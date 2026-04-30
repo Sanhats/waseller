@@ -234,9 +234,15 @@ export async function compressImageToDataUrl(
 export async function uploadImagesToSupabase(files: File[], tenantId?: string): Promise<string[]> {
   const form = new FormData();
   for (const f of files) form.append("files", f, f.name);
+  const headers: Record<string, string> = {};
+  if (tenantId) headers["x-tenant-id"] = tenantId;
+  if (typeof window !== "undefined") {
+    const token = window.localStorage.getItem("ws_auth_token") ?? "";
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+  }
   const res = await fetch("/api/uploads/images", {
     method: "POST",
-    headers: tenantId ? { "x-tenant-id": tenantId } : undefined,
+    headers: Object.keys(headers).length > 0 ? headers : undefined,
     body: form,
   });
   if (!res.ok) {

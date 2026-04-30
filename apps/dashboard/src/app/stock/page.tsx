@@ -1043,7 +1043,11 @@ export default function StockPage() {
 
               <tbody>
                 {loading ? (
-                  <StockTableSkeleton rows={14} axisCount={axes.length} baseCols={7} />
+                  <StockTableSkeleton
+                    rows={14}
+                    axisCount={axes.length}
+                    baseCols={7}
+                  />
                 ) : displayedRows.length === 0 ? (
                   <tr>
                     <td
@@ -1218,7 +1222,9 @@ export default function StockPage() {
                             </span>
                             <button
                               type="button"
-                              onClick={() => void navigator.clipboard.writeText(row.sku)}
+                              onClick={() =>
+                                void navigator.clipboard.writeText(row.sku)
+                              }
                               style={{
                                 padding: "3px 6px",
                                 borderRadius: 8,

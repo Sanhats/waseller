@@ -50,7 +50,7 @@ export type StoreConfig = {
     };
     /** Bloques editables de la home pública (p. ej. categorías con imagen). */
     home?: {
-        /** Hasta 3 entradas en orden; vacío = la tienda usa categorías raíz por defecto. */
+        /** Hasta 6 entradas en orden; vacío = la tienda usa categorías raíz por defecto. */
         categoryShowcase?: Array<{
             categoryId?: string;
             imageUrl?: string;

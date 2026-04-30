@@ -12,8 +12,6 @@ export function TiendaNavbar({
   categories,
   primaryColor,
   headingFont,
-  topBarCenter,
-  currencyLabel,
 }: {
   slug: string;
   storeName: string;
@@ -21,8 +19,6 @@ export function TiendaNavbar({
   categories: Category[];
   primaryColor: string;
   headingFont?: string;
-  topBarCenter?: string;
-  currencyLabel?: string;
 }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
@@ -36,126 +32,94 @@ export function TiendaNavbar({
   useEffect(() => {
     if (drawerOpen) document.body.style.overflow = "hidden";
     else document.body.style.overflow = "";
-    return () => { document.body.style.overflow = ""; };
+    return () => {
+      document.body.style.overflow = "";
+    };
   }, [drawerOpen]);
 
   const catalogoHref = `/tienda/${slug}/catalogo`;
+  const homeHref = `/tienda/${slug}`;
+
+  const brandBlock = (
+    <Link href={homeHref} className="flex max-w-[min(200px,46vw)] items-center gap-2.5 no-underline sm:max-w-xs" tabIndex={0}>
+      {logoUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={logoUrl} alt="" className="h-8 w-auto shrink-0 object-contain sm:h-9" />
+      ) : null}
+      <span
+        className={`min-w-0 truncate text-left text-[11px] font-bold uppercase leading-tight tracking-[0.14em] sm:text-xs sm:tracking-[0.16em] ${logoUrl ? "hidden sm:inline" : ""}`}
+        style={{
+          fontFamily: headingFont ? `"${headingFont}", serif` : "var(--ts-heading-font, inherit)",
+          color: "var(--ts-text, #1a1a1a)",
+        }}
+      >
+        {storeName}
+      </span>
+    </Link>
+  );
 
   return (
     <>
-      <div
-        className="text-[10px] font-medium"
-        style={{ backgroundColor: "var(--ts-primary)", color: "var(--ts-on-primary)" }}
-      >
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-2 px-4 py-1.5 sm:px-6 lg:px-8">
-          <span className="shrink-0 tabular-nums opacity-90">{(currencyLabel || "$").trim()}</span>
-          <span className="min-w-0 flex-1 truncate text-center opacity-85">
-            {topBarCenter?.trim() || "\u00A0"}
-          </span>
-          <Link
-            href={catalogoHref}
-            className="shrink-0 whitespace-nowrap no-underline opacity-90 hover:underline"
-            style={{ color: "var(--ts-on-primary)" }}
-          >
-            Catálogo
-          </Link>
-        </div>
-      </div>
-
       <header
         className="sticky top-0 z-40 transition-all duration-300"
         style={{
           backgroundColor: scrolled
-            ? "color-mix(in srgb, var(--ts-bg, #fff) 96%, transparent)"
+            ? "color-mix(in srgb, var(--ts-bg, #fff) 94%, transparent)"
             : "var(--ts-bg, #fff)",
           borderBottom: `1px solid ${scrolled ? "var(--ts-border, #e5e5e5)" : "transparent"}`,
-          backdropFilter: scrolled ? "blur(16px)" : "none",
+          backdropFilter: scrolled ? "blur(14px)" : "none",
         }}
       >
-        <div className="relative mx-auto flex h-16 max-w-7xl items-center px-4 sm:px-6 lg:px-8">
-
-          {/* ── LEFT: categories (desktop) / hamburger (mobile) ── */}
-          <div className="flex flex-1 items-center gap-0">
-            {/* Hamburger — always visible */}
+        <div className="relative mx-auto flex h-[3.35rem] w-full max-w-[min(90rem,calc(100%-1rem))] items-center px-3 sm:h-16 sm:px-4 lg:px-6">
+          <div className="z-20 flex shrink-0 items-center gap-1 sm:gap-2">
             <button
               type="button"
               onClick={() => setDrawerOpen(true)}
-              className="mr-3 flex h-10 w-10 flex-col items-center justify-center gap-[5px] rounded-lg transition-opacity hover:opacity-60"
+              className="flex h-10 w-10 flex-col items-center justify-center gap-[5px] rounded-lg transition-opacity hover:opacity-60"
               aria-label="Abrir menú"
             >
-              <span
-                className="block h-px w-5 origin-center transition-transform"
-                style={{ backgroundColor: "var(--ts-text, #1a1a1a)" }}
-              />
-              <span
-                className="block h-px w-5 origin-center transition-transform"
-                style={{ backgroundColor: "var(--ts-text, #1a1a1a)" }}
-              />
-              <span
-                className="block h-px w-3.5 origin-center transition-transform self-start"
-                style={{ backgroundColor: "var(--ts-text, #1a1a1a)" }}
-              />
+              <span className="block h-px w-5" style={{ backgroundColor: "var(--ts-text, #1a1a1a)" }} />
+              <span className="block h-px w-5" style={{ backgroundColor: "var(--ts-text, #1a1a1a)" }} />
+              <span className="block h-px w-3.5 self-start" style={{ backgroundColor: "var(--ts-text, #1a1a1a)" }} />
             </button>
+            <div className="hidden lg:block">{brandBlock}</div>
+          </div>
 
-            {/* Categories inline — desktop only */}
-            {categories.length > 0 && (
-              <nav className="hidden items-center gap-1 lg:flex" aria-label="Categorías">
-                {categories.slice(0, 5).map((cat) => (
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center lg:pointer-events-auto lg:static lg:mx-4 lg:flex-1 lg:justify-center">
+            <div className="pointer-events-auto lg:hidden">{brandBlock}</div>
+            {categories.length > 0 ? (
+              <nav className="pointer-events-auto hidden max-w-2xl items-center gap-0.5 overflow-x-auto px-2 lg:flex" aria-label="Categorías">
+                {categories.slice(0, 6).map((cat) => (
                   <Link
                     key={cat.id}
                     href={`/tienda/${slug}/catalogo?categoryId=${cat.id}`}
-                    className="whitespace-nowrap rounded-md px-3 py-1.5 text-[11px] font-semibold uppercase tracking-widest no-underline transition-all duration-200 hover:opacity-100"
-                    style={{ color: "var(--ts-muted, #888)", letterSpacing: "0.08em" }}
+                    className="shrink-0 whitespace-nowrap rounded-md px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] no-underline transition-colors hover:bg-[color-mix(in_srgb,var(--ts-text)_6%,transparent)]"
+                    style={{ color: "var(--ts-muted, #888)" }}
                   >
                     {cat.name}
                   </Link>
                 ))}
-                {categories.length > 5 && (
+                {categories.length > 6 ? (
                   <button
                     type="button"
                     onClick={() => setDrawerOpen(true)}
-                    className="rounded-md px-2 py-1.5 text-[11px] font-semibold uppercase tracking-widest transition-opacity hover:opacity-60"
-                    style={{ color: "var(--ts-muted, #888)" }}
+                    className="shrink-0 rounded-md px-2 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] transition-opacity hover:opacity-70"
+                    style={{ color: "var(--ts-muted)" }}
                   >
-                    +{categories.length - 5} más
+                    +{categories.length - 6}
                   </button>
-                )}
+                ) : null}
               </nav>
-            )}
+            ) : null}
           </div>
 
-          {/* ── CENTER: Brand name ── */}
-          <div className="absolute left-1/2 -translate-x-1/2">
-            <Link href={`/tienda/${slug}`} className="block no-underline" tabIndex={0}>
-              {logoUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={logoUrl}
-                  alt={storeName}
-                  className="h-8 w-auto object-contain sm:h-9"
-                />
-              ) : (
-                <span
-                  className="block whitespace-nowrap text-lg font-bold sm:text-xl"
-                  style={{
-                    fontFamily: headingFont ? `"${headingFont}", serif` : "var(--ts-heading-font, inherit)",
-                    color: "var(--ts-text, #1a1a1a)",
-                    letterSpacing: "0.1em",
-                  }}
-                >
-                  {storeName.toUpperCase()}
-                </span>
-              )}
-            </Link>
-          </div>
-
-          {/* ── RIGHT: buscar + catálogo ── */}
-          <div className="flex flex-1 items-center justify-end gap-1 sm:gap-2">
+          <div className="z-20 ml-auto flex items-center gap-1 sm:gap-2">
             <Link
               href={catalogoHref}
-              className="flex h-10 w-10 items-center justify-center rounded-md no-underline transition-opacity hover:opacity-60"
+              className="flex h-10 w-10 items-center justify-center rounded-lg no-underline transition-colors hover:bg-[color-mix(in_srgb,var(--ts-text)_6%,transparent)]"
               aria-label="Buscar en catálogo"
               title="Buscar"
+              style={{ color: "var(--ts-text)" }}
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
                 <circle cx="11" cy="11" r="7" />
@@ -164,11 +128,10 @@ export function TiendaNavbar({
             </Link>
             <Link
               href={catalogoHref}
-              className="hidden rounded-none border px-3 py-2 text-[10px] font-bold uppercase tracking-widest no-underline transition-all duration-200 hover:opacity-80 sm:inline-block"
+              className="hidden rounded-md px-3 py-2 text-[10px] font-bold uppercase tracking-[0.12em] no-underline transition-all duration-200 hover:brightness-95 sm:inline-block"
               style={{
-                borderColor: "var(--ts-primary)",
-                color: "var(--ts-primary)",
-                letterSpacing: "0.1em",
+                backgroundColor: "var(--ts-primary)",
+                color: "var(--ts-on-primary)",
               }}
             >
               Catálogo
@@ -177,8 +140,6 @@ export function TiendaNavbar({
         </div>
       </header>
 
-      {/* ── DRAWER ── */}
-      {/* Backdrop */}
       <div
         className={`fixed inset-0 z-50 backdrop-blur-sm transition-opacity duration-300 ${
           drawerOpen ? "opacity-100" : "pointer-events-none opacity-0"
@@ -188,87 +149,80 @@ export function TiendaNavbar({
         aria-hidden
       />
 
-      {/* Panel */}
       <aside
-        className={`fixed left-0 top-0 z-50 flex h-full w-72 flex-col bg-white transition-transform duration-300 ease-out ${
+        className={`fixed left-0 top-0 z-50 flex h-full w-[min(20rem,88vw)] flex-col transition-transform duration-300 ease-out ${
           drawerOpen ? "translate-x-0" : "-translate-x-full"
         }`}
-        style={{ backgroundColor: "var(--ts-surface, #fff)" }}
-        aria-label="Navegación de categorías"
+        style={{
+          backgroundColor: "var(--ts-surface, #fff)",
+          boxShadow: drawerOpen ? "8px 0 32px color-mix(in srgb, var(--ts-text) 12%, transparent)" : undefined,
+        }}
+        aria-label="Navegación"
       >
-        {/* Drawer header */}
-        <div
-          className="flex items-center justify-between border-b px-6 py-5"
-          style={{ borderColor: "var(--ts-border, #e5e5e5)" }}
-        >
-          <span
-            className="text-xs font-bold uppercase tracking-[0.18em]"
-            style={{ color: "var(--ts-muted, #888)" }}
-          >
-            Categorías
-          </span>
+        <div className="flex items-center justify-between border-b px-5 py-4" style={{ borderColor: "var(--ts-border)" }}>
+          <div className="min-w-0">{brandBlock}</div>
           <button
             type="button"
             onClick={() => setDrawerOpen(false)}
-            className="flex h-8 w-8 items-center justify-center rounded-full transition-colors hover:bg-[color-mix(in_srgb,var(--ts-text)_6%,transparent)]"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-[color-mix(in_srgb,var(--ts-text)_6%,transparent)]"
             aria-label="Cerrar menú"
           >
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-              <path
-                d="M1 1l12 12M13 1L1 13"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-              />
+              <path d="M1 1l12 12M13 1L1 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
             </svg>
           </button>
         </div>
 
-        {/* Drawer body */}
-        <nav className="flex-1 overflow-y-auto py-4" aria-label="Categorías">
-          {/* Ver todo */}
+        <nav className="flex-1 overflow-y-auto py-3" aria-label="Categorías y enlaces">
           <Link
-            href={`/tienda/${slug}/catalogo`}
+            href={homeHref}
             onClick={() => setDrawerOpen(false)}
-            className="flex items-center justify-between px-6 py-3.5 text-sm font-semibold no-underline transition-colors hover:bg-[color-mix(in_srgb,var(--ts-text)_4%,transparent)]"
-            style={{ color: "var(--ts-text, #1a1a1a)", borderLeft: `3px solid ${primaryColor}` }}
+            className="mx-4 mb-2 flex items-center justify-between rounded-md px-3 py-2.5 text-sm font-medium no-underline transition-colors hover:bg-[color-mix(in_srgb,var(--ts-text)_5%,transparent)]"
+            style={{ color: "var(--ts-text)" }}
           >
-            Ver todo el catálogo
-            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-              <path d="M2 6h8M7 3l3 3-3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+            Inicio
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+              <path d="M2 6h8M7 3l3 3-3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </Link>
+          <Link
+            href={catalogoHref}
+            onClick={() => setDrawerOpen(false)}
+            className="mx-4 mb-3 flex items-center justify-between rounded-md px-3 py-2.5 text-sm font-semibold no-underline transition-colors hover:bg-[color-mix(in_srgb,var(--ts-text)_5%,transparent)]"
+            style={{ color: "var(--ts-text)", borderLeft: `3px solid ${primaryColor}` }}
+          >
+            Ver catálogo completo
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+              <path d="M2 6h8M7 3l3 3-3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </Link>
 
-          {/* Divider */}
-          <div className="mx-6 my-3 h-px" style={{ backgroundColor: "var(--ts-border, #e5e5e5)" }} />
-
-          {categories.map((cat) => (
-            <Link
-              key={cat.id}
-              href={`/tienda/${slug}/catalogo?categoryId=${cat.id}`}
-              onClick={() => setDrawerOpen(false)}
-              className="flex items-center justify-between px-6 py-3 text-sm no-underline transition-colors hover:bg-[color-mix(in_srgb,var(--ts-text)_4%,transparent)]"
-              style={{ color: "var(--ts-text, #1a1a1a)" }}
-            >
-              {cat.name}
-              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" style={{ color: "var(--ts-muted)" }}>
-                <path d="M1.5 5h7M6 2l3 3-3 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-            </Link>
-          ))}
+          {categories.length > 0 ? (
+            <>
+              <p className="mb-1 px-5 pt-2 text-[10px] font-bold uppercase tracking-[0.18em]" style={{ color: "var(--ts-muted)" }}>
+                Categorías
+              </p>
+              <div className="mx-4 my-2 h-px" style={{ backgroundColor: "var(--ts-border)" }} />
+              {categories.map((cat) => (
+                <Link
+                  key={cat.id}
+                  href={`/tienda/${slug}/catalogo?categoryId=${cat.id}`}
+                  onClick={() => setDrawerOpen(false)}
+                  className="mx-2 flex items-center justify-between rounded-md px-4 py-2.5 text-sm no-underline transition-colors hover:bg-[color-mix(in_srgb,var(--ts-text)_4%,transparent)]"
+                  style={{ color: "var(--ts-text)" }}
+                >
+                  {cat.name}
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none" style={{ color: "var(--ts-muted)" }} aria-hidden>
+                    <path d="M1.5 5h7M6 2l3 3-3 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </Link>
+              ))}
+            </>
+          ) : null}
         </nav>
 
-        {/* Drawer footer */}
-        <div
-          className="border-t px-6 py-5"
-          style={{ borderColor: "var(--ts-border, #e5e5e5)" }}
-        >
-          <span
-            className="text-[10px] uppercase tracking-[0.15em]"
-            style={{ color: "var(--ts-muted, #999)" }}
-          >
-            {storeName}
-          </span>
+        <div className="border-t px-5 py-4 text-[10px] uppercase tracking-[0.12em]" style={{ borderColor: "var(--ts-border)", color: "var(--ts-muted)" }}>
+          {storeName}
         </div>
       </aside>
     </>
