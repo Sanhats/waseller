@@ -8,6 +8,7 @@ import { ProductsService } from "../../../backend/src/modules/products/products.
 import { CategoriesService } from "../../../backend/src/modules/categories/categories.service";
 import { MessageReceiverService } from "../../../backend/src/modules/messages/receiver.service";
 import { TiendaConfigService } from "../../../backend/src/modules/tienda-config/tienda-config.service";
+import { OrdersService } from "../../../backend/src/modules/orders/orders.service";
 
 export type BackendServices = {
   leads: LeadsService;
@@ -20,6 +21,7 @@ export type BackendServices = {
   categories: CategoriesService;
   messages: MessageReceiverService;
   tiendaConfig: TiendaConfigService;
+  orders: OrdersService;
 };
 
 let cached: BackendServices | null = null;
@@ -27,7 +29,8 @@ let cached: BackendServices | null = null;
 export function getBackendServices(): BackendServices {
   if (!cached) {
     const leads = new LeadsService();
-    const mercadoPago = new MercadoPagoService(leads);
+    const orders = new OrdersService();
+    const mercadoPago = new MercadoPagoService(leads, orders);
     const ops = new OpsService();
     const onboarding = new OnboardingService(mercadoPago, ops);
     const conversations = new ConversationsService(mercadoPago);
@@ -36,7 +39,7 @@ export function getBackendServices(): BackendServices {
     const categories = new CategoriesService();
     const messages = new MessageReceiverService();
     const tiendaConfig = new TiendaConfigService();
-    cached = { leads, mercadoPago, ops, onboarding, conversations, dashboard, products, categories, messages, tiendaConfig };
+    cached = { leads, mercadoPago, ops, onboarding, conversations, dashboard, products, categories, messages, tiendaConfig, orders };
   }
   return cached;
 }

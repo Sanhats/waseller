@@ -5,6 +5,7 @@ import { leadWorker } from "./lead.worker";
 import { senderWorker } from "./sender.worker";
 import { stockSyncWorker } from "./stock-sync.worker";
 import { reservationExpiryWorker } from "./reservation-expiry.worker";
+import { orderReservationExpiryWorker } from "./order-reservation-expiry.worker";
 
 const bullWorkersForErrorHandling = [
   messageProcessorWorker,
@@ -12,7 +13,8 @@ const bullWorkersForErrorHandling = [
   leadWorker,
   senderWorker,
   stockSyncWorker,
-  reservationExpiryWorker
+  reservationExpiryWorker,
+  orderReservationExpiryWorker
 ];
 for (const w of bullWorkersForErrorHandling) {
   bindTransientRedisSocketErrors(w, `BullMQ Worker:${w.name}`);
@@ -41,5 +43,6 @@ console.log("Workers running", {
   leadWorker: !!leadWorker,
   senderWorker: !!senderWorker,
   stockSyncWorker: !!stockSyncWorker,
-  reservationExpiryWorker: !!reservationExpiryWorker
+  reservationExpiryWorker: !!reservationExpiryWorker,
+  orderReservationExpiryWorker: !!orderReservationExpiryWorker
 });

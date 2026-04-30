@@ -53,6 +53,10 @@ async function resolveAuth(
     }
     return { tenantId };
   }
+  /** Storefront público: el tenantId se resuelve dentro del handler vía `slug`, no por header. */
+  if (path.startsWith("/public/") || path === "/public") {
+    return { tenantId: "" };
+  }
 
   const header = req.headers.get("authorization");
   if (!header?.startsWith("Bearer ")) {
@@ -532,8 +536,200 @@ export async function dispatchApi(
       return NextResponse.json(await s.tiendaConfig.upsertConfig(tenantId, body));
     }
 
+    /* -------- Orders (admin) -------- */
+    if (path === "/orders" && method === "GET") {
+      requireRole(auth?.role, ["admin", "vendedor", "viewer"]);
+      const statusParam = String(url.searchParams.get("status") ?? "all").trim();
+      const allowedStatus = new Set([
+        "all",
+        "pending_payment",
+        "paid",
+        "failed",
+        "cancelled",
+        "expired",
+        "fulfilled",
+        "refunded"
+      ]);
+      const status = allowedStatus.has(statusParam) ? statusParam : "all";
+      const search = url.searchParams.get("search")?.trim() || undefined;
+      const limit = Number(url.searchParams.get("limit") ?? 50);
+      const offset = Number(url.searchParams.get("offset") ?? 0);
+      const data = await s.orders.listOrdersByTenant(tenantId, {
+        status: status as never,
+        search,
+        limit: Number.isFinite(limit) ? limit : 50,
+        offset: Number.isFinite(offset) ? offset : 0
+      });
+      return NextResponse.json(data);
+    }
+    const orderById = /^\/orders\/([^/]+)$/.exec(path);
+    if (orderById && method === "GET") {
+      requireRole(auth?.role, ["admin", "vendedor", "viewer"]);
+      const detail = await s.orders.getOrderDetail(tenantId, orderById[1]);
+      if (!detail) return jsonMessage(404, "Order no encontrada");
+      return NextResponse.json(detail);
+    }
+    const orderFulfill = /^\/orders\/([^/]+)\/fulfill$/.exec(path);
+    if (orderFulfill && method === "PATCH") {
+      requireRole(auth?.role, ["admin", "vendedor"]);
+      const ok = await s.orders.markOrderFulfilled(tenantId, orderFulfill[1]);
+      return NextResponse.json({ ok });
+    }
+    const orderCancel = /^\/orders\/([^/]+)\/cancel$/.exec(path);
+    if (orderCancel && method === "PATCH") {
+      requireRole(auth?.role, ["admin", "vendedor"]);
+      const ok = await s.orders.markOrderUnpaid(tenantId, orderCancel[1], "cancelled");
+      if (!ok) return jsonMessage(409, "Solo se puede cancelar una Order pendiente de pago");
+      return NextResponse.json({ ok });
+    }
+
+    /* -------- Storefront público (sin JWT) -------- */
+    if (path === "/public/checkout" && method === "POST") {
+      const result = await handlePublicCheckout(req, url, s);
+      return result;
+    }
+    const publicOrder = /^\/public\/orders\/([^/]+)\/status$/.exec(path);
+    if (publicOrder && method === "GET") {
+      const result = await handlePublicOrderStatus(publicOrder[1], url, s);
+      return result;
+    }
+
     return jsonMessage(404, "Not found");
   } catch (e) {
     return httpExceptionToResponse(e);
   }
+}
+
+/** Resuelve el origin del request para armar back_urls absolutas hacia las páginas del storefront. */
+function resolveStorefrontOrigin(req: NextRequest, url: URL): string {
+  const explicit = String(process.env.PUBLIC_STOREFRONT_BASE_URL ?? "").trim().replace(/\/$/, "");
+  if (explicit) return explicit;
+  const forwardedProto = req.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
+  const forwardedHost = req.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
+  if (forwardedHost) {
+    return `${forwardedProto || url.protocol.replace(":", "")}://${forwardedHost}`;
+  }
+  return url.origin;
+}
+
+async function handlePublicCheckout(
+  req: NextRequest,
+  url: URL,
+  s: ReturnType<typeof getBackendServices>
+): Promise<NextResponse> {
+  const body = (await req.json().catch(() => ({}))) as {
+    slug?: string;
+    items?: Array<{ variantId?: string; quantity?: number }>;
+    buyer?: { name?: string; email?: string; phone?: string; notes?: string };
+  };
+  const slug = String(body.slug ?? "").trim();
+  if (!slug) return NextResponse.json({ message: "Falta el slug de la tienda." }, { status: 400 });
+
+  const { prisma } = await import("@waseller/db");
+  const tenant = await prisma.tenant.findUnique({
+    where: { publicCatalogSlug: slug },
+    select: { id: true, name: true }
+  });
+  if (!tenant) return NextResponse.json({ message: "Tienda no encontrada." }, { status: 404 });
+
+  const items = (body.items ?? []).map((it) => ({
+    variantId: String(it?.variantId ?? "").trim(),
+    quantity: Number(it?.quantity ?? 0)
+  }));
+  const buyer = {
+    name: String(body.buyer?.name ?? "").trim(),
+    email: String(body.buyer?.email ?? "").trim(),
+    phone: String(body.buyer?.phone ?? "").trim(),
+    notes: body.buyer?.notes ? String(body.buyer.notes) : undefined
+  };
+
+  const created = await s.orders.createPendingOrder({
+    tenantId: tenant.id,
+    items,
+    buyer,
+    metadata: { slug, source: "storefront" }
+  });
+
+  const origin = resolveStorefrontOrigin(req, url);
+  const orderId = created.order.id;
+  const backUrls = {
+    success: `${origin}/tienda/${slug}/checkout/exito?order_id=${orderId}`,
+    failure: `${origin}/tienda/${slug}/checkout/fracaso?order_id=${orderId}`,
+    pending: `${origin}/tienda/${slug}/checkout/pendiente?order_id=${orderId}`
+  };
+
+  let preference: { checkoutUrl: string; paymentAttemptId: string; preferenceId: string };
+  try {
+    preference = await s.mercadoPago.createOrderCheckoutPreference({
+      tenantId: tenant.id,
+      orderId,
+      externalReference: created.order.externalReference,
+      items: created.items.map((it) => ({
+        title: `${it.productName} (${it.variantSku})`,
+        quantity: it.quantity,
+        unitPrice: it.unitPrice
+      })),
+      payer: {
+        name: buyer.name,
+        email: buyer.email,
+        phone: buyer.phone
+      },
+      backUrls,
+      metadata: { slug }
+    });
+  } catch (e) {
+    /** Si MP falla, liberamos el stock reservado para no dejar la orden colgada. */
+    await s.orders.markOrderUnpaid(tenant.id, orderId, "failed").catch(() => undefined);
+    throw e;
+  }
+
+  /** Encolamos expiración con delay = TTL para liberar stock si MP no confirma. */
+  try {
+    const { orderReservationExpiryQueue } = await import("@waseller/queue");
+    const expiresAt = created.order.expiresAt ? new Date(created.order.expiresAt).getTime() : Date.now() + 15 * 60 * 1000;
+    const delay = Math.max(1000, expiresAt - Date.now());
+    await orderReservationExpiryQueue.add(
+      "order-expiry",
+      { tenantId: tenant.id, orderId },
+      { jobId: `order_expiry_${orderId}`, delay }
+    );
+  } catch (e) {
+    /** Si Redis no está disponible (dev local), no abortamos la compra; el TTL no se aplicará. */
+    console.error("[checkout] no se pudo encolar expiración:", e);
+  }
+
+  return NextResponse.json({
+    orderId,
+    externalReference: created.order.externalReference,
+    checkoutUrl: preference.checkoutUrl,
+    totalAmount: created.order.totalAmount,
+    currency: created.order.currency
+  });
+}
+
+async function handlePublicOrderStatus(
+  orderId: string,
+  url: URL,
+  s: ReturnType<typeof getBackendServices>
+): Promise<NextResponse> {
+  const slug = String(url.searchParams.get("slug") ?? "").trim();
+  if (!slug) return NextResponse.json({ message: "Falta slug." }, { status: 400 });
+  const { prisma } = await import("@waseller/db");
+  const tenant = await prisma.tenant.findUnique({
+    where: { publicCatalogSlug: slug },
+    select: { id: true }
+  });
+  if (!tenant) return NextResponse.json({ message: "Tienda no encontrada." }, { status: 404 });
+  const result = await s.orders.getOrderById(tenant.id, orderId);
+  if (!result) return NextResponse.json({ message: "Order no encontrada." }, { status: 404 });
+  /** Solo exponemos status + monto (no los datos del comprador) para evitar fishing por enumeración. */
+  return NextResponse.json({
+    orderId: result.order.id,
+    status: result.order.status,
+    totalAmount: result.order.totalAmount,
+    currency: result.order.currency,
+    paidAt: result.order.paidAt,
+    expiresAt: result.order.expiresAt,
+    itemCount: result.items.reduce((acc, it) => acc + it.quantity, 0)
+  });
 }

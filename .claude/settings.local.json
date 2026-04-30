@@ -9,7 +9,14 @@
       "Bash(echo \"EXITCODE=$?\")",
       "Bash(echo \"SHARED=$?\")",
       "Bash(echo \"EXIT=$?\")",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(npx prisma *)",
+      "Bash(echo \"FMT=$?\")",
+      "Bash(echo \"EXIT_DASH=$?\")",
+      "Bash(echo \"EXIT_BACK=$?\")",
+      "Bash(echo \"EXIT_W=$?\")",
+      "Bash(echo \"EXIT_D=$?\")",
+      "Bash(echo \"EXIT_B=$?\")"
     ]
   }
 }

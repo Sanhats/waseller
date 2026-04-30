@@ -95,8 +95,8 @@ function SetupCard({
 }
 
 /**
- * Flujo de configuración del negocio (WhatsApp, Mercado Pago, contexto + crew, catálogo).
- * Pensado para la ruta /ops (Negocio). El estado “completo” viene de `allCompleted` en el backend (cuatro pasos).
+ * Flujo de configuración del negocio en /ops: WhatsApp (leads en conversaciones), Mercado Pago y catálogo.
+ * Los datos del negocio (rubro, tono, etc.) son opcionales y no bloquean el progreso.
  */
 export function BusinessOnboarding() {
   const [status, setStatus] = useState<OnboardingStatus | null>(null);
@@ -227,22 +227,14 @@ export function BusinessOnboarding() {
     Boolean(status?.steps.find((s) => s.key === key)?.completed);
   const waDone = stepDone("connect_whatsapp");
   const mpDone = stepDone("connect_mercadopago");
-  const businessDone = stepDone("configure_business");
   const catalogDone = stepDone("create_catalog");
-  const businessStep = status?.steps.find((s) => s.key === "configure_business");
   const catalogStep = status?.steps.find((s) => s.key === "create_catalog");
   const completedCount = status?.steps.filter((s) => s.completed).length ?? 0;
-  const totalSteps = status?.steps.length ?? 4;
+  const totalSteps = status?.steps.length ?? 3;
 
   const showWhatsapp = Boolean(status && !waDone);
   const showMercadoPago = Boolean(status && waDone && !mpDone);
-  const showBusinessContext = Boolean(
-    status && waDone && mpDone && !businessDone,
-  );
-  const showCatalog = Boolean(
-    status && waDone && mpDone && businessDone && !catalogDone,
-  );
-  /** Una sola fuente de verdad con el backend: no se muestra “completo” hasta los cuatro pasos. */
+  const showCatalog = Boolean(status && waDone && mpDone && !catalogDone);
   const showAllDone = Boolean(status?.allCompleted);
 
   const connectWhatsapp = async () => {
@@ -351,6 +343,10 @@ export function BusinessOnboarding() {
             {status.tenantName}
           </p>
         ) : null}
+        <p className="mt-2 max-w-2xl text-body text-muted-ui">
+          Vinculá WhatsApp para recibir en <strong className="font-medium text-[var(--color-text)]">Chats</strong> a los
+          clientes interesados. Las respuestas son manuales; no activamos bot ni agente automático por ahora.
+        </p>
       </header>
 
       {loading ? (
@@ -400,7 +396,7 @@ export function BusinessOnboarding() {
           <SetupCard
             stepLabel={`Paso 1 de ${totalSteps}`}
             title="Vincular WhatsApp"
-            description="Conectá la sesión del negocio para recibir y enviar mensajes desde Waseller."
+            description="Conectá el número del negocio: los mensajes de clientes interesados aparecen en Chats. Respondés desde el panel; no hay respuestas automáticas."
           >
             <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
               <div className="space-y-1 text-body">
@@ -515,39 +511,11 @@ export function BusinessOnboarding() {
           </SetupCard>
         ) : null}
 
-        {showBusinessContext ? (
-          <SetupCard
-            stepLabel={`Paso 3 de ${totalSteps}`}
-            title="Contexto de la tienda"
-            description={`Rubro, pagos, variantes y un bloque para el asistente (tono + entregas) que se envía a waseller-crew. El nombre “${status?.tenantName ?? "tu negocio"}” se usa por defecto si no cargás otro.`}
-          >
-            {status?.tenantKnowledgePersisted === true &&
-            status?.crewCommercialContextComplete === false ? (
-              <p
-                className="rounded-md border border-[var(--color-warning)]/40 bg-[var(--color-warning-bg)] px-3 py-2 text-body text-[var(--color-text)]"
-                role="status"
-              >
-                El onboarding sigue abierto en este paso: ya hay datos guardados, pero falta{" "}
-                <strong className="font-semibold">tono</strong> y{" "}
-                <strong className="font-semibold">entregas</strong> en el paso &quot;Asistente&quot; del formulario
-                para cerrarlo y que el crew reciba el contexto completo.
-              </p>
-            ) : null}
-            <div className="min-w-0 max-w-full overflow-x-auto">
-              <BusinessContextWizard
-                variant="embedded"
-                hideMercadoPagoPanel={mpDone}
-                onSaveSuccess={() => void reloadOnboardingRef.current?.()}
-              />
-            </div>
-          </SetupCard>
-        ) : null}
-
         {showCatalog ? (
           <SetupCard
-            stepLabel={`Paso 4 de ${totalSteps}`}
+            stepLabel={`Paso 3 de ${totalSteps}`}
             title="Cargar productos"
-            description="Necesitamos al menos 3 productos en el catálogo para recomendaciones y stock coherentes."
+            description="Al menos 3 productos para cotizar, compartir catálogo y registrar ventas con coherencia de stock."
           >
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-body text-muted-ui">
@@ -575,8 +543,8 @@ export function BusinessOnboarding() {
                     Configuración inicial completa
                   </h2>
                   <p className="text-body text-muted-ui">
-                    Los cuatro pasos están completos (incluido tono y entregas para el asistente). Podés operar desde
-                    Leads y Conversaciones.
+                    WhatsApp, Mercado Pago y catálogo están listos. Los clientes interesados te escriben y los ves en
+                    Chats; seguís respondiendo vos.
                   </p>
                   <div className="flex min-w-0 flex-wrap gap-3 pt-2">
                     <Link
@@ -611,6 +579,25 @@ export function BusinessOnboarding() {
               </div>
             </section>
           </>
+        ) : null}
+
+        {status && !loading ? (
+          <details className="min-w-0 rounded-lg border border-border bg-surface p-4 shadow-sm ring-1 ring-black/[0.02] md:p-5">
+            <summary className="cursor-pointer list-none text-section marker:content-none [&::-webkit-details-marker]:hidden">
+              Datos del negocio <span className="text-body font-normal text-muted-ui">(opcional)</span>
+            </summary>
+            <p className="mt-2 text-body text-muted-ui">
+              Rubro, envíos y textos de ayuda para tu equipo y la tienda pública. No es obligatorio para recibir chats ni
+              para cerrar esta guía.
+            </p>
+            <div className="mt-4 min-w-0 max-w-full overflow-x-auto">
+              <BusinessContextWizard
+                variant="embedded"
+                hideMercadoPagoPanel={mpDone}
+                onSaveSuccess={() => void reloadOnboardingRef.current?.()}
+              />
+            </div>
+          </details>
         ) : null}
       </div>
     </>

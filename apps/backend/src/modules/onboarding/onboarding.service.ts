@@ -4,7 +4,7 @@ import { getWhatsappServiceBaseUrl, isTenantCrewCommercialContextComplete } from
 import { MercadoPagoService } from "../mercado-pago/mercado-pago.service";
 import { OpsService } from "../ops/ops.service";
 
-type OnboardingStepKey = "connect_whatsapp" | "connect_mercadopago" | "configure_business" | "create_catalog";
+type OnboardingStepKey = "connect_whatsapp" | "connect_mercadopago" | "create_catalog";
 
 type OnboardingStep = {
   key: OnboardingStepKey;
@@ -245,44 +245,30 @@ export class OnboardingService {
     const mercadoPagoConnected = mercadoPago.status === "connected";
     const tenantKnowledgePersisted = tenantKnowledge.persisted;
     const crewCommercialContextComplete = isTenantCrewCommercialContextComplete(tenantKnowledge.knowledge);
-    const businessProfileSaved = tenantKnowledgePersisted && crewCommercialContextComplete;
     const catalogReady = productsCount >= 3;
-    const businessStepMetric = !tenantKnowledgePersisted
-      ? "Pendiente"
-      : !crewCommercialContextComplete
-        ? "Incompleto: tono y entregas"
-        : "Guardado";
 
     const steps: OnboardingStep[] = [
       {
         key: "connect_whatsapp",
         title: "Vincular WhatsApp",
-        description: "Conectá la sesión del negocio para recibir y enviar mensajes.",
+        description:
+          "Conectá el WhatsApp del negocio: los contactos interesados llegan a Chats / Conversaciones. Respondés vos; no hay agente ni bot automático en esta etapa.",
         completed: whatsappConnected,
-        href: "/",
+        href: "/ops",
         metric: whatsappConnected ? "Listo" : "Pendiente"
       },
       {
         key: "connect_mercadopago",
         title: "Conectar Mercado Pago",
-        description: "Vinculá la cuenta para generar links de pago por conversación.",
+        description: "Vinculá la cuenta para generar links de pago desde cada conversación.",
         completed: mercadoPagoConnected,
-        href: "/",
+        href: "/ops",
         metric: mercadoPagoConnected ? "Listo" : "Pendiente"
-      },
-      {
-        key: "configure_business",
-        title: "Contexto de la tienda",
-        description:
-          "Rubro, pagos, variantes y datos para el asistente (tono + entregas): se envían a waseller-crew como contexto comercial.",
-        completed: businessProfileSaved,
-        href: "/",
-        metric: businessStepMetric
       },
       {
         key: "create_catalog",
         title: "Cargar productos",
-        description: "Creá al menos 3 productos en el catálogo para operar ventas.",
+        description: "Al menos 3 productos en el catálogo para cotizar y compartir con clientes.",
         completed: catalogReady,
         href: "/stock",
         metric: `${productsCount}/3 productos`

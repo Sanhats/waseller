@@ -4,7 +4,8 @@ export default function ConversationsIndexPage() {
       <div className="max-w-md rounded-lg border border-border bg-surface p-8 text-center shadow-sm ring-1 ring-black/[0.02]">
         <p className="text-section">Seleccioná una conversación</p>
         <p className="mt-2 text-body text-muted-ui">
-          Elegí un contacto en la lista para ver el historial, el panel de pago y responder por WhatsApp.
+          Elegí un contacto en la lista para ver el historial, el panel de pago y responder manualmente por WhatsApp
+          (clientes interesados; sin respuestas automáticas).
         </p>
       </div>
     </div>

@@ -16,6 +16,7 @@ import {
   verifyMercadoPagoWebhookSignature
 } from "../../../../../packages/shared/src";
 import { LeadsService } from "../leads/leads.service";
+import { OrdersService } from "../orders/orders.service";
 
 type MercadoPagoIntegrationRow = {
   id: string;
@@ -90,7 +91,10 @@ const buildPaymentStatusMessage = (status: string, productName: string): string 
 export class MercadoPagoService {
   private readonly logger = new Logger(MercadoPagoService.name);
 
-  constructor(private readonly leadsService: LeadsService) {}
+  constructor(
+    private readonly leadsService: LeadsService,
+    private readonly ordersService: OrdersService
+  ) {}
 
   private get clientId(): string {
     return process.env.MERCADO_PAGO_CLIENT_ID ?? "";
@@ -688,6 +692,7 @@ export class MercadoPagoService {
       select
         id,
         lead_id as "leadId",
+        order_id as "orderId",
         status::text as "status",
         title,
         metadata
@@ -700,7 +705,7 @@ export class MercadoPagoService {
         )
       order by created_at desc
       limit 1
-    `) as Array<{ id: string; leadId?: string | null; status: string; title?: string | null; metadata?: unknown }>;
+    `) as Array<{ id: string; leadId?: string | null; orderId?: string | null; status: string; title?: string | null; metadata?: unknown }>;
     const attempt = rows[0] ?? null;
     if (!attempt) return { received: true, status: "ignored" };
     const mappedStatus = this.mapPaymentStatus(payment.status);
@@ -718,6 +723,25 @@ export class MercadoPagoService {
     `;
     if (mappedStatus === "approved" && attempt.leadId && previousStatus !== "approved") {
       await this.leadsService.markAs(integration.tenantId, attempt.leadId, "vendido");
+    }
+    /** Si el attempt está vinculado a una Order del storefront, delegamos commit/release. */
+    if (attempt.orderId && previousStatus !== mappedStatus) {
+      try {
+        if (mappedStatus === "approved") {
+          await this.ordersService.markOrderPaid(integration.tenantId, attempt.orderId);
+        } else if (mappedStatus === "rejected") {
+          await this.ordersService.markOrderUnpaid(integration.tenantId, attempt.orderId, "failed");
+        } else if (mappedStatus === "cancelled") {
+          await this.ordersService.markOrderUnpaid(integration.tenantId, attempt.orderId, "cancelled");
+        }
+        /** `pending` y `error` no cambian la Order — esperamos otro webhook. */
+      } catch (e) {
+        this.logger.error(
+          `handleWebhook: error actualizando order ${attempt.orderId} a ${mappedStatus}: ${
+            e instanceof Error ? e.message : String(e)
+          }`
+        );
+      }
     }
     if (previousStatus !== mappedStatus) {
       const paymentMetadata =
@@ -832,6 +856,115 @@ export class MercadoPagoService {
     return {
       checkoutUrl: preference.init_point ?? preference.sandbox_init_point ?? "",
       paymentAttemptId
+    };
+  }
+
+  /**
+   * Crea preferencia de Mercado Pago para una Order multi-item del storefront.
+   * Persiste un PaymentAttempt vinculado a `orderId` para que el webhook pueda
+   * llamar a OrdersService.markOrderPaid()/markOrderUnpaid() al recibir el resultado.
+   */
+  async createOrderCheckoutPreference(input: {
+    tenantId: string;
+    orderId: string;
+    externalReference: string;
+    items: Array<{
+      title: string;
+      quantity: number;
+      unitPrice: number;
+      currencyId?: string;
+    }>;
+    payer: { name: string; email: string; phone?: string };
+    backUrls: { success: string; failure: string; pending: string };
+    autoReturn?: boolean;
+    metadata?: Record<string, unknown>;
+  }): Promise<{ checkoutUrl: string; paymentAttemptId: string; preferenceId: string }> {
+    const integrationRow = await this.loadIntegrationByTenant(input.tenantId);
+    if (!integrationRow || integrationRow.status !== "connected") {
+      throw new BadRequestException("No hay una cuenta de Mercado Pago conectada para este tenant.");
+    }
+    const { accessToken } = await this.refreshIfNeeded(integrationRow);
+
+    const totalAmount = input.items.reduce(
+      (acc, it) => acc + Number(it.unitPrice) * Number(it.quantity),
+      0
+    );
+    const summaryTitle =
+      input.items.length === 1
+        ? input.items[0].title
+        : `Compra de ${input.items.length} productos`;
+
+    const preferencePayload: Record<string, unknown> = {
+      items: input.items.map((it) => ({
+        title: it.title,
+        quantity: Number(it.quantity),
+        currency_id: it.currencyId ?? "ARS",
+        unit_price: Number(it.unitPrice)
+      })),
+      external_reference: input.externalReference,
+      payer: {
+        name: input.payer.name,
+        email: input.payer.email,
+        ...(input.payer.phone ? { phone: { number: input.payer.phone } } : {})
+      },
+      back_urls: {
+        success: input.backUrls.success,
+        failure: input.backUrls.failure,
+        pending: input.backUrls.pending
+      },
+      ...(input.autoReturn === false ? {} : { auto_return: "approved" }),
+      metadata: {
+        tenantId: input.tenantId,
+        orderId: input.orderId,
+        ...(input.metadata ?? {})
+      }
+    };
+    const webhook = this.checkoutPreferenceWebhookUrl;
+    if (webhook) {
+      preferencePayload.notification_url = webhook;
+    }
+
+    const preferenceResponse = await fetch(`${this.apiBaseUrl}/checkout/preferences`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(preferencePayload)
+    });
+    if (!preferenceResponse.ok) {
+      const errText = await preferenceResponse.text();
+      throw new BadRequestException(`Mercado Pago no pudo crear la preferencia: ${errText}`);
+    }
+    const preference = (await preferenceResponse.json()) as {
+      id: string;
+      init_point?: string;
+      sandbox_init_point?: string;
+    };
+
+    const createdAttempt = await prisma.paymentAttempt.create({
+      data: {
+        tenantId: input.tenantId,
+        integrationId: integrationRow.id,
+        orderId: input.orderId,
+        provider: "mercadopago",
+        status: "link_generated",
+        amount: new Decimal(totalAmount),
+        currency: "ARS",
+        title: summaryTitle,
+        externalReference: input.externalReference,
+        externalPreferenceId: preference.id ?? null,
+        checkoutUrl: preference.init_point ?? null,
+        sandboxCheckoutUrl: preference.sandbox_init_point ?? null,
+        metadata: (input.metadata ?? {}) as object
+      },
+      select: { id: true }
+    });
+
+    return {
+      checkoutUrl: preference.init_point ?? preference.sandbox_init_point ?? "",
+      paymentAttemptId: createdAttempt.id,
+      preferenceId: preference.id
     };
   }
 }

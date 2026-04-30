@@ -96,7 +96,7 @@ export function SidebarWhatsappControl({ compact = false }: { compact?: boolean 
     try {
       if (isConnectedLike(state)) {
         const ok = window.confirm(
-          "¿Desconectar WhatsApp? El sistema dejará de recibir y enviar mensajes hasta que vuelvas a conectar."
+          "¿Desconectar WhatsApp? Dejarás de recibir en el panel los mensajes de clientes interesados hasta que vuelvas a vincular."
         );
         if (!ok) {
           setActing(false);
@@ -166,7 +166,9 @@ export function SidebarWhatsappControl({ compact = false }: { compact?: boolean 
         <>
           {!compact ? (
             <p className="mb-2 truncate px-0.5 text-xs text-white/80" title={state?.tenantWhatsappNumber ?? ""}>
-              {state?.tenantWhatsappNumber ? `Número: ${state.tenantWhatsappNumber}` : "Sin número en perfil"}
+              {state?.tenantWhatsappNumber
+                ? `Número: ${state.tenantWhatsappNumber}`
+                : "Sin número — cargalo en registro o Negocio"}
             </p>
           ) : null}
           <p className={cn("mb-2 text-[11px] text-white/70", compact ? "text-center" : "px-0.5")}>{statusLabel}</p>
@@ -202,7 +204,7 @@ export function SidebarWhatsappControl({ compact = false }: { compact?: boolean 
           ) : null}
           {!state?.tenantWhatsappNumber && !connectedLike ? (
             <p className="mt-1 px-0.5 text-center text-[11px] leading-snug text-white/60">
-              Configurá el número en registro u onboarding para conectar.
+              Vinculá el número en Negocio para ver chats de clientes interesados.
             </p>
           ) : null}
         </>

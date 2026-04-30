@@ -149,7 +149,9 @@ export const QueueNames = {
   leadProcessing: "lead_processing",
   outgoingMessages: "outgoing_messages",
   stockSync: "stock_sync",
-  stockReservationExpiry: "stock_reservation_expiry"
+  stockReservationExpiry: "stock_reservation_expiry",
+  /** Expiración de carritos del storefront (TTL desde la creación de Order). */
+  orderReservationExpiry: "order_reservation_expiry"
 } as const;
 
 const redisUrl = resolveRedisUrl();
@@ -209,13 +211,19 @@ export const stockReservationExpiryQueue = new Queue(QueueNames.stockReservation
   defaultJobOptions
 });
 
+export const orderReservationExpiryQueue = new Queue(QueueNames.orderReservationExpiry, {
+  connection: redisConnection,
+  defaultJobOptions
+});
+
 const bullQueuesForErrorHandling: Queue[] = [
   incomingQueue,
   leadProcessingQueue,
   llmOrchestrationQueue,
   outgoingQueue,
   stockSyncQueue,
-  stockReservationExpiryQueue
+  stockReservationExpiryQueue,
+  orderReservationExpiryQueue
 ];
 for (const q of bullQueuesForErrorHandling) {
   bindTransientRedisSocketErrors(q, `BullMQ Queue:${q.name}`);

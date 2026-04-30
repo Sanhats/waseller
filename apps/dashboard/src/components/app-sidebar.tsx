@@ -1,14 +1,13 @@
 "use client";
 
 import Image from "next/image";
-import { Activity, Boxes, Building2, Home, LogOut, MessagesSquare, Store } from "lucide-react";
+import { Activity, Boxes, Building2, Home, LogOut, MessagesSquare, ShoppingBag, Store } from "lucide-react";
 import { ComponentType } from "react";
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/cn";
-import { BusinessProfileIncompleteBanner } from "@/components/business-profile-incomplete-banner";
 import { SidebarWhatsappControl } from "@/components/sidebar-whatsapp-control";
 
-type SectionKey = "home" | "leads" | "conversations" | "ops" | "stock" | "tienda";
+type SectionKey = "home" | "leads" | "conversations" | "ops" | "stock" | "orders" | "tienda";
 
 type NavIcon = ComponentType<{ size?: number; className?: string }>;
 
@@ -28,6 +27,7 @@ const navItems: Array<{
   },
   { key: "ops", href: "/ops", label: "Negocio", icon: Activity },
   { key: "stock", href: "/stock", label: "Stock", icon: Boxes },
+  { key: "orders", href: "/orders", label: "Ventas", icon: ShoppingBag },
   { key: "tienda", href: "/tienda-config", label: "Tienda", icon: Store },
 ];
 
@@ -117,7 +117,6 @@ export function AppSidebar({
   if (compact) {
     return (
       <>
-        <BusinessProfileIncompleteBanner />
         <aside
           className="flex w-full shrink-0 flex-col border-t border-white/10"
           style={{
@@ -191,7 +190,6 @@ export function AppSidebar({
   ────────────────────────────────────────────────────────── */
   return (
     <>
-      <BusinessProfileIncompleteBanner />
       <aside
         className="flex min-h-0 w-[268px] shrink-0 flex-col self-stretch border-r border-white/[0.07] py-5 pl-3.5 pr-3.5"
         style={{

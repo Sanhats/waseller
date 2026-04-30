@@ -19,6 +19,7 @@ import { MercadoPagoController } from "./mercado-pago/mercado-pago.controller";
 import { MercadoPagoService } from "./mercado-pago/mercado-pago.service";
 import { DashboardController } from "./dashboard/dashboard.controller";
 import { DashboardService } from "./dashboard/dashboard.service";
+import { OrdersService } from "./orders/orders.service";
 
 @Module({
   controllers: [
@@ -43,7 +44,8 @@ import { DashboardService } from "./dashboard/dashboard.service";
     CategoriesService,
     OnboardingService,
     MercadoPagoService,
-    DashboardService
+    DashboardService,
+    OrdersService
   ]
 })
 export class AppModule {}

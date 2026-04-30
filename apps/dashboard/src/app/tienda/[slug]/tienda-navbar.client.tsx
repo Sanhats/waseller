@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { CartButton } from "./cart-drawer.client";
 
 type Category = { id: string; name: string };
 
@@ -126,16 +127,7 @@ export function TiendaNavbar({
                 <path d="M20 20l-4.3-4.3" strokeLinecap="round" />
               </svg>
             </Link>
-            <Link
-              href={catalogoHref}
-              className="hidden rounded-md px-3 py-2 text-[10px] font-bold uppercase tracking-[0.12em] no-underline transition-all duration-200 hover:brightness-95 sm:inline-block"
-              style={{
-                backgroundColor: "var(--ts-primary)",
-                color: "var(--ts-on-primary)",
-              }}
-            >
-              Catálogo
-            </Link>
+            <CartButton slug={slug} />
           </div>
         </div>
       </header>

@@ -101,47 +101,67 @@ enum PaymentAttemptStatus {
   @@map("payment_attempt_status")
 }
 
+/**
+ * Ciclo de vida de las ventas iniciadas desde la tienda pública.
+ */
+enum OrderStatus {
+  pending_payment
+  paid
+  failed
+  cancelled
+  expired
+  fulfilled
+  refunded
+
+  @@map("order_status")
+}
+
 model Tenant {
-  id               String         @id @default(uuid()) @db.Uuid
-  name             String
-  /** Slug único para catálogo público `/tienda/[slug]`. */
-  publicCatalogSlug String?      @unique @map("public_catalog_slug")
-  whatsappNumber   String         @map("whatsapp_number")
-  plan             String         @default("starter")
-  senderRateMs     Int            @default(500) @map("sender_rate_ms")
-  senderPauseEvery Int            @default(20) @map("sender_pause_every")
-  senderPauseMs    Int            @default(2500) @map("sender_pause_ms")
-  llmAssistEnabled Boolean        @default(false) @map("llm_assist_enabled")
-  llmConfidenceThreshold Float    @default(0.72) @map("llm_confidence_threshold")
-  llmGuardrailsStrict Boolean     @default(true) @map("llm_guardrails_strict")
-  llmRolloutPercent Int           @default(0) @map("llm_rollout_percent")
-  llmModelName     String         @default("self-hosted-default") @map("llm_model_name")
-  createdAt        DateTime       @default(now()) @map("created_at")
-  updatedAt        DateTime       @updatedAt @map("updated_at")
-  products         Product[]
-  productVariants  ProductVariant[]
-  leads            Lead[]
-  conversations    Conversation[]
-  messages         Message[]
-  users            AppUser[]
-  stockMovements   StockMovement[]
-  botPlaybooks     BotPlaybook[]
-  botResponseEvents BotResponseEvent[]
-  conversationMemory ConversationMemory[]
-  llmTraces        LlmTrace[]
-  leadScoreEvents  LeadScoreEvent[]
-  humanFeedback    HumanFeedback[]
-  evalDatasetItems EvalDatasetItem[]
-  paymentIntegrations TenantPaymentIntegration[]
-  paymentAttempts  PaymentAttempt[]
-  tenantKnowledge  TenantKnowledge?
-  storeConfig      TenantStoreConfig?
-  categories       Category[]
+  id                     String                     @id @default(uuid()) @db.Uuid
+  name                   String
+  /**
+   * Slug único para catálogo público `/tienda/[slug]`.
+   */
+  publicCatalogSlug      String?                    @unique @map("public_catalog_slug")
+  whatsappNumber         String                     @map("whatsapp_number")
+  plan                   String                     @default("starter")
+  senderRateMs           Int                        @default(500) @map("sender_rate_ms")
+  senderPauseEvery       Int                        @default(20) @map("sender_pause_every")
+  senderPauseMs          Int                        @default(2500) @map("sender_pause_ms")
+  llmAssistEnabled       Boolean                    @default(false) @map("llm_assist_enabled")
+  llmConfidenceThreshold Float                      @default(0.72) @map("llm_confidence_threshold")
+  llmGuardrailsStrict    Boolean                    @default(true) @map("llm_guardrails_strict")
+  llmRolloutPercent      Int                        @default(0) @map("llm_rollout_percent")
+  llmModelName           String                     @default("self-hosted-default") @map("llm_model_name")
+  createdAt              DateTime                   @default(now()) @map("created_at")
+  updatedAt              DateTime                   @updatedAt @map("updated_at")
+  products               Product[]
+  productVariants        ProductVariant[]
+  leads                  Lead[]
+  conversations          Conversation[]
+  messages               Message[]
+  users                  AppUser[]
+  stockMovements         StockMovement[]
+  botPlaybooks           BotPlaybook[]
+  botResponseEvents      BotResponseEvent[]
+  conversationMemory     ConversationMemory[]
+  llmTraces              LlmTrace[]
+  leadScoreEvents        LeadScoreEvent[]
+  humanFeedback          HumanFeedback[]
+  evalDatasetItems       EvalDatasetItem[]
+  paymentIntegrations    TenantPaymentIntegration[]
+  paymentAttempts        PaymentAttempt[]
+  orders                 Order[]
+  tenantKnowledge        TenantKnowledge?
+  storeConfig            TenantStoreConfig?
+  categories             Category[]
 
   @@map("tenants")
 }
 
-/** Configuración visual de la tienda pública por tenant. */
+/**
+ * Configuración visual de la tienda pública por tenant.
+ */
 model TenantStoreConfig {
   tenantId  String   @id @map("tenant_id") @db.Uuid
   config    Json     @default("{}")
@@ -151,7 +171,9 @@ model TenantStoreConfig {
   @@map("tenant_store_configs")
 }
 
-/** Contexto de negocio por tenant (ops / RAG). Tabla usada también con SQL raw. */
+/**
+ * Contexto de negocio por tenant (ops / RAG). Tabla usada también con SQL raw.
+ */
 model TenantKnowledge {
   tenantId         String   @id @map("tenant_id") @db.Uuid
   businessCategory String   @default("general") @map("business_category")
@@ -166,7 +188,7 @@ model TenantKnowledge {
 
 model BotPlaybook {
   id        String   @id @default(uuid()) @db.Uuid
-  tenantId  String @db.Uuid   @map("tenant_id")
+  tenantId  String   @map("tenant_id") @db.Uuid
   intent    String
   variant   String
   template  String
@@ -183,8 +205,8 @@ model BotPlaybook {
 
 model BotResponseEvent {
   id        String   @id @default(uuid()) @db.Uuid
-  tenantId  String @db.Uuid   @map("tenant_id")
-  leadId    String? @db.Uuid  @map("lead_id")
+  tenantId  String   @map("tenant_id") @db.Uuid
+  leadId    String?  @map("lead_id") @db.Uuid
   phone     String
   intent    String
   variant   String
@@ -198,15 +220,15 @@ model BotResponseEvent {
 }
 
 model AppUser {
-  id           String   @id @default(uuid()) @db.Uuid
-  tenantId     String @db.Uuid   @map("tenant_id")
-  email        String
-  passwordHash String   @map("password_hash")
-  role         UserRole @default(viewer)
-  isActive     Boolean  @default(true) @map("is_active")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
-  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id            String          @id @default(uuid()) @db.Uuid
+  tenantId      String          @map("tenant_id") @db.Uuid
+  email         String
+  passwordHash  String          @map("password_hash")
+  role          UserRole        @default(viewer)
+  isActive      Boolean         @default(true) @map("is_active")
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
+  tenant        Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   humanFeedback HumanFeedback[]
 
   @@unique([email])
@@ -215,31 +237,33 @@ model AppUser {
 }
 
 model Product {
-  id        String   @id @default(uuid()) @db.Uuid
-  tenantId  String @db.Uuid   @map("tenant_id")
-  name      String
-  price     Decimal  @db.Decimal(10, 2)
-  imageUrl      String?  @map("image_url")
-  imageUrls     String[] @default([]) @map("image_urls")
-  tags      String[]
+  id                String            @id @default(uuid()) @db.Uuid
+  tenantId          String            @map("tenant_id") @db.Uuid
+  name              String
+  price             Decimal           @db.Decimal(10, 2)
+  imageUrl          String?           @map("image_url")
+  imageUrls         String[]          @default([]) @map("image_urls")
+  tags              String[]
   /// Algunas BD legacy tienen stock a nivel producto; el stock operativo está en `product_variants`.
-  stock         Int?     @default(0) @map("stock")
-  reservedStock Int?     @default(0) @map("reserved_stock")
-  updatedAt DateTime @updatedAt @map("updated_at")
-  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  variants  ProductVariant[]
-  stockMovements StockMovement[]
+  stock             Int?              @default(0) @map("stock")
+  reservedStock     Int?              @default(0) @map("reserved_stock")
+  updatedAt         DateTime          @updatedAt @map("updated_at")
+  tenant            Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  variants          ProductVariant[]
+  stockMovements    StockMovement[]
   productCategories ProductCategory[]
 
   @@unique([tenantId, name])
   @@map("products")
 }
 
-/** Categoría de catálogo por tenant (árbol vía `parentId`). */
+/**
+ * Categoría de catálogo por tenant (árbol vía `parentId`).
+ */
 model Category {
   id        String   @id @default(uuid()) @db.Uuid
-  tenantId  String @db.Uuid   @map("tenant_id")
-  parentId  String? @db.Uuid  @map("parent_id")
+  tenantId  String   @map("tenant_id") @db.Uuid
+  parentId  String?  @map("parent_id") @db.Uuid
   name      String
   slug      String
   sortOrder Int      @default(0) @map("sort_order")
@@ -247,9 +271,9 @@ model Category {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  parent   Category? @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
-  children Category[] @relation("CategoryHierarchy")
+  tenant            Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  parent            Category?         @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
+  children          Category[]        @relation("CategoryHierarchy")
   productCategories ProductCategory[]
   variantCategories VariantCategory[]
 
@@ -260,8 +284,8 @@ model Category {
 }
 
 model ProductCategory {
-  productId  String @map("product_id") @db.Uuid
-  categoryId String @map("category_id") @db.Uuid
+  productId  String   @map("product_id") @db.Uuid
+  categoryId String   @map("category_id") @db.Uuid
   product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
   category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
 
@@ -271,8 +295,8 @@ model ProductCategory {
 }
 
 model VariantCategory {
-  variantId  String @map("variant_id") @db.Uuid
-  categoryId String @map("category_id") @db.Uuid
+  variantId  String         @map("variant_id") @db.Uuid
+  categoryId String         @map("category_id") @db.Uuid
   variant    ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
   category   Category       @relation(fields: [categoryId], references: [id], onDelete: Cascade)
 
@@ -282,28 +306,29 @@ model VariantCategory {
 }
 
 model ProductVariant {
-  id            String   @id @default(uuid()) @db.Uuid
-  tenantId      String @db.Uuid   @map("tenant_id")
-  productId     String @db.Uuid   @map("product_id")
-  sku           String
-  attributes    Json
+  id                String            @id @default(uuid()) @db.Uuid
+  tenantId          String            @map("tenant_id") @db.Uuid
+  productId         String            @map("product_id") @db.Uuid
+  sku               String
+  attributes        Json
   /// Copia indexada de `attributes` (talle / talla) para filtros SQL.
-  variantTalle  String?  @map("variant_talle") @db.VarChar(160)
+  variantTalle      String?           @map("variant_talle") @db.VarChar(160)
   /// Copia indexada de `attributes.color`.
-  variantColor  String?  @map("variant_color") @db.VarChar(160)
+  variantColor      String?           @map("variant_color") @db.VarChar(160)
   /// Marca o línea/modelo (`marca` o `modelo` en JSON).
-  variantMarca  String?  @map("variant_marca") @db.VarChar(200)
-  price         Decimal? @db.Decimal(10, 2)
-  stock         Int      @default(0)
-  reservedStock Int      @default(0) @map("reserved_stock")
-  isActive      Boolean  @default(true) @map("is_active")
-  imageUrls     String[] @default([]) @map("image_urls")
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
-  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  product       Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-  stockMovements StockMovement[]
+  variantMarca      String?           @map("variant_marca") @db.VarChar(200)
+  price             Decimal?          @db.Decimal(10, 2)
+  stock             Int               @default(0)
+  reservedStock     Int               @default(0) @map("reserved_stock")
+  isActive          Boolean           @default(true) @map("is_active")
+  imageUrls         String[]          @default([]) @map("image_urls")
+  createdAt         DateTime          @default(now()) @map("created_at")
+  updatedAt         DateTime          @updatedAt @map("updated_at")
+  tenant            Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product           Product           @relation(fields: [productId], references: [id], onDelete: Cascade)
+  stockMovements    StockMovement[]
   variantCategories VariantCategory[]
+  orderItems        OrderItem[]
 
   @@unique([tenantId, sku])
   @@index([tenantId, productId, isActive])
@@ -315,29 +340,31 @@ model ProductVariant {
 }
 
 model Lead {
-  id          String       @id @default(uuid()) @db.Uuid
-  tenantId    String @db.Uuid       @map("tenant_id")
-  phone       String
-  customerName String?      @map("customer_name")
-  product     String?
-  productVariantId String? @db.Uuid @map("product_variant_id")
-  productVariantAttributes Json? @map("product_variant_attributes")
-  status      LeadStatus   @default(frio)
-  score       Int          @default(0)
-  hasStockReservation Boolean @default(false) @map("has_stock_reservation")
-  reservationExpiresAt DateTime? @map("reservation_expires_at")
-  profilePictureUrl   String?      @map("profile_picture_url")
-  lastMessage String?      @map("last_message")
-  /** Si está seteado, el lead no se lista en Clientes ni Conversaciones (borrado suave de bandeja). */
-  inboxHiddenAt DateTime?  @map("inbox_hidden_at")
-  createdAt   DateTime     @default(now()) @map("created_at")
-  updatedAt   DateTime     @updatedAt @map("updated_at")
-  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  conversation Conversation?
-  memory      ConversationMemory[]
-  llmTraces   LlmTrace[]
-  scoreEvents LeadScoreEvent[]
-  paymentAttempts PaymentAttempt[]
+  id                       String               @id @default(uuid()) @db.Uuid
+  tenantId                 String               @map("tenant_id") @db.Uuid
+  phone                    String
+  customerName             String?              @map("customer_name")
+  product                  String?
+  productVariantId         String?              @map("product_variant_id") @db.Uuid
+  productVariantAttributes Json?                @map("product_variant_attributes")
+  status                   LeadStatus           @default(frio)
+  score                    Int                  @default(0)
+  hasStockReservation      Boolean              @default(false) @map("has_stock_reservation")
+  reservationExpiresAt     DateTime?            @map("reservation_expires_at")
+  profilePictureUrl        String?              @map("profile_picture_url")
+  lastMessage              String?              @map("last_message")
+  /**
+   * Si está seteado, el lead no se lista en Clientes ni Conversaciones (borrado suave de bandeja).
+   */
+  inboxHiddenAt            DateTime?            @map("inbox_hidden_at")
+  createdAt                DateTime             @default(now()) @map("created_at")
+  updatedAt                DateTime             @updatedAt @map("updated_at")
+  tenant                   Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversation             Conversation?
+  memory                   ConversationMemory[]
+  llmTraces                LlmTrace[]
+  scoreEvents              LeadScoreEvent[]
+  paymentAttempts          PaymentAttempt[]
 
   @@index([tenantId, status, score])
   @@index([tenantId, phone])
@@ -346,40 +373,43 @@ model Lead {
 
 model StockMovement {
   id            String            @id @default(uuid()) @db.Uuid
-  tenantId      String @db.Uuid            @map("tenant_id")
-  productId     String? @db.Uuid           @map("product_id")
-  variantId     String? @db.Uuid           @map("variant_id")
+  tenantId      String            @map("tenant_id") @db.Uuid
+  productId     String?           @map("product_id") @db.Uuid
+  variantId     String?           @map("variant_id") @db.Uuid
   movementType  StockMovementType @map("movement_type")
   deltaStock    Int               @default(0) @map("delta_stock")
   deltaReserved Int               @default(0) @map("delta_reserved")
   reason        String?
   source        String?
-  leadId        String? @db.Uuid           @map("lead_id")
+  leadId        String?           @map("lead_id") @db.Uuid
+  orderId       String?           @map("order_id") @db.Uuid
   phone         String?
   createdAt     DateTime          @default(now()) @map("created_at")
   tenant        Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   product       Product?          @relation(fields: [productId], references: [id], onDelete: SetNull)
   variant       ProductVariant?   @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  order         Order?            @relation(fields: [orderId], references: [id], onDelete: SetNull)
 
   @@index([tenantId, variantId, createdAt])
   @@index([tenantId, productId, createdAt])
   @@index([tenantId, movementType, createdAt])
+  @@index([tenantId, orderId, createdAt])
   @@map("stock_movements")
 }
 
 model Conversation {
-  id          String   @id @default(uuid()) @db.Uuid
-  tenantId    String @db.Uuid   @map("tenant_id")
-  phone       String
-  leadId      String?  @unique @map("lead_id")
-  lastMessage String?  @map("last_message")
-  state       String   @default("open")
-  archivedAt  DateTime? @map("archived_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
-  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  lead        Lead?    @relation(fields: [leadId], references: [id], onDelete: SetNull)
-  memory      ConversationMemory[]
-  llmTraces   LlmTrace[]
+  id              String               @id @default(uuid()) @db.Uuid
+  tenantId        String               @map("tenant_id") @db.Uuid
+  phone           String
+  leadId          String?              @unique @map("lead_id")
+  lastMessage     String?              @map("last_message")
+  state           String               @default("open")
+  archivedAt      DateTime?            @map("archived_at")
+  updatedAt       DateTime             @updatedAt @map("updated_at")
+  tenant          Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  lead            Lead?                @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  memory          ConversationMemory[]
+  llmTraces       LlmTrace[]
   paymentAttempts PaymentAttempt[]
 
   @@index([tenantId, phone])
@@ -387,17 +417,17 @@ model Conversation {
 }
 
 model Message {
-  id        String           @id @default(uuid()) @db.Uuid
-  tenantId  String @db.Uuid           @map("tenant_id")
-  phone     String
-  message   String
-  direction MessageDirection
-  externalMessageId String? @map("external_message_id")
-  correlationId String? @map("correlation_id")
-  dedupeKey String? @map("dedupe_key")
-  createdAt DateTime         @default(now()) @map("created_at")
-  tenant    Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  llmTraces LlmTrace[]
+  id                String           @id @default(uuid()) @db.Uuid
+  tenantId          String           @map("tenant_id") @db.Uuid
+  phone             String
+  message           String
+  direction         MessageDirection
+  externalMessageId String?          @map("external_message_id")
+  correlationId     String?          @map("correlation_id")
+  dedupeKey         String?          @map("dedupe_key")
+  createdAt         DateTime         @default(now()) @map("created_at")
+  tenant            Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  llmTraces         LlmTrace[]
 
   @@index([tenantId, phone, createdAt])
   @@index([tenantId, dedupeKey])
@@ -405,18 +435,18 @@ model Message {
 }
 
 model ConversationMemory {
-  id            String   @id @default(uuid()) @db.Uuid
-  tenantId      String @db.Uuid   @map("tenant_id")
-  leadId        String   @unique @map("lead_id")
-  conversationId String? @unique @map("conversation_id")
-  schemaVersion Int      @default(1) @map("schema_version")
-  facts         Json
-  source        String?
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
-  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  lead          Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  conversation  Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  id             String        @id @default(uuid()) @db.Uuid
+  tenantId       String        @map("tenant_id") @db.Uuid
+  leadId         String        @unique @map("lead_id")
+  conversationId String?       @unique @map("conversation_id")
+  schemaVersion  Int           @default(1) @map("schema_version")
+  facts          Json
+  source         String?
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+  tenant         Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  lead           Lead          @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
 
   @@index([tenantId, leadId])
   @@index([tenantId, updatedAt])
@@ -424,30 +454,30 @@ model ConversationMemory {
 }
 
 model LlmTrace {
-  id              String   @id @default(uuid()) @db.Uuid
-  tenantId        String @db.Uuid   @map("tenant_id")
-  leadId          String? @db.Uuid  @map("lead_id")
-  conversationId  String? @db.Uuid  @map("conversation_id")
-  messageId       String? @db.Uuid  @map("message_id")
-  botResponseEventId String? @db.Uuid @map("bot_response_event_id")
-  correlationId   String?  @map("correlation_id")
-  dedupeKey       String?  @map("dedupe_key")
-  traceKind       String   @map("trace_kind")
-  provider        String?
-  model           String?
-  request         Json
-  response        Json
-  promptTokens    Int?     @map("prompt_tokens")
-  completionTokens Int?    @map("completion_tokens")
-  latencyMs       Int?     @map("latency_ms")
-  handoffRequired Boolean  @default(false) @map("handoff_required")
-  error           String?
-  createdAt       DateTime @default(now()) @map("created_at")
-  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  lead            Lead?    @relation(fields: [leadId], references: [id], onDelete: SetNull)
-  conversation    Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
-  message         Message? @relation(fields: [messageId], references: [id], onDelete: SetNull)
-  scoreEvents     LeadScoreEvent[]
+  id                 String           @id @default(uuid()) @db.Uuid
+  tenantId           String           @map("tenant_id") @db.Uuid
+  leadId             String?          @map("lead_id") @db.Uuid
+  conversationId     String?          @map("conversation_id") @db.Uuid
+  messageId          String?          @map("message_id") @db.Uuid
+  botResponseEventId String?          @map("bot_response_event_id") @db.Uuid
+  correlationId      String?          @map("correlation_id")
+  dedupeKey          String?          @map("dedupe_key")
+  traceKind          String           @map("trace_kind")
+  provider           String?
+  model              String?
+  request            Json
+  response           Json
+  promptTokens       Int?             @map("prompt_tokens")
+  completionTokens   Int?             @map("completion_tokens")
+  latencyMs          Int?             @map("latency_ms")
+  handoffRequired    Boolean          @default(false) @map("handoff_required")
+  error              String?
+  createdAt          DateTime         @default(now()) @map("created_at")
+  tenant             Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  lead               Lead?            @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  conversation       Conversation?    @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  message            Message?         @relation(fields: [messageId], references: [id], onDelete: SetNull)
+  scoreEvents        LeadScoreEvent[]
 
   @@index([tenantId, createdAt])
   @@index([tenantId, leadId, createdAt])
@@ -456,37 +486,37 @@ model LlmTrace {
 }
 
 model LeadScoreEvent {
-  id            String           @id @default(uuid()) @db.Uuid
-  tenantId      String @db.Uuid           @map("tenant_id")
-  leadId        String @db.Uuid           @map("lead_id")
-  previousScore Int              @map("previous_score")
-  newScore      Int              @map("new_score")
-  delta         Int
-  reason        String?
-  source        ScoreEventSource @default(rule)
-  metadata      Json?
-  relatedTraceId String? @db.Uuid         @map("related_trace_id")
-  createdAt     DateTime         @default(now()) @map("created_at")
-  tenant        Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  lead          Lead             @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  relatedTrace  LlmTrace?        @relation(fields: [relatedTraceId], references: [id], onDelete: SetNull)
+  id             String           @id @default(uuid()) @db.Uuid
+  tenantId       String           @map("tenant_id") @db.Uuid
+  leadId         String           @map("lead_id") @db.Uuid
+  previousScore  Int              @map("previous_score")
+  newScore       Int              @map("new_score")
+  delta          Int
+  reason         String?
+  source         ScoreEventSource @default(rule)
+  metadata       Json?
+  relatedTraceId String?          @map("related_trace_id") @db.Uuid
+  createdAt      DateTime         @default(now()) @map("created_at")
+  tenant         Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  lead           Lead             @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  relatedTrace   LlmTrace?        @relation(fields: [relatedTraceId], references: [id], onDelete: SetNull)
 
   @@index([tenantId, leadId, createdAt])
   @@map("lead_score_events")
 }
 
 model HumanFeedback {
-  id          String             @id @default(uuid()) @db.Uuid
-  tenantId    String @db.Uuid             @map("tenant_id")
-  targetType  FeedbackTargetType @map("target_type")
-  targetId    String @db.Uuid             @map("target_id")
-  rating      Int?
-  label       String?
-  comment     String?
-  appUserId   String? @db.Uuid            @map("app_user_id")
-  createdAt   DateTime           @default(now()) @map("created_at")
-  tenant      Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  appUser     AppUser?           @relation(fields: [appUserId], references: [id], onDelete: SetNull)
+  id         String             @id @default(uuid()) @db.Uuid
+  tenantId   String             @map("tenant_id") @db.Uuid
+  targetType FeedbackTargetType @map("target_type")
+  targetId   String             @map("target_id") @db.Uuid
+  rating     Int?
+  label      String?
+  comment    String?
+  appUserId  String?            @map("app_user_id") @db.Uuid
+  createdAt  DateTime           @default(now()) @map("created_at")
+  tenant     Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  appUser    AppUser?           @relation(fields: [appUserId], references: [id], onDelete: SetNull)
 
   @@index([tenantId, targetType, targetId])
   @@index([tenantId, createdAt])
@@ -494,18 +524,18 @@ model HumanFeedback {
 }
 
 model EvalDatasetItem {
-  id         String   @id @default(uuid()) @db.Uuid
-  tenantId   String? @db.Uuid  @map("tenant_id")
-  name       String
-  slug       String?
-  input      Json
-  reference  Json
-  tags       String[] @default([])
-  split      EvalSplit @default(test)
-  isActive   Boolean  @default(true) @map("is_active")
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
-  tenant     Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  id        String    @id @default(uuid()) @db.Uuid
+  tenantId  String?   @map("tenant_id") @db.Uuid
+  name      String
+  slug      String?
+  input     Json
+  reference Json
+  tags      String[]  @default([])
+  split     EvalSplit @default(test)
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  tenant    Tenant?   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId, split, isActive])
   @@map("eval_dataset_items")
@@ -513,7 +543,7 @@ model EvalDatasetItem {
 
 model TenantPaymentIntegration {
   id                    String                   @id @default(uuid()) @db.Uuid
-  tenantId              String @db.Uuid                   @map("tenant_id")
+  tenantId              String                   @map("tenant_id") @db.Uuid
   provider              PaymentProvider
   status                PaymentIntegrationStatus @default(disconnected)
   externalAccountId     String?                  @map("external_account_id")
@@ -539,38 +569,93 @@ model TenantPaymentIntegration {
 }
 
 model PaymentAttempt {
-  id                   String               @id @default(uuid()) @db.Uuid
-  tenantId             String @db.Uuid               @map("tenant_id")
-  integrationId        String? @db.Uuid              @map("integration_id")
-  leadId               String? @db.Uuid              @map("lead_id")
-  conversationId       String? @db.Uuid              @map("conversation_id")
-  productVariantId     String? @db.Uuid              @map("product_variant_id")
+  id                   String                    @id @default(uuid()) @db.Uuid
+  tenantId             String                    @map("tenant_id") @db.Uuid
+  integrationId        String?                   @map("integration_id") @db.Uuid
+  leadId               String?                   @map("lead_id") @db.Uuid
+  conversationId       String?                   @map("conversation_id") @db.Uuid
+  productVariantId     String?                   @map("product_variant_id") @db.Uuid
+  orderId              String?                   @map("order_id") @db.Uuid
   provider             PaymentProvider
-  status               PaymentAttemptStatus @default(draft)
-  amount               Decimal              @db.Decimal(10, 2)
-  currency             String               @default("ARS")
+  status               PaymentAttemptStatus      @default(draft)
+  amount               Decimal                   @db.Decimal(10, 2)
+  currency             String                    @default("ARS")
   title                String
-  externalReference    String               @map("external_reference")
-  externalPreferenceId String?              @map("external_preference_id")
-  externalPaymentId    String?              @map("external_payment_id")
-  checkoutUrl          String?              @map("checkout_url")
-  sandboxCheckoutUrl   String?              @map("sandbox_checkout_url")
-  paymentLinkSentAt    DateTime?            @map("payment_link_sent_at")
-  lastWebhookAt        DateTime?            @map("last_webhook_at")
-  paidAt               DateTime?            @map("paid_at")
-  expiresAt            DateTime?            @map("expires_at")
+  externalReference    String                    @map("external_reference")
+  externalPreferenceId String?                   @map("external_preference_id")
+  externalPaymentId    String?                   @map("external_payment_id")
+  checkoutUrl          String?                   @map("checkout_url")
+  sandboxCheckoutUrl   String?                   @map("sandbox_checkout_url")
+  paymentLinkSentAt    DateTime?                 @map("payment_link_sent_at")
+  lastWebhookAt        DateTime?                 @map("last_webhook_at")
+  paidAt               DateTime?                 @map("paid_at")
+  expiresAt            DateTime?                 @map("expires_at")
   metadata             Json?
-  createdAt            DateTime             @default(now()) @map("created_at")
-  updatedAt            DateTime             @updatedAt @map("updated_at")
-  tenant               Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdAt            DateTime                  @default(now()) @map("created_at")
+  updatedAt            DateTime                  @updatedAt @map("updated_at")
+  tenant               Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   integration          TenantPaymentIntegration? @relation(fields: [integrationId], references: [id], onDelete: SetNull)
-  lead                 Lead?                @relation(fields: [leadId], references: [id], onDelete: SetNull)
-  conversation         Conversation?        @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  lead                 Lead?                     @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  conversation         Conversation?             @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  order                Order?                    @relation(fields: [orderId], references: [id], onDelete: SetNull)
 
   @@unique([provider, externalReference])
   @@index([tenantId, status, createdAt])
   @@index([tenantId, leadId, createdAt])
+  @@index([tenantId, orderId, createdAt])
   @@index([provider, externalPreferenceId])
   @@index([provider, externalPaymentId])
   @@map("payment_attempts")
+}
+
+/**
+ * Venta originada en la tienda pública. Snapshot de items y comprador para trazabilidad.
+ */
+model Order {
+  id                String           @id @default(uuid()) @db.Uuid
+  tenantId          String           @map("tenant_id") @db.Uuid
+  status            OrderStatus      @default(pending_payment)
+  totalAmount       Decimal          @map("total_amount") @db.Decimal(10, 2)
+  currency          String           @default("ARS")
+  buyerName         String           @map("buyer_name")
+  buyerEmail        String           @map("buyer_email")
+  buyerPhone        String           @map("buyer_phone")
+  buyerNotes        String?          @map("buyer_notes")
+  externalReference String           @unique @map("external_reference")
+  expiresAt         DateTime?        @map("expires_at")
+  paidAt            DateTime?        @map("paid_at")
+  fulfilledAt       DateTime?        @map("fulfilled_at")
+  metadata          Json?
+  createdAt         DateTime         @default(now()) @map("created_at")
+  updatedAt         DateTime         @updatedAt @map("updated_at")
+  tenant            Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  items             OrderItem[]
+  paymentAttempts   PaymentAttempt[]
+  stockMovements    StockMovement[]
+
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, createdAt])
+  @@map("orders")
+}
+
+/**
+ * Línea de Order. Mantiene snapshot del producto/variante al momento de la compra.
+ */
+model OrderItem {
+  id                String         @id @default(uuid()) @db.Uuid
+  orderId           String         @map("order_id") @db.Uuid
+  productVariantId  String         @map("product_variant_id") @db.Uuid
+  productName       String         @map("product_name")
+  variantSku        String         @map("variant_sku")
+  variantAttributes Json?          @map("variant_attributes")
+  quantity          Int
+  unitPrice         Decimal        @map("unit_price") @db.Decimal(10, 2)
+  lineTotal         Decimal        @map("line_total") @db.Decimal(10, 2)
+  createdAt         DateTime       @default(now()) @map("created_at")
+  order             Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  variant           ProductVariant @relation(fields: [productVariantId], references: [id], onDelete: Restrict)
+
+  @@index([orderId])
+  @@index([productVariantId])
+  @@map("order_items")
 }

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { prisma } from "@waseller/db";
 import { getBackendServices } from "@/lib/backend-services";
 import { ProductGallery } from "./product-gallery.client";
+import { AddToCart, type VariantOption } from "./add-to-cart.client";
 
 type PageProps = {
   params: Promise<{ slug: string; productId: string }>;
@@ -157,63 +158,24 @@ export default async function TiendaProductoPage({ params, searchParams }: PageP
           </div>
 
           <div className="rounded-2xl border border-[var(--ts-border)] bg-[var(--ts-surface)] p-5">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-[var(--ts-muted)]">Variantes</h2>
-            <div className="mt-4 grid gap-3">
-              {rows.map((v) => (
-                <div
-                  key={v.variantId}
-                  className="rounded-xl border border-[var(--ts-border)] bg-[var(--ts-bg)] p-4"
-                >
-                  <div className="flex flex-wrap items-baseline justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="font-mono text-xs font-semibold text-[var(--ts-muted)]">{v.sku}</div>
-                      <div className="mt-1 text-sm font-medium text-[var(--ts-text)]">
-                        {(() => {
-                          const bits: string[] = [];
-                          if (v.variantTalle?.trim()) bits.push(`Talle ${v.variantTalle.trim()}`);
-                          if (v.variantColor?.trim()) bits.push(`Color ${v.variantColor.trim()}`);
-                          if (v.variantMarca?.trim()) bits.push(`Marca ${v.variantMarca.trim()}`);
-                          const attrStr =
-                            Object.keys(v.attributes ?? {}).length > 0
-                              ? Object.entries(v.attributes)
-                                  .slice(0, 8)
-                                  .map(([k, val]) => `${k}: ${val}`)
-                                  .join(" · ")
-                              : "";
-                          if (attrStr) bits.push(attrStr);
-                          return bits.length > 0 ? bits.join(" · ") : "Sin atributos";
-                        })()}
-                      </div>
-                      {(() => {
-                        const vn = (v as { variantCategoryNames?: string[] }).variantCategoryNames;
-                        if (!vn?.length) return null;
-                        return (
-                          <div
-                            className="mt-2 flex flex-wrap gap-1.5"
-                            aria-label="Categorías de esta variante"
-                          >
-                            {vn.map((n) => (
-                              <span
-                                key={n}
-                                className="rounded border border-dashed border-[var(--ts-border)] bg-[var(--ts-surface)] px-2 py-0.5 text-[10px] font-medium text-[var(--ts-muted)]"
-                              >
-                                {n}
-                              </span>
-                            ))}
-                          </div>
-                        );
-                      })()}
-                    </div>
-                    <div className="text-right">
-                      <div className="text-sm font-semibold text-[var(--ts-text)]">{money(v.effectivePrice)}</div>
-                      <div className="text-xs text-[var(--ts-muted)]">{v.availableStock} u.</div>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <p className="mt-4 text-xs text-[var(--ts-muted)]">
-              Precios y stock orientativos. Para comprar o reservar, escribinos por WhatsApp.
+            <AddToCart
+              slug={slug}
+              variants={rows.map<VariantOption>((v) => ({
+                variantId: v.variantId,
+                productId: first.productId,
+                productName: first.name,
+                sku: v.sku,
+                variantTalle: v.variantTalle ?? null,
+                variantColor: v.variantColor ?? null,
+                variantMarca: v.variantMarca ?? null,
+                attributes: v.attributes ?? null,
+                unitPrice: v.effectivePrice,
+                availableStock: v.availableStock,
+                imageUrl: gallery[0],
+              }))}
+            />
+            <p className="mt-4 text-[11px] leading-relaxed text-[var(--ts-muted)]">
+              Stock reservado por 15 minutos al iniciar la compra. Costos de envío a coordinar luego del pago.
             </p>
           </div>
         </aside>

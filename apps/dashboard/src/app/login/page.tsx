@@ -205,8 +205,8 @@ export default function LoginPage() {
 
           {mode === "register" ? (
             <p className="text-xs leading-relaxed text-muted">
-              Al crear la cuenta ingresás directo al panel de configuración para
-              conectar WhatsApp, Mercado Pago y tu catálogo.
+              Al crear la cuenta entrás al panel para vincular WhatsApp (chats con clientes interesados), Mercado Pago y
+              tu catálogo.
             </p>
           ) : null}
 
@@ -231,7 +231,7 @@ export default function LoginPage() {
         </form>
 
         <p className="mt-4 text-center text-[11px] text-muted-ui">
-          Waseller &mdash; Ventas por WhatsApp con IA
+          Waseller &mdash; Ventas por WhatsApp con tu equipo al mando
         </p>
       </div>
     </main>
