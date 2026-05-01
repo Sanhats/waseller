@@ -594,7 +594,7 @@ export class MercadoPagoService {
   }
 
   private async fetchPayment(resourceId: string, accessToken: string): Promise<MercadoPagoPaymentResponse> {
-    const response = await fetch(`${this.apiBaseUrl}/v1/payments/${resourceId}`, {
+    const response = await this.fetchWithTimeout(`${this.apiBaseUrl}/v1/payments/${resourceId}`, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json"
@@ -604,6 +604,30 @@ export class MercadoPagoService {
       throw new InternalServerErrorException(await response.text());
     }
     return (await response.json()) as MercadoPagoPaymentResponse;
+  }
+
+  /** Wrapper de fetch con timeout duro. Sin esto, una request a MP que se cuelga
+   * deja al endpoint corriendo hasta que Vercel lo corte (10s/60s) y el cliente
+   * sigue mostrando spinner sin saber que ya no va a responder. Default 8s. */
+  private async fetchWithTimeout(
+    url: string,
+    init: RequestInit & { timeoutMs?: number } = {}
+  ): Promise<Response> {
+    const { timeoutMs = 8000, ...rest } = init;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      return await fetch(url, { ...rest, signal: controller.signal });
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
+        throw new BadRequestException(
+          `Mercado Pago no respondió a tiempo (${timeoutMs}ms). Reintentá en un momento.`
+        );
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   private async notifyPaymentStatus(input: {
@@ -820,7 +844,7 @@ export class MercadoPagoService {
         ...(input.metadata ?? {})
       }
     };
-    const preferenceResponse = await fetch(`${this.apiBaseUrl}/checkout/preferences`, {
+    const preferenceResponse = await this.fetchWithTimeout(`${this.apiBaseUrl}/checkout/preferences`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -939,7 +963,7 @@ export class MercadoPagoService {
       }
     };
 
-    const preferenceResponse = await fetch(`${this.apiBaseUrl}/checkout/preferences`, {
+    const preferenceResponse = await this.fetchWithTimeout(`${this.apiBaseUrl}/checkout/preferences`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${accessToken}`,

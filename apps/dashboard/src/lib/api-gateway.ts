@@ -684,23 +684,30 @@ async function handlePublicCheckout(
   }
 
   /** Encolamos expiración con delay = TTL para liberar stock si MP no confirma.
-   * Si Redis no está disponible, abortamos: dejar la order sin TTL = stock reservado para siempre. */
+   * IMPORTANTE: el cliente ioredis está configurado con maxRetriesPerRequest=null (BullMQ lo exige) → si Redis
+   * no es alcanzable el comando NUNCA falla, se cuelga indefinido. Por eso usamos Promise.race con timeout duro
+   * de 5s. Sin TTL la reserva quedaría infinita, así que abortamos la compra con 503. */
   try {
     const { orderReservationExpiryQueue } = await import("@waseller/queue");
     const expiresAt = created.order.expiresAt ? new Date(created.order.expiresAt).getTime() : Date.now() + 15 * 60 * 1000;
     const delay = Math.max(1000, expiresAt - Date.now());
-    await orderReservationExpiryQueue.add(
-      "order-expiry",
-      { tenantId: tenant.id, orderId },
-      { jobId: `order_expiry_${orderId}`, delay }
-    );
+    await Promise.race([
+      orderReservationExpiryQueue.add(
+        "order-expiry",
+        { tenantId: tenant.id, orderId },
+        { jobId: `order_expiry_${orderId}`, delay }
+      ),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Redis enqueue timeout (5s)")), 5000)
+      ),
+    ]);
   } catch (e) {
     console.error("[checkout] no se pudo encolar expiración, abortando para no reservar stock indefinidamente:", e);
     await s.orders.markOrderUnpaid(tenant.id, orderId, "failed").catch(() => undefined);
     return NextResponse.json(
       {
         message:
-          "No pudimos iniciar tu compra (cola de expiración no disponible). Probá de nuevo en unos minutos.",
+          "No pudimos iniciar tu compra (cola de expiración no disponible). Verificá REDIS_URL en producción.",
       },
       { status: 503 }
     );

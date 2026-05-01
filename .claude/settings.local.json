@@ -16,7 +16,8 @@
       "Bash(echo \"EXIT_BACK=$?\")",
       "Bash(echo \"EXIT_W=$?\")",
       "Bash(echo \"EXIT_D=$?\")",
-      "Bash(echo \"EXIT_B=$?\")"
+      "Bash(echo \"EXIT_B=$?\")",
+      "Bash(grep *)"
     ]
   }
 }
