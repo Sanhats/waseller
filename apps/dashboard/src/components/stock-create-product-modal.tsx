@@ -7,7 +7,6 @@ import {
   FormSection,
   ImageDropZone,
   ImageThumbnailGrid,
-  compressImageToDataUrl,
   uploadImagesToSupabase,
 } from "@/components/stock-ui";
 import { Spinner } from "@/components/ui";
@@ -222,13 +221,14 @@ export function StockCreateProductModal({
       const urls = await uploadImagesToSupabase(bounded, auth?.tenantId);
       if (urls.length > 0) setProductImageUrls((prev) => [...prev, ...urls]);
     } catch (e) {
-      const next: string[] = [];
-      for (const f of files) {
-        if (productImageUrls.length + next.length >= MAX_PRODUCT_IMAGES) break;
-        next.push(await compressImageToDataUrl(f, COMPRESS_OPTS));
-      }
-      if (next.length > 0) setProductImageUrls((prev) => [...prev, ...next]);
-      setApiError(e instanceof Error ? e.message : "No se pudieron subir las imágenes");
+      /** Sin fallback a dataURL: si Supabase Storage no está disponible, el usuario debe ver el error
+       * y arreglar la config (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY). Antes había un fallback que
+       * insertaba base64 en el state y al guardar explotaba el límite de payload de Vercel (4.5MB → 413). */
+      setApiError(
+        e instanceof Error
+          ? `No se pudieron subir las imágenes: ${e.message}`
+          : "No se pudieron subir las imágenes. Verificá la configuración de Supabase Storage.",
+      );
     }
   };
 
@@ -240,13 +240,11 @@ export function StockCreateProductModal({
       const urls = await uploadImagesToSupabase(bounded, auth?.tenantId);
       if (urls.length > 0) setVariantImageUrls((prev) => [...prev, ...urls]);
     } catch (e) {
-      const next: string[] = [];
-      for (const f of files) {
-        if (variantImageUrls.length + next.length >= MAX_VARIANT_IMAGES) break;
-        next.push(await compressImageToDataUrl(f, COMPRESS_OPTS));
-      }
-      if (next.length > 0) setVariantImageUrls((prev) => [...prev, ...next]);
-      setApiError(e instanceof Error ? e.message : "No se pudieron subir las imágenes de la variante");
+      setApiError(
+        e instanceof Error
+          ? `No se pudieron subir las imágenes de la variante: ${e.message}`
+          : "No se pudieron subir las imágenes de la variante. Verificá la configuración de Supabase Storage.",
+      );
     }
   };
 
@@ -272,27 +270,11 @@ export function StockCreateProductModal({
         );
       }
     } catch (e) {
-      let baseLen = 0;
-      setVariants((prev) => {
-        const row = prev.find((x) => x.id === variantId);
-        baseLen = row?.imageUrls.length ?? 0;
-        return prev;
-      });
-      const next: string[] = [];
-      for (const f of bounded) {
-        if (baseLen + next.length >= MAX_VARIANT_IMAGES) break;
-        next.push(await compressImageToDataUrl(f, COMPRESS_OPTS));
-      }
-      if (next.length > 0) {
-        setVariants((prev) =>
-          prev.map((r) =>
-            r.id === variantId
-              ? { ...r, imageUrls: [...r.imageUrls, ...next].slice(0, MAX_VARIANT_IMAGES) }
-              : r,
-          ),
-        );
-      }
-      setApiError(e instanceof Error ? e.message : "No se pudieron subir las imágenes de la variante");
+      setApiError(
+        e instanceof Error
+          ? `No se pudieron subir las imágenes de la variante: ${e.message}`
+          : "No se pudieron subir las imágenes de la variante. Verificá la configuración de Supabase Storage.",
+      );
     }
   };
 

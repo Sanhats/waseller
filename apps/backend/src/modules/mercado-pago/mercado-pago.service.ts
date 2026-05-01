@@ -793,6 +793,13 @@ export class MercadoPagoService {
       throw new BadRequestException("No hay una cuenta de Mercado Pago conectada para este tenant.");
     }
     const { accessToken } = await this.refreshIfNeeded(integrationRow);
+    /** Mismo guard que createOrderCheckoutPreference: sin webhook URL, MP no notifica y el lead nunca se marca vendido. */
+    const webhook = this.checkoutPreferenceWebhookUrl;
+    if (!webhook) {
+      throw new BadRequestException(
+        "Falta configurar PUBLIC_API_BASE_URL (o MERCADO_PAGO_WEBHOOK_URL) para que Mercado Pago pueda notificar el resultado de los pagos."
+      );
+    }
     const externalReference = `ws-${input.tenantId}-${input.leadId}-${randomUUID()}`;
     const preferencePayload: Record<string, unknown> = {
       items: [
@@ -804,6 +811,7 @@ export class MercadoPagoService {
         }
       ],
       external_reference: externalReference,
+      notification_url: webhook,
       metadata: {
         tenantId: input.tenantId,
         leadId: input.leadId,
@@ -812,10 +820,6 @@ export class MercadoPagoService {
         ...(input.metadata ?? {})
       }
     };
-    const webhook = this.checkoutPreferenceWebhookUrl;
-    if (webhook) {
-      preferencePayload.notification_url = webhook;
-    }
     const preferenceResponse = await fetch(`${this.apiBaseUrl}/checkout/preferences`, {
       method: "POST",
       headers: {
@@ -894,6 +898,20 @@ export class MercadoPagoService {
         ? input.items[0].title
         : `Compra de ${input.items.length} productos`;
 
+    /** Sin webhook URL pública, MP nunca notifica el resultado y la Order queda pending para siempre.
+     * Mejor fallar acá con mensaje claro que dejar al comprador pagando algo que no se confirma. */
+    const webhook = this.checkoutPreferenceWebhookUrl;
+    if (!webhook) {
+      throw new BadRequestException(
+        "Falta configurar PUBLIC_API_BASE_URL (o MERCADO_PAGO_WEBHOOK_URL) para que Mercado Pago pueda notificar el resultado de los pagos."
+      );
+    }
+
+    /** auto_return: "approved" exige back_urls.success HTTPS público. Si no, MP rechaza la preferencia.
+     * Lo activamos solo si la URL es HTTPS — en dev/staging sin HTTPS se omite y el comprador vuelve manualmente. */
+    const successIsHttps = /^https:\/\//i.test(input.backUrls.success);
+    const includeAutoReturn = input.autoReturn !== false && successIsHttps;
+
     const preferencePayload: Record<string, unknown> = {
       items: input.items.map((it) => ({
         title: it.title,
@@ -912,17 +930,14 @@ export class MercadoPagoService {
         failure: input.backUrls.failure,
         pending: input.backUrls.pending
       },
-      ...(input.autoReturn === false ? {} : { auto_return: "approved" }),
+      ...(includeAutoReturn ? { auto_return: "approved" } : {}),
+      notification_url: webhook,
       metadata: {
         tenantId: input.tenantId,
         orderId: input.orderId,
         ...(input.metadata ?? {})
       }
     };
-    const webhook = this.checkoutPreferenceWebhookUrl;
-    if (webhook) {
-      preferencePayload.notification_url = webhook;
-    }
 
     const preferenceResponse = await fetch(`${this.apiBaseUrl}/checkout/preferences`, {
       method: "POST",

@@ -683,7 +683,8 @@ async function handlePublicCheckout(
     throw e;
   }
 
-  /** Encolamos expiración con delay = TTL para liberar stock si MP no confirma. */
+  /** Encolamos expiración con delay = TTL para liberar stock si MP no confirma.
+   * Si Redis no está disponible, abortamos: dejar la order sin TTL = stock reservado para siempre. */
   try {
     const { orderReservationExpiryQueue } = await import("@waseller/queue");
     const expiresAt = created.order.expiresAt ? new Date(created.order.expiresAt).getTime() : Date.now() + 15 * 60 * 1000;
@@ -694,8 +695,15 @@ async function handlePublicCheckout(
       { jobId: `order_expiry_${orderId}`, delay }
     );
   } catch (e) {
-    /** Si Redis no está disponible (dev local), no abortamos la compra; el TTL no se aplicará. */
-    console.error("[checkout] no se pudo encolar expiración:", e);
+    console.error("[checkout] no se pudo encolar expiración, abortando para no reservar stock indefinidamente:", e);
+    await s.orders.markOrderUnpaid(tenant.id, orderId, "failed").catch(() => undefined);
+    return NextResponse.json(
+      {
+        message:
+          "No pudimos iniciar tu compra (cola de expiración no disponible). Probá de nuevo en unos minutos.",
+      },
+      { status: 503 }
+    );
   }
 
   return NextResponse.json({
