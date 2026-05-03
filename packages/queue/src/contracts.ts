@@ -151,6 +151,25 @@ export type LlmVerificationResultV1 = {
   model?: string;
 };
 
+export type SuggestionTriggerV1 = "incoming_msg" | "manual_regen" | "conversation_open";
+
+export type SuggestionGenerationJobV1 = {
+  schemaVersion: JobSchemaVersion;
+  correlationId: string;
+  dedupeKey: string;
+  tenantId: string;
+  conversationId: string;
+  leadId?: string | null;
+  phone: string;
+  triggerMessageId?: string | null;
+  trigger: SuggestionTriggerV1;
+  intent?: string;
+  leadScore?: number;
+  leadStatus?: string;
+  matchedProductName?: string | null;
+  matchedVariantId?: string | null;
+};
+
 export type OutgoingJobV1 = {
   schemaVersion: JobSchemaVersion;
   correlationId: string;

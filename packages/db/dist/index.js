@@ -27,16 +27,11 @@ function adaptDatabaseUrlForPooledPostgres(url) {
     }
 }
 const createClient = () => {
-    // Prioriza cliente generado local del workspace db para evitar conflictos de hoisting.
-    let pkg;
-    try {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        pkg = require("../node_modules/@prisma/client");
-    }
-    catch {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        pkg = require("@prisma/client");
-    }
+    // En monorepos + Turbopack, paths relativos a node_modules suelen romperse.
+    // La resolución de Node encuentra el `@prisma/client` correcto (workspace `@waseller/db`)
+    // siempre que se haya corrido `prisma generate` para ese paquete.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const pkg = require("@prisma/client");
     if (!pkg.PrismaClient) {
         throw new Error("PrismaClient no disponible. Ejecuta la generación de cliente Prisma.");
     }

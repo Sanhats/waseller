@@ -1,0 +1,5 @@
+{
+  "buildCommand": "cd ../../.. && npm run build --workspace @waseller/storefront-sdk && cd apps/storefronts/$VERCEL_PROJECT_NAME && next build",
+  "installCommand": "cd ../../.. && npm install",
+  "framework": "nextjs"
+}

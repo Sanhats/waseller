@@ -123,6 +123,13 @@ model Tenant {
    * Slug único para catálogo público `/tienda/[slug]`.
    */
   publicCatalogSlug      String?                    @unique @map("public_catalog_slug")
+  /**
+   * Origen público del storefront del tenant (sin barra final). Si está seteado,
+   * se usa para armar las `back_urls` de Mercado Pago al iniciar el checkout
+   * (en vez de `PUBLIC_STOREFRONT_BASE_URL`). Necesario cuando cada cliente vive
+   * en su propio dominio (cliente1.com, cliente2.com, ...).
+   */
+  storefrontBaseUrl      String?                    @map("storefront_base_url")
   whatsappNumber         String                     @map("whatsapp_number")
   plan                   String                     @default("starter")
   senderRateMs           Int                        @default(500) @map("sender_rate_ms")
@@ -155,6 +162,7 @@ model Tenant {
   tenantKnowledge        TenantKnowledge?
   storeConfig            TenantStoreConfig?
   categories             Category[]
+  conversationSuggestions ConversationSuggestion[]
 
   @@map("tenants")
 }
@@ -411,9 +419,39 @@ model Conversation {
   memory          ConversationMemory[]
   llmTraces       LlmTrace[]
   paymentAttempts PaymentAttempt[]
+  suggestions     ConversationSuggestion[]
 
   @@index([tenantId, phone])
   @@map("conversations")
+}
+
+model ConversationSuggestion {
+  id                  String    @id @default(uuid()) @db.Uuid
+  tenantId            String    @map("tenant_id") @db.Uuid
+  conversationId      String    @map("conversation_id") @db.Uuid
+  triggerMessageId    String?   @map("trigger_message_id") @db.Uuid
+  trigger             String
+  intent              String?
+  leadScore           Int?      @map("lead_score")
+  leadStatus          String?   @map("lead_status")
+  reasoning           Json?
+  recommendedVariants Json?     @map("recommended_variants")
+  draftReply          String?   @map("draft_reply")
+  summaryForSeller    String?   @map("summary_for_seller")
+  status              String    @default("fresh")
+  generatedAt         DateTime  @default(now()) @map("generated_at")
+  usedAt              DateTime? @map("used_at")
+  llmModel            String?   @map("llm_model")
+  llmLatencyMs        Int?      @map("llm_latency_ms")
+  llmTokensIn         Int?      @map("llm_tokens_in")
+  llmTokensOut        Int?      @map("llm_tokens_out")
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, generatedAt(sort: Desc)])
+  @@index([tenantId, status])
+  @@map("conversation_suggestions")
 }
 
 model Message {

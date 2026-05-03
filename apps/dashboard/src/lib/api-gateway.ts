@@ -343,6 +343,21 @@ export async function dispatchApi(
       const body = (await req.json()) as { reason?: string };
       return NextResponse.json(await s.conversations.handoffAssistive(tenantId, convHand[1], body.reason ?? ""));
     }
+    const convSuggestion = /^\/conversations\/([^/]+)\/suggestion$/.exec(path);
+    if (convSuggestion && method === "GET") {
+      requireRole(auth?.role, ["admin", "vendedor", "viewer"]);
+      return NextResponse.json(await getOrEnqueueSuggestion(tenantId, convSuggestion[1]));
+    }
+    const convSuggestionRegen = /^\/conversations\/([^/]+)\/suggestion\/regenerate$/.exec(path);
+    if (convSuggestionRegen && method === "POST") {
+      requireRole(auth?.role, ["admin", "vendedor"]);
+      return NextResponse.json(await regenerateSuggestion(tenantId, convSuggestionRegen[1]));
+    }
+    const convSuggestionUsed = /^\/conversations\/([^/]+)\/suggestion\/([^/]+)\/use$/.exec(path);
+    if (convSuggestionUsed && method === "POST") {
+      requireRole(auth?.role, ["admin", "vendedor"]);
+      return NextResponse.json(await markSuggestionUsed(tenantId, convSuggestionUsed[2]));
+    }
     const convMsgs = /^\/conversations\/([^/]+)$/.exec(path);
     if (convMsgs && method === "GET") {
       requireRole(auth?.role, ["admin", "vendedor", "viewer"]);
@@ -584,6 +599,22 @@ export async function dispatchApi(
     }
 
     /* -------- Storefront público (sin JWT) -------- */
+    if (path === "/public/store" && method === "GET") {
+      return handlePublicStore(url);
+    }
+    if (path === "/public/categories" && method === "GET") {
+      return handlePublicCategories(url, s);
+    }
+    if (path === "/public/products" && method === "GET") {
+      return handlePublicProducts(url, s);
+    }
+    const publicProductDetail = /^\/public\/products\/([^/]+)$/.exec(path);
+    if (publicProductDetail && method === "GET") {
+      return handlePublicProductDetail(publicProductDetail[1], url, s);
+    }
+    if (path === "/public/facets" && method === "GET") {
+      return handlePublicFacets(url, s);
+    }
     if (path === "/public/checkout" && method === "POST") {
       const result = await handlePublicCheckout(req, url, s);
       return result;
@@ -600,8 +631,120 @@ export async function dispatchApi(
   }
 }
 
-/** Resuelve el origin del request para armar back_urls absolutas hacia las páginas del storefront. */
-function resolveStorefrontOrigin(req: NextRequest, url: URL): string {
+const SUGGESTION_FRESH_WINDOW_MS = Number(process.env.SUGGESTION_FRESH_WINDOW_MS ?? 10 * 60 * 1000);
+
+async function findConversationByPhone(tenantId: string, phone: string) {
+  const { prisma } = await import("@waseller/db");
+  return prisma.conversation.findFirst({
+    where: { tenantId, phone },
+    orderBy: { updatedAt: "desc" },
+    select: { id: true, leadId: true }
+  });
+}
+
+async function loadLatestSuggestion(conversationId: string) {
+  const { prisma } = await import("@waseller/db");
+  return prisma.conversationSuggestion.findFirst({
+    where: { conversationId, status: { in: ["fresh", "stale", "used"] } },
+    orderBy: { generatedAt: "desc" }
+  });
+}
+
+async function enqueueSuggestionJob(args: {
+  tenantId: string;
+  conversationId: string;
+  leadId?: string | null;
+  phone: string;
+  trigger: "manual_regen" | "conversation_open";
+}) {
+  const { suggestionGenerationQueue, buildStableDedupeKey, JOB_SCHEMA_VERSION, buildCorrelationId } =
+    await import("@waseller/queue");
+  const dedupeKey = buildStableDedupeKey(
+    "suggestion",
+    args.tenantId,
+    args.phone,
+    args.trigger,
+    String(Date.now())
+  );
+  await suggestionGenerationQueue.add(
+    `suggestion-${args.trigger}`,
+    {
+      schemaVersion: JOB_SCHEMA_VERSION,
+      correlationId: buildCorrelationId(),
+      dedupeKey,
+      tenantId: args.tenantId,
+      conversationId: args.conversationId,
+      leadId: args.leadId ?? null,
+      phone: args.phone,
+      triggerMessageId: null,
+      trigger: args.trigger
+    },
+    { jobId: `suggestion_${dedupeKey}` }
+  );
+}
+
+async function getOrEnqueueSuggestion(tenantId: string, phone: string) {
+  const conversation = await findConversationByPhone(tenantId, phone);
+  if (!conversation) return { suggestion: null, status: "no_conversation" as const };
+
+  const latest = await loadLatestSuggestion(conversation.id);
+  const isFresh =
+    latest?.status === "fresh" &&
+    Date.now() - new Date(latest.generatedAt).getTime() < SUGGESTION_FRESH_WINDOW_MS;
+
+  if (!isFresh) {
+    await enqueueSuggestionJob({
+      tenantId,
+      conversationId: conversation.id,
+      leadId: conversation.leadId,
+      phone,
+      trigger: "conversation_open"
+    });
+  }
+
+  return {
+    suggestion: latest,
+    status: isFresh ? ("fresh" as const) : ("regenerating" as const)
+  };
+}
+
+async function regenerateSuggestion(tenantId: string, phone: string) {
+  const conversation = await findConversationByPhone(tenantId, phone);
+  if (!conversation) return { ok: false, reason: "no_conversation" };
+  await enqueueSuggestionJob({
+    tenantId,
+    conversationId: conversation.id,
+    leadId: conversation.leadId,
+    phone,
+    trigger: "manual_regen"
+  });
+  return { ok: true, status: "regenerating" as const };
+}
+
+async function markSuggestionUsed(tenantId: string, suggestionId: string) {
+  const { prisma } = await import("@waseller/db");
+  const updated = await prisma.conversationSuggestion.updateMany({
+    where: { id: suggestionId, tenantId },
+    data: { status: "used", usedAt: new Date() }
+  });
+  return { ok: updated.count > 0 };
+}
+
+/** Resuelve el origin público del storefront para armar back_urls absolutas de Mercado Pago.
+ * Orden de precedencia (de más específico a menos):
+ *   1) `tenantStorefrontBaseUrl` — campo `tenants.storefront_base_url` (multi-dominio por cliente)
+ *   2) `PUBLIC_STOREFRONT_BASE_URL` — env global (single-tenant o monorepo del dashboard)
+ *   3) header `x-forwarded-host` (Vercel) o `request.url` (último recurso)
+ *
+ * Sin (1) o (2), si tenés varios clientes en distintos dominios, MP redirige al dominio del request
+ * actual (o sea, al dashboard) en vez del storefront del cliente — y rompe la UX. */
+function resolveStorefrontOrigin(
+  req: NextRequest,
+  url: URL,
+  tenantStorefrontBaseUrl?: string | null
+): string {
+  const tenantOverride = String(tenantStorefrontBaseUrl ?? "").trim().replace(/\/$/, "");
+  if (tenantOverride) return tenantOverride;
   const explicit = String(process.env.PUBLIC_STOREFRONT_BASE_URL ?? "").trim().replace(/\/$/, "");
   if (explicit) return explicit;
   const forwardedProto = req.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
@@ -628,7 +771,7 @@ async function handlePublicCheckout(
   const { prisma } = await import("@waseller/db");
   const tenant = await prisma.tenant.findUnique({
     where: { publicCatalogSlug: slug },
-    select: { id: true, name: true }
+    select: { id: true, name: true, storefrontBaseUrl: true }
   });
   if (!tenant) return NextResponse.json({ message: "Tienda no encontrada." }, { status: 404 });
 
@@ -650,7 +793,7 @@ async function handlePublicCheckout(
     metadata: { slug, source: "storefront" }
   });
 
-  const origin = resolveStorefrontOrigin(req, url);
+  const origin = resolveStorefrontOrigin(req, url, tenant.storefrontBaseUrl);
   const orderId = created.order.id;
   const backUrls = {
     success: `${origin}/tienda/${slug}/checkout/exito?order_id=${orderId}`,
@@ -729,13 +872,9 @@ async function handlePublicOrderStatus(
 ): Promise<NextResponse> {
   const slug = String(url.searchParams.get("slug") ?? "").trim();
   if (!slug) return NextResponse.json({ message: "Falta slug." }, { status: 400 });
-  const { prisma } = await import("@waseller/db");
-  const tenant = await prisma.tenant.findUnique({
-    where: { publicCatalogSlug: slug },
-    select: { id: true }
-  });
-  if (!tenant) return NextResponse.json({ message: "Tienda no encontrada." }, { status: 404 });
-  const result = await s.orders.getOrderById(tenant.id, orderId);
+  const tenantId = await resolveTenantIdBySlug(slug);
+  if (!tenantId) return NextResponse.json({ message: "Tienda no encontrada." }, { status: 404 });
+  const result = await s.orders.getOrderById(tenantId, orderId);
   if (!result) return NextResponse.json({ message: "Order no encontrada." }, { status: 404 });
   /** Solo exponemos status + monto (no los datos del comprador) para evitar fishing por enumeración. */
   return NextResponse.json({
@@ -747,4 +886,122 @@ async function handlePublicOrderStatus(
     expiresAt: result.order.expiresAt,
     itemCount: result.items.reduce((acc, it) => acc + it.quantity, 0)
   });
+}
+
+/* ─── Helpers compartidos por handlers públicos ─────────────────── */
+
+/** Lookup mínimo de tenant por slug. Centralizado para evitar re-importar prisma en cada handler. */
+async function resolveTenantIdBySlug(slug: string): Promise<string | null> {
+  const { prisma } = await import("@waseller/db");
+  const tenant = await prisma.tenant.findUnique({
+    where: { publicCatalogSlug: slug },
+    select: { id: true }
+  });
+  return tenant?.id ?? null;
+}
+
+function readSlug(url: URL): string {
+  return String(url.searchParams.get("slug") ?? "").trim();
+}
+
+/* ─── GETs públicos para storefronts externos ────────────────────── */
+
+/** Datos del tenant + storeConfig normalizado. Lo necesita el storefront para pintar marca, hero, contacto, etc. */
+async function handlePublicStore(url: URL): Promise<NextResponse> {
+  const slug = readSlug(url);
+  if (!slug) return NextResponse.json({ message: "Falta slug." }, { status: 400 });
+  const { prisma } = await import("@waseller/db");
+  const tenant = await prisma.tenant.findUnique({
+    where: { publicCatalogSlug: slug },
+    select: {
+      id: true,
+      name: true,
+      publicCatalogSlug: true,
+      storefrontBaseUrl: true,
+      storeConfig: { select: { config: true, updatedAt: true } }
+    }
+  });
+  if (!tenant) return NextResponse.json({ message: "Tienda no encontrada." }, { status: 404 });
+  const { normalizeStoreConfig } = await import("@waseller/shared");
+  const config = normalizeStoreConfig(tenant.storeConfig?.config ?? {});
+  return NextResponse.json({
+    tenantId: tenant.id,
+    name: tenant.name,
+    slug: tenant.publicCatalogSlug,
+    storefrontBaseUrl: tenant.storefrontBaseUrl,
+    config,
+    configUpdatedAt: tenant.storeConfig?.updatedAt
+      ? new Date(tenant.storeConfig.updatedAt).toISOString()
+      : null
+  });
+}
+
+/** Árbol de categorías activas para armar menús/filtros. */
+async function handlePublicCategories(
+  url: URL,
+  _s: ReturnType<typeof getBackendServices>
+): Promise<NextResponse> {
+  const slug = readSlug(url);
+  if (!slug) return NextResponse.json({ message: "Falta slug." }, { status: 400 });
+  const tenantId = await resolveTenantIdBySlug(slug);
+  if (!tenantId) return NextResponse.json({ message: "Tienda no encontrada." }, { status: 404 });
+  const { prisma } = await import("@waseller/db");
+  const rows = await prisma.category.findMany({
+    where: { tenantId, isActive: true },
+    orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+    select: { id: true, parentId: true, name: true, slug: true, sortOrder: true }
+  });
+  return NextResponse.json({ categories: rows });
+}
+
+/** Catálogo: mismo shape que listPublicCatalogByTenant + filtros. Devuelve agrupado por producto. */
+async function handlePublicProducts(
+  url: URL,
+  s: ReturnType<typeof getBackendServices>
+): Promise<NextResponse> {
+  const slug = readSlug(url);
+  if (!slug) return NextResponse.json({ message: "Falta slug." }, { status: 400 });
+  const tenantId = await resolveTenantIdBySlug(slug);
+  if (!tenantId) return NextResponse.json({ message: "Tienda no encontrada." }, { status: 404 });
+  const rows = await s.products.listPublicCatalogByTenant(tenantId, {
+    categoryId: url.searchParams.get("categoryId")?.trim() || undefined,
+    q: url.searchParams.get("q")?.trim() || undefined,
+    talle: url.searchParams.get("talle")?.trim() || undefined,
+    color: url.searchParams.get("color")?.trim() || undefined,
+    marca: url.searchParams.get("marca")?.trim() || undefined
+  });
+  return NextResponse.json({ variants: rows });
+}
+
+/** Detalle de producto: variantes + categorías. Para la página de producto del storefront. */
+async function handlePublicProductDetail(
+  productId: string,
+  url: URL,
+  s: ReturnType<typeof getBackendServices>
+): Promise<NextResponse> {
+  const slug = readSlug(url);
+  if (!slug) return NextResponse.json({ message: "Falta slug." }, { status: 400 });
+  const tenantId = await resolveTenantIdBySlug(slug);
+  if (!tenantId) return NextResponse.json({ message: "Tienda no encontrada." }, { status: 404 });
+  const result = await s.products.getPublicProductDetailsByTenant(tenantId, productId);
+  if (!result.variants.length) {
+    return NextResponse.json({ message: "Producto no encontrado." }, { status: 404 });
+  }
+  return NextResponse.json(result);
+}
+
+/** Valores distintos de talle/color/marca para armar selects de filtros. */
+async function handlePublicFacets(
+  url: URL,
+  s: ReturnType<typeof getBackendServices>
+): Promise<NextResponse> {
+  const slug = readSlug(url);
+  if (!slug) return NextResponse.json({ message: "Falta slug." }, { status: 400 });
+  const tenantId = await resolveTenantIdBySlug(slug);
+  if (!tenantId) return NextResponse.json({ message: "Tienda no encontrada." }, { status: 404 });
+  const facets = await s.products.listVariantFacetDistinctValues(tenantId, {
+    categoryId: url.searchParams.get("categoryId")?.trim() || undefined,
+    publicCatalog: true
+  });
+  return NextResponse.json(facets);
 }

@@ -17,7 +17,14 @@
       "Bash(echo \"EXIT_W=$?\")",
       "Bash(echo \"EXIT_D=$?\")",
       "Bash(echo \"EXIT_B=$?\")",
-      "Bash(grep *)"
+      "Bash(grep *)",
+      "Bash(echo \"DASH=$?\")",
+      "Bash(echo \"BACK=$?\")",
+      "Bash(npm install *)",
+      "Bash(echo \"SDK=$?\")",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\HOME\\\\Documents\\\\GitHub\\\\waseller\" -Directory)",
+      "Bash(Select-Object Name)",
+      "Bash(Find C:\\\\Users\\\\HOME\\\\Documents\\\\GitHub\\\\waseller\\\\apps -name \"*.ts\" -o -name \"*.tsx\")"
     ]
   }
 }

@@ -6,13 +6,12 @@ import {
   ConversationStageV1,
   JOB_SCHEMA_VERSION,
   IncomingMessageJobV1,
-  LlmOrchestrationJobV1,
   QueueNames,
+  SuggestionGenerationJobV1,
   buildStableDedupeKey,
-  leadProcessingQueue,
-  llmOrchestrationQueue,
   redisConnection,
-  stockReservationExpiryQueue
+  stockReservationExpiryQueue,
+  suggestionGenerationQueue
 } from "../../../packages/queue/src";
 import { prisma } from "../../../packages/db/src";
 import { ConversationLockService } from "./services/conversation-lock.service";
@@ -640,67 +639,36 @@ export const messageProcessorWorker = new Worker<IncomingMessageJobV1>(
 
       const conversationState = shouldPreserveClosedSale ? "lead_closed" : leadWasClosed ? "open" : conversation?.state ?? "open";
       const botPaused = conversationState === "manual_paused";
-      if (!botPaused && isBusinessRelated && lead) {
-        if (routeThroughOrchestratorFirst) {
-          const llmJob: LlmOrchestrationJobV1 = {
-            schemaVersion: JOB_SCHEMA_VERSION,
-            correlationId: job.data.correlationId,
-            dedupeKey: job.data.dedupeKey,
-            tenantId,
-            leadId: lead.id,
-            phone: payload.phone,
-            messageId: messageRecord.id,
-            conversationId: effectiveConversationId,
-            incomingText: payload.message,
-            intentHint: effectiveIntent,
-            timestamp: payload.timestamp,
-            executionMode: llmPolicy.executionMode,
-            allowSensitiveActions: llmPolicy.allowSensitiveActions,
-            verifierRequired: llmPolicy.verifierRequired,
-            minVerifierScore: llmPolicy.minVerifierScore,
-            conversationStage: ruleInterpretation.conversationStage,
-            activeOffer,
-            memoryFacts: memory.facts ?? {},
-            ruleInterpretation
-          };
-          await llmOrchestrationQueue.add("llm-orchestration-v1", llmJob, {
-            jobId: `llm_${llmJob.dedupeKey}`
-          });
-        } else {
-          const leadDedupe = buildStableDedupeKey("lead", tenantId, payload.phone, messageRecord.id);
-          await leadProcessingQueue.add(
-            "lead-processed-v1",
-            {
-              schemaVersion: JOB_SCHEMA_VERSION,
-              correlationId: job.data.correlationId,
-              dedupeKey: leadDedupe,
-              tenantId,
-              leadId: lead.id,
-              phone: payload.phone,
-              messageId: messageRecord.id,
-              conversationId: effectiveConversationId,
-              executionMode: llmPolicy.executionMode,
-              intent: needsClarificationForAxes ? "consultar_talle" : effectiveIntent,
-              incomingMessage: payload.message,
-              status,
-              isBusinessRelated,
-              productName: effectiveMatched?.productName ?? null,
-              variantId: effectiveMatched?.variantId ?? null,
-              variantAttributes: effectiveMatched?.attributes ?? {},
-              missingAxes: effectiveMatched?.missingAxes ?? [],
-              requestedAttributes: effectiveMatched?.requestedAttributes ?? {},
-              unavailableCombination: effectiveMatched?.unavailableCombination ?? false,
-              stockReserved: reserved,
-              conversationStage: ruleInterpretation.conversationStage,
-              activeOffer,
-              interpretation: ruleInterpretation,
-              memoryFacts: memory.facts ?? {}
-            },
-            {
-              jobId: `lead_${leadDedupe}`
-            }
-          );
-        }
+      // Modo copiloto: el bot ya no responde automáticamente. En vez de enrutar a
+      // orchestrator/lead worker (que generaban respuestas y disparaban acciones
+      // sensibles como reservas/links de pago), encolamos un job para que
+      // suggestion-generator analice y persista una sugerencia para el humano.
+      if (!botPaused && isBusinessRelated && lead && effectiveConversationId) {
+        const suggestionDedupe = buildStableDedupeKey(
+          "suggestion",
+          tenantId,
+          payload.phone,
+          messageRecord.id
+        );
+        const suggestionJob: SuggestionGenerationJobV1 = {
+          schemaVersion: JOB_SCHEMA_VERSION,
+          correlationId: job.data.correlationId,
+          dedupeKey: suggestionDedupe,
+          tenantId,
+          conversationId: effectiveConversationId,
+          leadId: lead.id,
+          phone: payload.phone,
+          triggerMessageId: messageRecord.id,
+          trigger: "incoming_msg",
+          intent: effectiveIntent,
+          leadScore: score,
+          leadStatus: status,
+          matchedProductName: effectiveMatched?.productName ?? null,
+          matchedVariantId: effectiveMatched?.variantId ?? null
+        };
+        await suggestionGenerationQueue.add("suggestion-incoming", suggestionJob, {
+          jobId: `suggestion_${suggestionDedupe}`
+        });
         processorMetrics.onEnqueued();
       }
     } finally {

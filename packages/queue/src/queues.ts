@@ -147,6 +147,7 @@ export const QueueNames = {
   incomingMessages: "incoming_messages",
   llmOrchestration: "llm_orchestration",
   leadProcessing: "lead_processing",
+  suggestionGeneration: "suggestion_generation",
   outgoingMessages: "outgoing_messages",
   stockSync: "stock_sync",
   stockReservationExpiry: "stock_reservation_expiry",
@@ -196,6 +197,11 @@ export const llmOrchestrationQueue = new Queue(QueueNames.llmOrchestration, {
   defaultJobOptions
 });
 
+export const suggestionGenerationQueue = new Queue(QueueNames.suggestionGeneration, {
+  connection: redisConnection,
+  defaultJobOptions
+});
+
 export const outgoingQueue = new Queue(QueueNames.outgoingMessages, {
   connection: redisConnection,
   defaultJobOptions
@@ -220,6 +226,7 @@ const bullQueuesForErrorHandling: Queue[] = [
   incomingQueue,
   leadProcessingQueue,
   llmOrchestrationQueue,
+  suggestionGenerationQueue,
   outgoingQueue,
   stockSyncQueue,
   stockReservationExpiryQueue,

@@ -66,6 +66,33 @@ function leadStatusLabel(status: string | undefined): string {
   return LEAD_STATUS_LABEL_ES[status] ?? status.replace(/_/g, " ");
 }
 
+type SuggestionRecommendedVariant = {
+  variantId: string;
+  productName: string;
+  attributes?: Record<string, string>;
+  reason: string;
+  confidence: number;
+};
+
+type Suggestion = {
+  id: string;
+  intent: string | null;
+  leadStatus: string | null;
+  leadScore: number | null;
+  draftReply: string | null;
+  summaryForSeller: string | null;
+  recommendedVariants: SuggestionRecommendedVariant[] | null;
+  reasoning: { leadStatusReasoning?: string; summaryForSeller?: string } | null;
+  status: string;
+  generatedAt: string;
+  llmModel: string | null;
+};
+
+type SuggestionResponse = {
+  suggestion: Suggestion | null;
+  status: "fresh" | "regenerating" | "no_conversation";
+};
+
 type PaymentLinkReview = {
   id: string;
   status: string;
@@ -122,6 +149,9 @@ export default function ConversationPage({
   const [archived, setArchived] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [unarchiving, setUnarchiving] = useState(false);
+  const [suggestion, setSuggestion] = useState<Suggestion | null>(null);
+  const [suggestionStatus, setSuggestionStatus] = useState<SuggestionResponse["status"]>("regenerating");
+  const [regeneratingSuggestion, setRegeneratingSuggestion] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
@@ -144,7 +174,7 @@ export default function ConversationPage({
       return;
     }
     try {
-      const [messagesRes, leadsRes, stateRes, paymentLinksRes] =
+      const [messagesRes, leadsRes, stateRes, paymentLinksRes, suggestionRes] =
         await Promise.all([
           fetch(`${getClientApiBase()}/conversations/${encodeURIComponent(phone)}`, {
             headers: {
@@ -187,6 +217,16 @@ export default function ConversationPage({
               cache: "no-store",
             },
           ),
+          fetch(
+            `${getClientApiBase()}/conversations/${encodeURIComponent(phone)}/suggestion`,
+            {
+              headers: {
+                Authorization: `Bearer ${auth.token}`,
+                "x-tenant-id": auth.tenantId,
+              },
+              cache: "no-store",
+            },
+          ),
         ]);
 
       if (!messagesRes.ok) throw new Error(await messagesRes.text());
@@ -206,6 +246,11 @@ export default function ConversationPage({
       setBotPaused(stateData.botPaused);
       setLeadClosed(stateData.leadClosed);
       setArchived(Boolean(stateData.archived));
+      if (suggestionRes.ok) {
+        const sugg = (await suggestionRes.json()) as SuggestionResponse;
+        setSuggestion(sugg.suggestion);
+        setSuggestionStatus(sugg.status);
+      }
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al cargar datos");
@@ -222,6 +267,58 @@ export default function ConversationPage({
     }, 5000);
     return () => window.clearInterval(interval);
   }, [phone]);
+
+  const regenerateSuggestion = async () => {
+    const auth = authContext();
+    if (!auth) {
+      window.location.href = "/login";
+      return;
+    }
+    setRegeneratingSuggestion(true);
+    try {
+      const response = await fetch(
+        `${getClientApiBase()}/conversations/${encodeURIComponent(phone)}/suggestion/regenerate`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${auth.token}`,
+            "x-tenant-id": auth.tenantId,
+          },
+        },
+      );
+      if (!response.ok) throw new Error(await response.text());
+      setSuggestionStatus("regenerating");
+      // El siguiente tick del polling traerá la nueva.
+    } catch (err) {
+      // eslint-disable-next-line no-alert
+      alert(err instanceof Error ? err.message : "No se pudo regenerar");
+    } finally {
+      setRegeneratingSuggestion(false);
+    }
+  };
+
+  const useSuggestionDraft = async () => {
+    if (!suggestion?.draftReply) return;
+    setDraft(suggestion.draftReply);
+    if (suggestion.id) {
+      const auth = authContext();
+      if (!auth) return;
+      try {
+        await fetch(
+          `${getClientApiBase()}/conversations/${encodeURIComponent(phone)}/suggestion/${suggestion.id}/use`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${auth.token}`,
+              "x-tenant-id": auth.tenantId,
+            },
+          },
+        );
+      } catch {
+        // best-effort: no bloqueamos al humano si falla el marcado.
+      }
+    }
+  };
 
   const sendReply = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -883,6 +980,101 @@ export default function ConversationPage({
                 ) : null}
               </dl>
             </>
+          )}
+        </div>
+
+        <div className="border-t border-border pt-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-section">Sugerencia del copiloto</h3>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={regenerateSuggestion}
+              loading={regeneratingSuggestion}
+              disabled={loading}
+            >
+              Regenerar
+            </Button>
+          </div>
+
+          {!suggestion && suggestionStatus === "regenerating" ? (
+            <p className="mt-3 text-label-ui text-muted-ui">
+              Generando análisis de la conversación…
+            </p>
+          ) : !suggestion ? (
+            <p className="mt-3 text-label-ui text-muted-ui">
+              Sin sugerencia todavía.
+            </p>
+          ) : (
+            <div className="mt-3 space-y-4">
+              {suggestion.reasoning?.leadStatusReasoning ? (
+                <div>
+                  <dt className="text-label-ui text-muted-ui">Por qué está así</dt>
+                  <dd className="mt-1 text-body text-[var(--color-text)]">
+                    {suggestion.reasoning.leadStatusReasoning}
+                  </dd>
+                </div>
+              ) : null}
+
+              {suggestion.summaryForSeller ? (
+                <div>
+                  <dt className="text-label-ui text-muted-ui">Resumen</dt>
+                  <dd className="mt-1 text-body text-[var(--color-text)]">
+                    {suggestion.summaryForSeller}
+                  </dd>
+                </div>
+              ) : null}
+
+              {suggestion.recommendedVariants && suggestion.recommendedVariants.length > 0 ? (
+                <div>
+                  <dt className="text-label-ui text-muted-ui">Productos recomendados</dt>
+                  <ul className="mt-2 space-y-2">
+                    {suggestion.recommendedVariants.map((rec) => (
+                      <li
+                        key={rec.variantId}
+                        className="rounded border border-border bg-surface p-2"
+                      >
+                        <p className="text-body font-medium">{rec.productName}</p>
+                        {rec.attributes && Object.keys(rec.attributes).length > 0 ? (
+                          <p className="text-label-ui text-muted-ui">
+                            {Object.entries(rec.attributes)
+                              .map(([k, v]) => `${k}: ${v}`)
+                              .join(" · ")}
+                          </p>
+                        ) : null}
+                        {rec.reason ? (
+                          <p className="mt-1 text-label-ui text-muted-ui">
+                            {rec.reason}
+                          </p>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+
+              {suggestion.draftReply ? (
+                <div>
+                  <dt className="text-label-ui text-muted-ui">Borrador sugerido</dt>
+                  <dd className="mt-1 whitespace-pre-wrap rounded border border-border bg-surface p-2 text-body text-[var(--color-text)]">
+                    {suggestion.draftReply}
+                  </dd>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    className="mt-2 w-full"
+                    onClick={useSuggestionDraft}
+                  >
+                    Usar borrador
+                  </Button>
+                </div>
+              ) : null}
+
+              <p className="text-label-ui text-muted-ui">
+                {suggestion.status === "fresh" ? "Reciente" : "Desactualizada"}
+                {suggestion.llmModel ? ` · ${suggestion.llmModel}` : ""}
+              </p>
+            </div>
           )}
         </div>
       </aside>

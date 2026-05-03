@@ -4,10 +4,11 @@
   "version": "0.1.0",
   "workspaces": [
     "apps/*",
+    "apps/storefronts/*",
     "packages/*"
   ],
   "scripts": {
-    "build:packages": "npm run build --workspace @waseller/shared && npm run build --workspace @waseller/queue && npm run build --workspace @waseller/db && npm run build --workspace @waseller/api-core",
+    "build:packages": "npm run build --workspace @waseller/shared && npm run build --workspace @waseller/queue && npm run build --workspace @waseller/db && npm run build --workspace @waseller/api-core && npm run build --workspace @waseller/storefront-sdk",
     "build:api": "npm run build:packages && npm run build --workspace @waseller/backend",
     "build:workers": "npm run build --workspace @waseller/shared && npm run build --workspace @waseller/queue && npm run build --workspace @waseller/db && npm run build --workspace @waseller/workers",
     "build:whatsapp": "npm run build --workspace @waseller/shared && npm run build --workspace @waseller/queue && npm run build --workspace @waseller/whatsapp",

@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.orderReservationExpiryQueue = exports.stockReservationExpiryQueue = exports.stockSyncQueue = exports.outgoingQueue = exports.llmOrchestrationQueue = exports.leadProcessingQueue = exports.incomingQueue = exports.redisConnection = exports.QueueNames = void 0;
+exports.orderReservationExpiryQueue = exports.stockReservationExpiryQueue = exports.stockSyncQueue = exports.outgoingQueue = exports.suggestionGenerationQueue = exports.llmOrchestrationQueue = exports.leadProcessingQueue = exports.incomingQueue = exports.redisConnection = exports.QueueNames = void 0;
 exports.bindTransientRedisSocketErrors = bindTransientRedisSocketErrors;
 const node_fs_1 = require("node:fs");
 const bullmq_1 = require("bullmq");
@@ -137,6 +137,7 @@ exports.QueueNames = {
     incomingMessages: "incoming_messages",
     llmOrchestration: "llm_orchestration",
     leadProcessing: "lead_processing",
+    suggestionGeneration: "suggestion_generation",
     outgoingMessages: "outgoing_messages",
     stockSync: "stock_sync",
     stockReservationExpiry: "stock_reservation_expiry",
@@ -176,6 +177,10 @@ exports.llmOrchestrationQueue = new bullmq_1.Queue(exports.QueueNames.llmOrchest
     connection: exports.redisConnection,
     defaultJobOptions
 });
+exports.suggestionGenerationQueue = new bullmq_1.Queue(exports.QueueNames.suggestionGeneration, {
+    connection: exports.redisConnection,
+    defaultJobOptions
+});
 exports.outgoingQueue = new bullmq_1.Queue(exports.QueueNames.outgoingMessages, {
     connection: exports.redisConnection,
     defaultJobOptions
@@ -196,6 +201,7 @@ const bullQueuesForErrorHandling = [
     exports.incomingQueue,
     exports.leadProcessingQueue,
     exports.llmOrchestrationQueue,
+    exports.suggestionGenerationQueue,
     exports.outgoingQueue,
     exports.stockSyncQueue,
     exports.stockReservationExpiryQueue,
