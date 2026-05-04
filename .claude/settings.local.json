@@ -27,7 +27,9 @@
       "Bash(Find C:\\\\Users\\\\HOME\\\\Documents\\\\GitHub\\\\waseller\\\\apps -name \"*.ts\" -o -name \"*.tsx\")",
       "Bash(Get-ChildItem -Path C:\\\\Users\\\\HOME\\\\Documents\\\\GitHub\\\\waseller -Directory)",
       "Bash(Select-Object -First 20)",
-      "Bash(findstr -i config)"
+      "Bash(findstr -i config)",
+      "Bash(git diff *)",
+      "Bash(git add *)"
     ]
   }
 }
