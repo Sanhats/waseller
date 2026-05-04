@@ -443,6 +443,10 @@ export async function dispatchApi(
       requireRole(auth?.role, ["admin"]);
       return NextResponse.json(await clearSyntheticTurns(tenantId));
     }
+    if (path === "/ops/rag/synthetic-progress" && method === "GET") {
+      requireRole(auth?.role, ["admin"]);
+      return NextResponse.json(await getSyntheticProgress(tenantId));
+    }
     if (path === "/ops/style-profile" && method === "GET") {
       requireRole(auth?.role, ["admin"]);
       return NextResponse.json(await loadStyleProfile(tenantId));
@@ -882,6 +886,69 @@ async function enqueueSyntheticGeneration(
     enqueued++;
   }
   return { ok: true, enqueued, segments: targets };
+}
+
+async function getSyntheticProgress(tenantId: string) {
+  const { syntheticConversationGenQueue } = await import("@waseller/queue");
+  const { prisma } = await import("@waseller/db");
+
+  /** BullMQ job counts globales (no filtrables por tenant). En la práctica solo un tenant
+   *  corre generación a la vez; para el panel sirve. */
+  const counts = await syntheticConversationGenQueue.getJobCounts(
+    "active",
+    "waiting",
+    "delayed",
+    "completed",
+    "failed",
+    "paused"
+  );
+
+  /** Inserciones del tenant en los últimos 10 min — esto sí es per-tenant. */
+  const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000);
+  const recentInsertedTurns = await prisma.conversationTurnExample.count({
+    where: {
+      tenantId,
+      source: "synthetic",
+      indexedAt: { gte: tenMinAgo }
+    }
+  });
+
+  /** Últimas 6 conversaciones sintéticas indexadas: muestra qué se está generando. */
+  const lastConversationsRaw = (await (prisma as any).$queryRawUnsafe(
+    `SELECT conversation_id, segment, scenario, MIN(indexed_at) as started_at, COUNT(*)::int as turn_count
+     FROM conversation_turn_examples
+     WHERE tenant_id = $1::uuid AND source = 'synthetic' AND indexed_at >= $2
+     GROUP BY conversation_id, segment, scenario
+     ORDER BY started_at DESC
+     LIMIT 6`,
+    tenantId,
+    tenMinAgo
+  )) as Array<{
+    conversation_id: string;
+    segment: string | null;
+    scenario: string | null;
+    started_at: Date;
+    turn_count: number;
+  }>;
+
+  return {
+    queue: {
+      active: Number(counts.active ?? 0),
+      waiting: Number(counts.waiting ?? 0),
+      delayed: Number(counts.delayed ?? 0),
+      completed: Number(counts.completed ?? 0),
+      failed: Number(counts.failed ?? 0),
+      paused: Number(counts.paused ?? 0)
+    },
+    recentInsertedTurns,
+    lastConversations: lastConversationsRaw.map((r) => ({
+      conversationId: r.conversation_id,
+      segment: r.segment,
+      scenario: r.scenario,
+      startedAt: r.started_at.toISOString(),
+      turnCount: r.turn_count
+    }))
+  };
 }
 
 async function clearSyntheticTurns(tenantId: string) {

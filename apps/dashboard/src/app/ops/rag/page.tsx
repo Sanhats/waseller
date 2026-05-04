@@ -25,6 +25,25 @@ const SEGMENT_LABEL: Record<string, string> = {
 
 type Segment = "mujer" | "hombre" | "unisex" | "ninos";
 
+type SyntheticProgress = {
+  queue: {
+    active: number;
+    waiting: number;
+    delayed: number;
+    completed: number;
+    failed: number;
+    paused: number;
+  };
+  recentInsertedTurns: number;
+  lastConversations: Array<{
+    conversationId: string;
+    segment: string | null;
+    scenario: string | null;
+    startedAt: string;
+    turnCount: number;
+  }>;
+};
+
 const FALLBACK_TENANT = process.env.NEXT_PUBLIC_TENANT_ID ?? "";
 
 const authContext = (): { token: string; tenantId: string } | null => {
@@ -50,6 +69,7 @@ export default function RagPage() {
   const [generating, setGenerating] = useState(false);
   const [lastSyntheticRun, setLastSyntheticRun] = useState<{ enqueued: number } | null>(null);
   const [clearingSynthetic, setClearingSynthetic] = useState(false);
+  const [progress, setProgress] = useState<SyntheticProgress | null>(null);
 
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth < 1024);
@@ -82,6 +102,42 @@ export default function RagPage() {
 
   useEffect(() => {
     void load();
+  }, []);
+
+  /** Polling de progreso: cada 3s mientras hay jobs activos/esperando, sino cada 30s (idle). */
+  useEffect(() => {
+    const auth = authContext();
+    if (!auth) return;
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    const tick = async () => {
+      try {
+        const r = await fetch(`${getClientApiBase()}/ops/rag/synthetic-progress`, {
+          headers: { Authorization: `Bearer ${auth.token}`, "x-tenant-id": auth.tenantId },
+          cache: "no-store",
+        });
+        if (!r.ok) return;
+        const data = (await r.json()) as SyntheticProgress;
+        if (cancelled) return;
+        setProgress(data);
+        const busy = data.queue.active + data.queue.waiting + data.queue.delayed > 0;
+        timeoutId = setTimeout(tick, busy ? 3000 : 30000);
+        // Si volvió a idle, refrescamos las stats principales una vez.
+        if (!busy && progress && progress.queue.active + progress.queue.waiting > 0) {
+          void load();
+        }
+      } catch {
+        timeoutId = setTimeout(tick, 10000);
+      }
+    };
+    void tick();
+    return () => {
+      cancelled = true;
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+    // Solo arrancamos el loop al montar.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const generateSynthetic = async () => {
@@ -295,13 +351,50 @@ export default function RagPage() {
               {lastSyntheticRun ? (
                 <p className="mt-3 text-label-ui text-muted-ui">
                   Encolamos {lastSyntheticRun.enqueued} conversaciones. Cada una tarda ~5s en generarse.
-                  Las stats se actualizan a medida que el worker procesa.
                 </p>
               ) : (
                 <p className="mt-3 text-label-ui text-muted-ui">
                   Sugerencia inicial: 40 conversaciones cubriendo los 4 segmentos. Costo aprox: $0.30 USD.
                 </p>
               )}
+
+              {progress ? (
+                <div className="mt-4 rounded border border-border bg-canvas p-3">
+                  <div className="flex flex-wrap items-center gap-3 text-label-ui">
+                    <span>
+                      <strong>{progress.queue.active}</strong> generándose
+                    </span>
+                    <span>
+                      <strong>{progress.queue.waiting}</strong> en cola
+                    </span>
+                    <span>
+                      <strong>{progress.queue.completed}</strong> completadas (global)
+                    </span>
+                    {progress.queue.failed > 0 ? (
+                      <span className="text-danger">
+                        <strong>{progress.queue.failed}</strong> fallidas
+                      </span>
+                    ) : null}
+                    <span className="text-muted-ui">
+                      · {progress.recentInsertedTurns} turnos insertados (últimos 10 min)
+                    </span>
+                  </div>
+                  {progress.lastConversations.length > 0 ? (
+                    <ul className="mt-3 space-y-1 text-label-ui">
+                      {progress.lastConversations.map((c) => (
+                        <li key={c.conversationId} className="text-muted-ui">
+                          {new Date(c.startedAt).toLocaleTimeString("es-AR")} ·{" "}
+                          {SEGMENT_LABEL[c.segment ?? ""] ?? c.segment ?? "?"} ·{" "}
+                          <span className="text-[var(--color-text)]">
+                            {c.scenario ?? "?"}
+                          </span>{" "}
+                          ({c.turnCount} turnos)
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
 
             {lastBackfill ? (

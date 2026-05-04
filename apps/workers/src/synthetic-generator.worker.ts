@@ -67,17 +67,32 @@ export const syntheticGeneratorWorker = new Worker<SyntheticGenJob>(
       return;
     }
 
+    const startedAt = Date.now();
+    console.log(`[synthetic-generator] start tenant=${tenantId} seg=${segment} job=${job.id}`);
+
     const conv = await generator.generateOne({ segment, scenario, tone });
     if (!conv) {
-      console.warn(`[synthetic-generator] tenant=${tenantId} segment=${segment} — generate failed`);
+      console.warn(
+        `[synthetic-generator] generate-failed tenant=${tenantId} seg=${segment} job=${job.id} elapsed=${Date.now() - startedAt}ms`
+      );
+      return;
+    }
+    console.log(
+      `[synthetic-generator] llm-ok tenant=${tenantId} seg=${segment} sc=${conv.scenario} tone=${conv.tone} turns=${conv.turns.length} elapsed=${Date.now() - startedAt}ms`
+    );
+
+    const pairs = buildPairs(conv.turns);
+    if (pairs.length === 0) {
+      console.warn(`[synthetic-generator] no-pairs tenant=${tenantId} job=${job.id}`);
       return;
     }
 
-    const pairs = buildPairs(conv.turns);
-    if (pairs.length === 0) return;
-
     const incomings = pairs.map((p) => p.incomingText);
+    const embedStart = Date.now();
     const embeddings = await embeddingService.embedMany(incomings);
+    console.log(
+      `[synthetic-generator] embed-ok tenant=${tenantId} pairs=${pairs.length} elapsed=${Date.now() - embedStart}ms`
+    );
 
     const fakeConvId = randomUUID();
     let inserted = 0;
@@ -106,7 +121,7 @@ export const syntheticGeneratorWorker = new Worker<SyntheticGenJob>(
       }
     }
     console.log(
-      `[synthetic-generator] tenant=${tenantId} seg=${segment} sc=${conv.scenario} tone=${conv.tone} indexed=${inserted}/${pairs.length}`
+      `[synthetic-generator] done tenant=${tenantId} seg=${segment} sc=${conv.scenario} tone=${conv.tone} indexed=${inserted}/${pairs.length} total=${Date.now() - startedAt}ms`
     );
   },
   {
