@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.orderReservationExpiryQueue = exports.stockReservationExpiryQueue = exports.stockSyncQueue = exports.outgoingQueue = exports.suggestionGenerationQueue = exports.llmOrchestrationQueue = exports.leadProcessingQueue = exports.incomingQueue = exports.redisConnection = exports.QueueNames = void 0;
+exports.orderReservationExpiryQueue = exports.stockReservationExpiryQueue = exports.stockSyncQueue = exports.outgoingQueue = exports.syntheticConversationGenQueue = exports.conversationIndexingQueue = exports.styleProfileRecomputeQueue = exports.suggestionGenerationQueue = exports.llmOrchestrationQueue = exports.leadProcessingQueue = exports.incomingQueue = exports.redisConnection = exports.QueueNames = void 0;
 exports.bindTransientRedisSocketErrors = bindTransientRedisSocketErrors;
 const node_fs_1 = require("node:fs");
 const bullmq_1 = require("bullmq");
@@ -138,6 +138,9 @@ exports.QueueNames = {
     llmOrchestration: "llm_orchestration",
     leadProcessing: "lead_processing",
     suggestionGeneration: "suggestion_generation",
+    styleProfileRecompute: "style_profile_recompute",
+    conversationIndexing: "conversation_indexing",
+    syntheticConversationGen: "synthetic_conversation_gen",
     outgoingMessages: "outgoing_messages",
     stockSync: "stock_sync",
     stockReservationExpiry: "stock_reservation_expiry",
@@ -181,6 +184,18 @@ exports.suggestionGenerationQueue = new bullmq_1.Queue(exports.QueueNames.sugges
     connection: exports.redisConnection,
     defaultJobOptions
 });
+exports.styleProfileRecomputeQueue = new bullmq_1.Queue(exports.QueueNames.styleProfileRecompute, {
+    connection: exports.redisConnection,
+    defaultJobOptions
+});
+exports.conversationIndexingQueue = new bullmq_1.Queue(exports.QueueNames.conversationIndexing, {
+    connection: exports.redisConnection,
+    defaultJobOptions
+});
+exports.syntheticConversationGenQueue = new bullmq_1.Queue(exports.QueueNames.syntheticConversationGen, {
+    connection: exports.redisConnection,
+    defaultJobOptions
+});
 exports.outgoingQueue = new bullmq_1.Queue(exports.QueueNames.outgoingMessages, {
     connection: exports.redisConnection,
     defaultJobOptions
@@ -202,6 +217,9 @@ const bullQueuesForErrorHandling = [
     exports.leadProcessingQueue,
     exports.llmOrchestrationQueue,
     exports.suggestionGenerationQueue,
+    exports.styleProfileRecomputeQueue,
+    exports.conversationIndexingQueue,
+    exports.syntheticConversationGenQueue,
     exports.outgoingQueue,
     exports.stockSyncQueue,
     exports.stockReservationExpiryQueue,

@@ -1,4 +1,6 @@
 import type { CustomerHistorySnapshot } from "./customer-history.service";
+import type { RagExample } from "./rag-retrieval.service";
+import type { StyleProfile } from "./style-profile.service";
 
 export type RecommendedVariant = {
   variantId: string;
@@ -29,6 +31,8 @@ export type SuggestionLlmInput = {
     price: number;
   }>;
   customerHistory: CustomerHistorySnapshot;
+  styleProfile?: StyleProfile | null;
+  ragExamples?: RagExample[];
 };
 
 export type SuggestionLlmOutput = {
@@ -59,7 +63,7 @@ export class SuggestionLlmService {
       return this.fallback(input, Date.now() - start);
     }
 
-    const systemPrompt = this.buildSystemPrompt();
+    const systemPrompt = this.buildSystemPrompt(input.styleProfile, input.ragExamples);
     const userPayload = this.buildUserPayload(input);
 
     const controller = new AbortController();
@@ -114,14 +118,21 @@ export class SuggestionLlmService {
     }
   }
 
-  private buildSystemPrompt(): string {
+  private buildSystemPrompt(
+    styleProfile?: StyleProfile | null,
+    ragExamples?: RagExample[]
+  ): string {
+    const styleSection = this.formatStyleProfile(styleProfile);
+    const ragSection = this.formatRagExamples(ragExamples);
     return [
       "Sos un copiloto de ventas para WhatsApp.",
       "NO le respondés al cliente. Le sugerís a un VENDEDOR HUMANO qué responder.",
       "El humano va a leer tu output en un panel lateral mientras atiende el chat: usá tono profesional, conciso y accionable.",
       "Tu tarea: (1) sugerir un borrador de respuesta para el humano, (2) recomendar productos/variantes específicas pertinentes, (3) explicar brevemente por qué este lead está en su status actual.",
       "Considerá la intención del cliente, el historial de mensajes, las compras anteriores del cliente (recurrencia, preferencias) y el catálogo disponible.",
-      "El borrador (draftReply) debe poder enviarse tal cual: hablá en primera persona como vendedor, sin saludos genéricos vacíos, sin emojis salvo que el tenant los use, sin inventar precios/stock.",
+      "El borrador (draftReply) debe poder enviarse tal cual: hablá en primera persona como vendedor, sin saludos genéricos vacíos, sin inventar precios/stock.",
+      styleSection,
+      ragSection,
       "Si falta info para responder bien (talle, color, dirección de envío), el draft debe pedirla específicamente.",
       "Si el cliente pide hablar con humano, el draft simplemente debe confirmar que ya lo está atendiendo una persona.",
       "summaryForSeller: 1-2 frases para el humano. Qué quiere el cliente y qué oportunidad ves.",
@@ -130,6 +141,62 @@ export class SuggestionLlmService {
       "Respondé SOLO JSON con esta forma exacta:",
       '{"draftReply":"...","summaryForSeller":"...","recommendedVariants":[{"variantId":"...","productName":"...","reason":"...","confidence":0.8}],"leadStatusReasoning":"..."}'
     ].join(" ");
+  }
+
+  private formatRagExamples(examples?: RagExample[]): string {
+    if (!examples || examples.length === 0) return "";
+    const lines: string[] = [
+      "EJEMPLOS DE VENTAS QUE CERRARON (turnos similares de conversaciones que terminaron en venta — usalos como referencia de tono y estructura, NO los copies palabra por palabra):"
+    ];
+    for (const ex of examples.slice(0, 5)) {
+      const inText = ex.incomingText.replace(/\s+/g, " ").slice(0, 240);
+      const outText = ex.outgoingText.replace(/\s+/g, " ").slice(0, 320);
+      lines.push(`- Cliente dijo: "${inText}" → Vendedor respondió: "${outText}"`);
+    }
+    return lines.join(" ");
+  }
+
+  private formatStyleProfile(profile?: StyleProfile | null): string {
+    if (!profile || profile.sampleCount < 5) {
+      return "Tono neutral, profesional y cercano (estilo argentino estándar).";
+    }
+    const parts: string[] = [
+      "ESTILO DEL VENDEDOR (basado en sus mensajes reales — imitá este tono):"
+    ];
+    if (profile.formality !== "unknown") {
+      const formalLabel =
+        profile.formality === "voseo"
+          ? "voseo argentino (tenés/querés/sos)"
+          : profile.formality === "tuteo"
+            ? "tuteo (tienes/quieres)"
+            : profile.formality === "usted"
+              ? "usted (formal)"
+              : "mixto";
+      parts.push(`- Tratamiento: ${formalLabel}.`);
+    }
+    parts.push(`- Largo medio: ~${profile.avgLength} caracteres.`);
+    if (profile.emojiDensity > 0.3) {
+      parts.push(
+        `- Usa emojis (densidad ${profile.emojiDensity}/100 chars). Frecuentes: ${profile.topEmojis.join(" ")}.`
+      );
+    } else {
+      parts.push("- Casi no usa emojis.");
+    }
+    if (profile.topGreetings.length > 0) {
+      parts.push(`- Aperturas típicas: "${profile.topGreetings.join('", "')}".`);
+    }
+    if (profile.topClosings.length > 0) {
+      parts.push(`- Cierres típicos: "${profile.topClosings.join('", "')}".`);
+    }
+    if (profile.catchphrases.length > 0) {
+      parts.push(`- Frases recurrentes: "${profile.catchphrases.join('", "')}".`);
+    }
+    if (profile.usesAbbreviations) {
+      parts.push("- Usa abreviaturas (q, xq, tb, etc.) — está OK usarlas.");
+    } else {
+      parts.push("- Escribe palabras completas, sin abreviaturas tipo 'xq'.");
+    }
+    return parts.join(" ");
   }
 
   private buildUserPayload(input: SuggestionLlmInput): Record<string, unknown> {

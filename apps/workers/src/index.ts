@@ -1,6 +1,9 @@
 import { bindTransientRedisSocketErrors, stockSyncQueue } from "../../../packages/queue/src";
 import { messageProcessorWorker } from "./message-processor.worker";
 import { suggestionGeneratorWorker } from "./suggestion-generator.worker";
+import { styleProfileRecomputeWorker } from "./style-profile-recompute.worker";
+import { conversationIndexerWorker } from "./conversation-indexer.worker";
+import { syntheticGeneratorWorker } from "./synthetic-generator.worker";
 import { senderWorker } from "./sender.worker";
 import { stockSyncWorker } from "./stock-sync.worker";
 import { reservationExpiryWorker } from "./reservation-expiry.worker";
@@ -9,6 +12,9 @@ import { orderReservationExpiryWorker } from "./order-reservation-expiry.worker"
 const bullWorkersForErrorHandling = [
   messageProcessorWorker,
   suggestionGeneratorWorker,
+  styleProfileRecomputeWorker,
+  conversationIndexerWorker,
+  syntheticGeneratorWorker,
   senderWorker,
   stockSyncWorker,
   reservationExpiryWorker,
@@ -38,6 +44,9 @@ bootstrapStockCron();
 console.log("Workers running", {
   messageProcessor: !!messageProcessorWorker,
   suggestionGenerator: !!suggestionGeneratorWorker,
+  styleProfileRecompute: !!styleProfileRecomputeWorker,
+  conversationIndexer: !!conversationIndexerWorker,
+  syntheticGenerator: !!syntheticGeneratorWorker,
   senderWorker: !!senderWorker,
   stockSyncWorker: !!stockSyncWorker,
   reservationExpiryWorker: !!reservationExpiryWorker,

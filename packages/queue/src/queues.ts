@@ -148,6 +148,9 @@ export const QueueNames = {
   llmOrchestration: "llm_orchestration",
   leadProcessing: "lead_processing",
   suggestionGeneration: "suggestion_generation",
+  styleProfileRecompute: "style_profile_recompute",
+  conversationIndexing: "conversation_indexing",
+  syntheticConversationGen: "synthetic_conversation_gen",
   outgoingMessages: "outgoing_messages",
   stockSync: "stock_sync",
   stockReservationExpiry: "stock_reservation_expiry",
@@ -202,6 +205,21 @@ export const suggestionGenerationQueue = new Queue(QueueNames.suggestionGenerati
   defaultJobOptions
 });
 
+export const styleProfileRecomputeQueue = new Queue(QueueNames.styleProfileRecompute, {
+  connection: redisConnection,
+  defaultJobOptions
+});
+
+export const conversationIndexingQueue = new Queue(QueueNames.conversationIndexing, {
+  connection: redisConnection,
+  defaultJobOptions
+});
+
+export const syntheticConversationGenQueue = new Queue(QueueNames.syntheticConversationGen, {
+  connection: redisConnection,
+  defaultJobOptions
+});
+
 export const outgoingQueue = new Queue(QueueNames.outgoingMessages, {
   connection: redisConnection,
   defaultJobOptions
@@ -227,6 +245,9 @@ const bullQueuesForErrorHandling: Queue[] = [
   leadProcessingQueue,
   llmOrchestrationQueue,
   suggestionGenerationQueue,
+  styleProfileRecomputeQueue,
+  conversationIndexingQueue,
+  syntheticConversationGenQueue,
   outgoingQueue,
   stockSyncQueue,
   stockReservationExpiryQueue,

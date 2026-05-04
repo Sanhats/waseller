@@ -178,12 +178,20 @@ export async function dispatchApi(
       requireRole(auth?.role, ["admin", "vendedor"]);
       const body = (await req.json()) as { status: LeadStatus };
       const data = await s.leads.markAs(tenantId, patchStatus[1], body.status);
+      if (body.status === "vendido") {
+        void enqueueConversationIndexingByLead(tenantId, patchStatus[1]).catch((e) =>
+          console.error("[indexer-trigger] failed", e)
+        );
+      }
       return NextResponse.json(data);
     }
     const markCobrado = /^\/leads\/([^/]+)\/mark-cobrado$/.exec(path);
     if (markCobrado && method === "PATCH") {
       requireRole(auth?.role, ["admin", "vendedor"]);
       const data = await s.leads.markAs(tenantId, markCobrado[1], "vendido");
+      void enqueueConversationIndexingByLead(tenantId, markCobrado[1]).catch((e) =>
+        console.error("[indexer-trigger] failed", e)
+      );
       return NextResponse.json(data);
     }
     const markDesp = /^\/leads\/([^/]+)\/mark-despachado$/.exec(path);
@@ -298,7 +306,13 @@ export async function dispatchApi(
     if (convReply && method === "POST") {
       requireRole(auth?.role, ["admin", "vendedor"]);
       const body = (await req.json()) as { message: string };
-      return NextResponse.json(await s.conversations.manualReply(tenantId, convReply[1], body.message));
+      const result = await s.conversations.manualReply(tenantId, convReply[1], body.message);
+      // Best-effort: capturamos el delta sugerencia↔envío para el loop de aprendizaje.
+      // No bloquea la respuesta si falla.
+      void captureSuggestionOutcome(tenantId, convReply[1], body.message).catch((e) => {
+        console.error("[suggestion-outcome] capture failed", e);
+      });
+      return NextResponse.json(result);
     }
     const convPrep = /^\/conversations\/([^/]+)\/payment-links\/prepare$/.exec(path);
     if (convPrep && method === "POST") {
@@ -407,6 +421,59 @@ export async function dispatchApi(
     }
 
     /* -------- Ops -------- */
+    if (path === "/ops/rag/stats" && method === "GET") {
+      requireRole(auth?.role, ["admin"]);
+      return NextResponse.json(await getRagStats(tenantId));
+    }
+    if (path === "/ops/rag/backfill" && method === "POST") {
+      requireRole(auth?.role, ["admin"]);
+      return NextResponse.json(await backfillRagFromVendidoLeads(tenantId));
+    }
+    if (path === "/ops/rag/generate-synthetic" && method === "POST") {
+      requireRole(auth?.role, ["admin"]);
+      const body = (await req.json().catch(() => ({}))) as {
+        count?: number;
+        segments?: string[];
+      };
+      return NextResponse.json(
+        await enqueueSyntheticGeneration(tenantId, body.count ?? 40, body.segments ?? [])
+      );
+    }
+    if (path === "/ops/rag/clear-synthetic" && method === "POST") {
+      requireRole(auth?.role, ["admin"]);
+      return NextResponse.json(await clearSyntheticTurns(tenantId));
+    }
+    if (path === "/ops/style-profile" && method === "GET") {
+      requireRole(auth?.role, ["admin"]);
+      return NextResponse.json(await loadStyleProfile(tenantId));
+    }
+    if (path === "/ops/whatsapp-import/preview" && method === "POST") {
+      requireRole(auth?.role, ["admin"]);
+      const body = (await req.json()) as { content?: string };
+      return NextResponse.json(await previewWhatsappImport(body.content ?? ""));
+    }
+    if (path === "/ops/whatsapp-import" && method === "POST") {
+      requireRole(auth?.role, ["admin"]);
+      const body = (await req.json()) as {
+        content?: string;
+        sellerSpeaker?: string;
+        contactPhone?: string;
+      };
+      return NextResponse.json(
+        await importWhatsappExport(tenantId, body.content ?? "", body.sellerSpeaker ?? "", body.contactPhone ?? "")
+      );
+    }
+    if (path === "/ops/style-profile/recompute" && method === "POST") {
+      requireRole(auth?.role, ["admin"]);
+      await enqueueStyleProfileRecompute(tenantId);
+      return NextResponse.json({ ok: true, status: "enqueued" });
+    }
+    if (path === "/ops/copilot-quality" && method === "GET") {
+      requireRole(auth?.role, ["admin"]);
+      const value = String(url.searchParams.get("range") ?? "7d").toLowerCase();
+      const days = value === "today" ? 1 : value === "30d" ? 30 : value === "all" ? 3650 : 7;
+      return NextResponse.json(await getCopilotQualityMetrics(tenantId, days));
+    }
     if (path === "/ops/queues" && method === "GET") {
       requireRole(auth?.role, ["admin"]);
       return NextResponse.json(await s.ops.getQueuesOverview());
@@ -728,6 +795,393 @@ async function markSuggestionUsed(tenantId: string, suggestionId: string) {
     data: { status: "used", usedAt: new Date() }
   });
   return { ok: updated.count > 0 };
+}
+
+/** Levenshtein simple — para mensajes <= ~500 chars. O(n*m) memoria; alcanza para nuestro uso. */
+function levenshtein(a: string, b: string): number {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  const m = a.length;
+  const n = b.length;
+  const prev = new Array<number>(n + 1);
+  const curr = new Array<number>(n + 1);
+  for (let j = 0; j <= n; j++) prev[j] = j;
+  for (let i = 1; i <= m; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const cost = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1;
+      curr[j] = Math.min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
+    }
+    for (let j = 0; j <= n; j++) prev[j] = curr[j];
+  }
+  return prev[n];
+}
+
+function tokenize(text: string): string[] {
+  return text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function tokenDiff(draft: string, sent: string): { added: number; removed: number } {
+  const draftBag = new Map<string, number>();
+  for (const t of tokenize(draft)) draftBag.set(t, (draftBag.get(t) ?? 0) + 1);
+  const sentBag = new Map<string, number>();
+  for (const t of tokenize(sent)) sentBag.set(t, (sentBag.get(t) ?? 0) + 1);
+  let added = 0;
+  let removed = 0;
+  for (const [tok, c] of sentBag) added += Math.max(0, c - (draftBag.get(tok) ?? 0));
+  for (const [tok, c] of draftBag) removed += Math.max(0, c - (sentBag.get(tok) ?? 0));
+  return { added, removed };
+}
+
+async function enqueueConversationIndexingByLead(tenantId: string, leadId: string) {
+  const { prisma } = await import("@waseller/db");
+  const conv = await prisma.conversation.findFirst({
+    where: { tenantId, leadId },
+    select: { id: true }
+  });
+  if (!conv) return { ok: false, reason: "no_conversation" };
+  const { conversationIndexingQueue } = await import("@waseller/queue");
+  await conversationIndexingQueue.add(
+    "index-conversation",
+    { tenantId, conversationId: conv.id },
+    { jobId: `index_conv_${conv.id}` }
+  );
+  return { ok: true };
+}
+
+async function enqueueSyntheticGeneration(
+  tenantId: string,
+  count: number,
+  segments: string[]
+) {
+  const VALID = new Set(["mujer", "hombre", "unisex", "ninos"]);
+  const targets = (segments.length > 0 ? segments : Array.from(VALID)).filter((s) => VALID.has(s));
+  if (targets.length === 0) {
+    return { ok: false, reason: "no_valid_segments" };
+  }
+  const safeCount = Math.max(1, Math.min(500, Math.floor(count)));
+  const { syntheticConversationGenQueue } = await import("@waseller/queue");
+  let enqueued = 0;
+  for (let i = 0; i < safeCount; i++) {
+    const segment = targets[i % targets.length];
+    await syntheticConversationGenQueue.add(
+      "synthetic",
+      { tenantId, segment },
+      {
+        // Sin jobId estable — cada generación debe ser independiente.
+        attempts: 2
+      }
+    );
+    enqueued++;
+  }
+  return { ok: true, enqueued, segments: targets };
+}
+
+async function clearSyntheticTurns(tenantId: string) {
+  const { prisma } = await import("@waseller/db");
+  const deleted = await (prisma as any).$executeRawUnsafe(
+    `DELETE FROM conversation_turn_examples WHERE tenant_id = $1::uuid AND source = 'synthetic'`,
+    tenantId
+  );
+  return { ok: true, deleted: Number(deleted) };
+}
+
+async function getRagStats(tenantId: string) {
+  const { prisma } = await import("@waseller/db");
+  const rows = (await (prisma as any).$queryRawUnsafe(
+    `SELECT
+       COUNT(*)::int AS total_examples,
+       COUNT(DISTINCT conversation_id)::int AS conversations,
+       COUNT(DISTINCT product_name) FILTER (WHERE product_name IS NOT NULL)::int AS products,
+       MAX(indexed_at) AS last_indexed_at,
+       COUNT(*) FILTER (WHERE source = 'real')::int AS real_count,
+       COUNT(*) FILTER (WHERE source = 'imported')::int AS imported_count,
+       COUNT(*) FILTER (WHERE source = 'synthetic')::int AS synthetic_count
+     FROM conversation_turn_examples
+     WHERE tenant_id = $1::uuid`,
+    tenantId
+  )) as Array<{
+    total_examples: number;
+    conversations: number;
+    products: number;
+    last_indexed_at: Date | null;
+    real_count: number;
+    imported_count: number;
+    synthetic_count: number;
+  }>;
+  const stats = rows[0] ?? {
+    total_examples: 0,
+    conversations: 0,
+    products: 0,
+    last_indexed_at: null,
+    real_count: 0,
+    imported_count: 0,
+    synthetic_count: 0
+  };
+
+  const segmentRows = (await (prisma as any).$queryRawUnsafe(
+    `SELECT segment, COUNT(*)::int AS c
+     FROM conversation_turn_examples
+     WHERE tenant_id = $1::uuid AND segment IS NOT NULL
+     GROUP BY segment`,
+    tenantId
+  )) as Array<{ segment: string; c: number }>;
+
+  const vendidoLeads = await prisma.lead.count({
+    where: { tenantId, status: "vendido" }
+  });
+
+  return {
+    totalExamples: stats.total_examples,
+    indexedConversations: stats.conversations,
+    productsCovered: stats.products,
+    lastIndexedAt: stats.last_indexed_at ? new Date(stats.last_indexed_at).toISOString() : null,
+    vendidoLeads,
+    bySource: {
+      real: stats.real_count,
+      imported: stats.imported_count,
+      synthetic: stats.synthetic_count
+    },
+    bySegment: segmentRows.reduce<Record<string, number>>((acc, r) => {
+      acc[r.segment] = r.c;
+      return acc;
+    }, {})
+  };
+}
+
+async function backfillRagFromVendidoLeads(tenantId: string) {
+  const { prisma } = await import("@waseller/db");
+  const { conversationIndexingQueue } = await import("@waseller/queue");
+  const leads = await prisma.lead.findMany({
+    where: { tenantId, status: "vendido" },
+    select: { id: true, conversation: { select: { id: true } } }
+  });
+  let enqueued = 0;
+  for (const lead of leads) {
+    const conversationId = lead.conversation?.id;
+    if (!conversationId) continue;
+    await conversationIndexingQueue.add(
+      "index-conversation",
+      { tenantId, conversationId },
+      { jobId: `index_conv_${conversationId}` }
+    );
+    enqueued++;
+  }
+  return { ok: true, enqueued, totalVendidoLeads: leads.length };
+}
+
+async function previewWhatsappImport(content: string) {
+  if (!content || content.length < 20) {
+    return { ok: false, reason: "empty_content" };
+  }
+  const { parseWhatsappExport } = await import("./whatsapp-parser");
+  const parsed = parseWhatsappExport(content);
+  return {
+    ok: true,
+    totalMessages: parsed.messages.length,
+    speakers: parsed.speakers
+  };
+}
+
+async function importWhatsappExport(
+  tenantId: string,
+  content: string,
+  sellerSpeaker: string,
+  contactPhone: string
+) {
+  if (!content || !sellerSpeaker) {
+    return { ok: false, reason: "missing_input" };
+  }
+  const { parseWhatsappExport } = await import("./whatsapp-parser");
+  const { prisma } = await import("@waseller/db");
+  const parsed = parseWhatsappExport(content);
+  const phone = (contactPhone || "").replace(/[^\d]/g, "") || `imported-${Date.now().toString(36)}`;
+  const importTag = `wa_import_${Date.now().toString(36)}`;
+
+  let inserted = 0;
+  for (const msg of parsed.messages) {
+    if (!msg.text || msg.text.length < 2) continue;
+    const direction = msg.speaker === sellerSpeaker ? "outgoing" : "incoming";
+    try {
+      await prisma.message.create({
+        data: {
+          tenantId,
+          phone,
+          message: msg.text,
+          direction,
+          correlationId: importTag,
+          createdAt: msg.timestamp ? new Date(msg.timestamp) : undefined
+        }
+      });
+      inserted++;
+    } catch {
+      // Best-effort: si una fila falla (timestamp inválido, etc.), continuamos.
+    }
+  }
+
+  // Disparamos recompute del style profile para que tome los nuevos mensajes.
+  try {
+    await enqueueStyleProfileRecompute(tenantId);
+  } catch (e) {
+    console.error("[whatsapp-import] no se pudo encolar recompute", e);
+  }
+
+  return {
+    ok: true,
+    inserted,
+    totalParsed: parsed.messages.length,
+    sellerSpeaker,
+    contactPhone: phone,
+    importTag
+  };
+}
+
+async function loadStyleProfile(tenantId: string) {
+  const { prisma } = await import("@waseller/db");
+  const row = await prisma.tenantStyleProfile.findUnique({ where: { tenantId } });
+  if (!row) return { profile: null };
+  return {
+    profile: {
+      avgLength: row.avgLength,
+      emojiDensity: row.emojiDensity,
+      formality: row.formality,
+      topGreetings: row.topGreetings,
+      topClosings: row.topClosings,
+      topEmojis: row.topEmojis,
+      catchphrases: row.catchphrases,
+      usesAbbreviations: row.usesAbbreviations,
+      sampleCount: row.sampleCount,
+      computedAt: row.computedAt
+    }
+  };
+}
+
+async function enqueueStyleProfileRecompute(tenantId: string) {
+  const { styleProfileRecomputeQueue } = await import("@waseller/queue");
+  await styleProfileRecomputeQueue.add(
+    "recompute",
+    { tenantId },
+    { jobId: `style-profile-${tenantId}` }
+  );
+}
+
+async function getCopilotQualityMetrics(tenantId: string, days: number) {
+  const { prisma } = await import("@waseller/db");
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  const outcomes = await prisma.suggestionOutcome.findMany({
+    where: { tenantId, createdAt: { gte: since } },
+    orderBy: { createdAt: "desc" },
+    select: {
+      draftWasOffered: true,
+      usedAsIs: true,
+      editDistance: true,
+      tokensAdded: true,
+      tokensRemoved: true,
+      draftReply: true,
+      sentMessage: true,
+      createdAt: true
+    },
+    take: 5000
+  });
+
+  type OutcomeRow = (typeof outcomes)[number];
+  const total = outcomes.length;
+  const withDraft = outcomes.filter((o: OutcomeRow) => o.draftWasOffered);
+  const withDraftCount = withDraft.length;
+  const usedAsIsCount = withDraft.filter((o: OutcomeRow) => o.usedAsIs).length;
+
+  const editDistances = withDraft
+    .map((o: OutcomeRow) => o.editDistance)
+    .sort((a: number, b: number) => a - b);
+  const median = editDistances.length
+    ? editDistances[Math.floor(editDistances.length / 2)]
+    : 0;
+  const avg = editDistances.length
+    ? Math.round(editDistances.reduce((s: number, x: number) => s + x, 0) / editDistances.length)
+    : 0;
+
+  const totalTokensAdded = withDraft.reduce((s: number, o: OutcomeRow) => s + o.tokensAdded, 0);
+  const totalTokensRemoved = withDraft.reduce((s: number, o: OutcomeRow) => s + o.tokensRemoved, 0);
+
+  const recentSamples = outcomes.slice(0, 20).map((o: OutcomeRow) => ({
+    draftReply: o.draftReply,
+    sentMessage: o.sentMessage,
+    editDistance: o.editDistance,
+    usedAsIs: o.usedAsIs,
+    draftWasOffered: o.draftWasOffered,
+    createdAt: o.createdAt.toISOString()
+  }));
+
+  return {
+    range: { days, since: since.toISOString() },
+    totals: {
+      replies: total,
+      withDraftOffered: withDraftCount,
+      usedAsIs: usedAsIsCount
+    },
+    rates: {
+      draftCoverage: total > 0 ? withDraftCount / total : 0,
+      acceptanceAsIs: withDraftCount > 0 ? usedAsIsCount / withDraftCount : 0
+    },
+    edits: {
+      avgEditDistance: avg,
+      medianEditDistance: median,
+      totalTokensAdded,
+      totalTokensRemoved
+    },
+    recentSamples
+  };
+}
+
+async function captureSuggestionOutcome(
+  tenantId: string,
+  phone: string,
+  sentMessage: string
+): Promise<void> {
+  const { prisma } = await import("@waseller/db");
+  const conversation = await prisma.conversation.findFirst({
+    where: { tenantId, phone },
+    orderBy: { updatedAt: "desc" },
+    select: { id: true }
+  });
+  if (!conversation) return;
+
+  /** La sugerencia "activa" puede estar en estado fresh (sin clic) o used (clickeó "Usar borrador"). */
+  const suggestion = await prisma.conversationSuggestion.findFirst({
+    where: { conversationId: conversation.id, status: { in: ["fresh", "used"] } },
+    orderBy: { generatedAt: "desc" }
+  });
+
+  const draft = suggestion?.draftReply ?? "";
+  const draftWasOffered = Boolean(suggestion?.draftReply);
+  const editDistance = draftWasOffered ? levenshtein(draft, sentMessage) : 0;
+  const usedAsIs = draftWasOffered && draft.trim() === sentMessage.trim();
+  const { added, removed } = draftWasOffered
+    ? tokenDiff(draft, sentMessage)
+    : { added: tokenize(sentMessage).length, removed: 0 };
+
+  await prisma.suggestionOutcome.create({
+    data: {
+      tenantId,
+      conversationId: conversation.id,
+      suggestionId: suggestion?.id ?? null,
+      draftReply: suggestion?.draftReply ?? null,
+      sentMessage,
+      draftWasOffered,
+      usedAsIs,
+      editDistance,
+      tokensAdded: added,
+      tokensRemoved: removed
+    }
+  });
 }
 
 /** Resuelve el origin público del storefront para armar back_urls absolutas de Mercado Pago.

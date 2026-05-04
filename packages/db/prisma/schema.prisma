@@ -163,6 +163,9 @@ model Tenant {
   storeConfig            TenantStoreConfig?
   categories             Category[]
   conversationSuggestions ConversationSuggestion[]
+  suggestionOutcomes      SuggestionOutcome[]
+  styleProfile            TenantStyleProfile?
+  conversationTurnExamples ConversationTurnExample[]
 
   @@map("tenants")
 }
@@ -416,10 +419,11 @@ model Conversation {
   updatedAt       DateTime             @updatedAt @map("updated_at")
   tenant          Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   lead            Lead?                @relation(fields: [leadId], references: [id], onDelete: SetNull)
-  memory          ConversationMemory[]
-  llmTraces       LlmTrace[]
-  paymentAttempts PaymentAttempt[]
-  suggestions     ConversationSuggestion[]
+  memory             ConversationMemory[]
+  llmTraces          LlmTrace[]
+  paymentAttempts    PaymentAttempt[]
+  suggestions        ConversationSuggestion[]
+  suggestionOutcomes SuggestionOutcome[]
 
   @@index([tenantId, phone])
   @@map("conversations")
@@ -446,12 +450,77 @@ model ConversationSuggestion {
   llmTokensIn         Int?      @map("llm_tokens_in")
   llmTokensOut        Int?      @map("llm_tokens_out")
 
-  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  tenant       Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversation Conversation        @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  outcomes     SuggestionOutcome[]
 
   @@index([conversationId, generatedAt(sort: Desc)])
   @@index([tenantId, status])
   @@map("conversation_suggestions")
+}
+
+model SuggestionOutcome {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  conversationId  String   @map("conversation_id") @db.Uuid
+  suggestionId    String?  @map("suggestion_id") @db.Uuid
+  draftReply      String?  @map("draft_reply")
+  sentMessage     String   @map("sent_message")
+  draftWasOffered Boolean  @default(false) @map("draft_was_offered")
+  usedAsIs        Boolean  @default(false) @map("used_as_is")
+  editDistance    Int      @default(0) @map("edit_distance")
+  tokensAdded     Int      @default(0) @map("tokens_added")
+  tokensRemoved   Int      @default(0) @map("tokens_removed")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  tenant       Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversation Conversation            @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  suggestion   ConversationSuggestion? @relation(fields: [suggestionId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, createdAt(sort: Desc)])
+  @@index([conversationId, createdAt(sort: Desc)])
+  @@map("suggestion_outcomes")
+}
+
+model ConversationTurnExample {
+  id              String   @id @default(uuid()) @db.Uuid
+  tenantId        String   @map("tenant_id") @db.Uuid
+  conversationId  String   @map("conversation_id") @db.Uuid
+  incomingText    String   @map("incoming_text")
+  outgoingText    String   @map("outgoing_text")
+  productName     String?  @map("product_name")
+  intentHint      String?  @map("intent_hint")
+  leadStage       String?  @map("lead_stage")
+  embeddingModel  String   @default("text-embedding-3-small") @map("embedding_model")
+  source          String   @default("real")
+  segment         String?
+  scenario        String?
+  indexedAt       DateTime @default(now()) @map("indexed_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, indexedAt(sort: Desc)])
+  @@index([tenantId, source])
+  @@index([conversationId])
+  @@map("conversation_turn_examples")
+}
+
+model TenantStyleProfile {
+  tenantId          String   @id @map("tenant_id") @db.Uuid
+  avgLength         Int      @default(0) @map("avg_length")
+  emojiDensity      Float    @default(0) @map("emoji_density")
+  formality         String   @default("unknown")
+  topGreetings      Json     @default("[]") @map("top_greetings")
+  topClosings       Json     @default("[]") @map("top_closings")
+  topEmojis         Json     @default("[]") @map("top_emojis")
+  catchphrases      Json     @default("[]")
+  usesAbbreviations Boolean  @default(false) @map("uses_abbreviations")
+  sampleCount       Int      @default(0) @map("sample_count")
+  computedAt        DateTime @default(now()) @map("computed_at")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("tenant_style_profiles")
 }
 
 model Message {

@@ -6,12 +6,34 @@ import {
 } from "../../../packages/queue/src";
 import { prisma } from "../../../packages/db/src";
 import { CustomerHistoryService } from "./services/customer-history.service";
+import { EmbeddingService } from "./services/embedding.service";
+import { RagRetrievalService } from "./services/rag-retrieval.service";
+import { StyleProfileService } from "./services/style-profile.service";
 import { SuggestionLlmService } from "./services/suggestion-llm.service";
 import { TenantKnowledgeService } from "./services/tenant-knowledge.service";
 
 const customerHistoryService = new CustomerHistoryService();
+const styleProfileService = new StyleProfileService();
+const embeddingService = new EmbeddingService();
+const ragRetrievalService = new RagRetrievalService(embeddingService);
 const suggestionLlm = new SuggestionLlmService();
 const tenantKnowledgeService = new TenantKnowledgeService();
+
+/** Recompute si el perfil tiene más de N días o está vacío. */
+const STYLE_PROFILE_TTL_MS = Number(process.env.STYLE_PROFILE_TTL_MS ?? 7 * 24 * 60 * 60 * 1000);
+
+const ensureStyleProfile = async (tenantId: string) => {
+  const existing = await styleProfileService.load(tenantId);
+  if (existing && Date.now() - existing.computedAt.getTime() < STYLE_PROFILE_TTL_MS) {
+    return existing;
+  }
+  try {
+    return await styleProfileService.recompute(tenantId);
+  } catch (e) {
+    console.error("[suggestion-generator] style profile recompute failed", e);
+    return existing;
+  }
+};
 
 const loadMatchedProduct = async (
   tenantId: string,
@@ -98,10 +120,11 @@ export const suggestionGeneratorWorker = new Worker<SuggestionGenerationJobV1>(
       data: { status: "stale" }
     });
 
-    const [tenantKnowledge, customerHistory, matchedProduct] = await Promise.all([
+    const [tenantKnowledge, customerHistory, matchedProduct, styleProfile] = await Promise.all([
       tenantKnowledgeService.getWithRulePack(data.tenantId),
       customerHistoryService.load(data.tenantId, data.phone),
-      loadMatchedProduct(data.tenantId, data.matchedVariantId)
+      loadMatchedProduct(data.tenantId, data.matchedVariantId),
+      ensureStyleProfile(data.tenantId)
     ]);
 
     const candidateVariants = await loadCandidateVariants(
@@ -117,15 +140,29 @@ export const suggestionGeneratorWorker = new Worker<SuggestionGenerationJobV1>(
       price: c.price
     }));
 
+    const incomingText =
+      data.trigger === "manual_regen"
+        ? await loadIncomingText(data)
+        : await loadIncomingText(data);
+
+    const ragExamples = await ragRetrievalService
+      .retrieve(data.tenantId, incomingText, data.matchedProductName ?? matchedProduct?.productName ?? null)
+      .catch((e) => {
+        console.error("[suggestion-generator] rag retrieve failed", e);
+        return [];
+      });
+
     const llmResult = await suggestionLlm.generate({
       tenantBusinessProfile: (tenantKnowledge.profile ?? null) as Record<string, unknown> | null,
-      incomingText: data.intent === "manual_regen" ? "(regeneración solicitada por el vendedor)" : await loadIncomingText(data),
+      incomingText,
       intent: data.intent ?? "desconocida",
       leadStatus: data.leadStatus ?? "frio",
       leadScore: data.leadScore ?? 0,
       matchedProduct,
       candidateVariants: candidatePayload,
-      customerHistory
+      customerHistory,
+      styleProfile,
+      ragExamples
     });
 
     await prisma.conversationSuggestion.create({
