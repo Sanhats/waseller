@@ -28,6 +28,7 @@ const mercado_pago_controller_1 = require("./mercado-pago/mercado-pago.controlle
 const mercado_pago_service_1 = require("./mercado-pago/mercado-pago.service");
 const dashboard_controller_1 = require("./dashboard/dashboard.controller");
 const dashboard_service_1 = require("./dashboard/dashboard.service");
+const orders_service_1 = require("./orders/orders.service");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -55,7 +56,8 @@ exports.AppModule = AppModule = __decorate([
             categories_service_1.CategoriesService,
             onboarding_service_1.OnboardingService,
             mercado_pago_service_1.MercadoPagoService,
-            dashboard_service_1.DashboardService
+            dashboard_service_1.DashboardService,
+            orders_service_1.OrdersService
         ]
     })
 ], AppModule);

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { CheckCircle2 } from "lucide-react";
+import { CheckCircle2, Copy, ExternalLink, Sparkles, Store, X } from "lucide-react";
 import { BusinessContextWizard } from "@/components/business-context-wizard";
 import { BusinessOnboardingSkeleton } from "@/components/page-skeletons";
 import { Badge, Button, Spinner } from "@/components/ui";
@@ -21,6 +21,8 @@ type OnboardingStep = {
 type OnboardingStatus = {
   generatedAt: string;
   tenantName: string;
+  publicCatalogSlug?: string | null;
+  storefrontBaseUrl?: string | null;
   allCompleted: boolean;
   completionPercent: number;
   tenantKnowledgePersisted?: boolean;
@@ -106,7 +108,43 @@ export function BusinessOnboarding() {
   const [qrImageUrl, setQrImageUrl] = useState("");
   const [error, setError] = useState("");
   const [isMobile, setIsMobile] = useState(false);
+  const [copiedStoreUrl, setCopiedStoreUrl] = useState(false);
+  const [welcomeDismissed, setWelcomeDismissed] = useState(true);
   const reloadOnboardingRef = useRef<(() => Promise<void>) | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const dismissed = window.localStorage.getItem("ws_welcome_dismissed");
+    setWelcomeDismissed(dismissed === "1");
+  }, []);
+
+  const dismissWelcome = () => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("ws_welcome_dismissed", "1");
+    }
+    setWelcomeDismissed(true);
+  };
+
+  const buildPublicStoreUrl = (): string | null => {
+    const slug = status?.publicCatalogSlug?.trim();
+    if (!slug) return null;
+    const customBase = status?.storefrontBaseUrl?.trim();
+    if (customBase) return customBase;
+    if (typeof window === "undefined") return `/tienda/${slug}`;
+    return `${window.location.origin}/tienda/${slug}`;
+  };
+
+  const copyStoreUrl = async () => {
+    const url = buildPublicStoreUrl();
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedStoreUrl(true);
+      window.setTimeout(() => setCopiedStoreUrl(false), 1800);
+    } catch {
+      /* clipboard puede no estar disponible (http, permisos); silencioso */
+    }
+  };
 
   const loadQr = async (token: string, tenantId: string) => {
     try {
@@ -362,6 +400,84 @@ export function BusinessOnboarding() {
         >
           {error}
         </p>
+      ) : null}
+
+      {!loading && status && !welcomeDismissed && !showAllDone ? (
+        <section
+          className="mb-4 min-w-0 rounded-lg border border-primary/40 bg-[var(--badge-active-bg)] p-4 shadow-sm md:p-5"
+          aria-label="Bienvenida"
+        >
+          <div className="flex items-start gap-3">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary text-white">
+              <Sparkles className="size-5" aria-hidden />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-section">¡Bienvenido a Waseller!</p>
+              <p className="mt-1 text-body text-muted-ui">
+                En 3 pasos rápidos vas a estar recibiendo clientes por WhatsApp y cobrando online: vinculá tu WhatsApp,
+                conectá Mercado Pago y cargá al menos 3 productos. Tu tienda online ya está creada — la podés ver y
+                compartir desde el botón de abajo.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={dismissWelcome}
+              aria-label="Cerrar bienvenida"
+              className="rounded-md p-1 text-muted-ui hover:bg-surface hover:text-[var(--color-text)]"
+            >
+              <X className="size-4" aria-hidden />
+            </button>
+          </div>
+        </section>
+      ) : null}
+
+      {!loading && status?.publicCatalogSlug ? (
+        (() => {
+          const storeUrl = buildPublicStoreUrl();
+          const display = storeUrl?.replace(/^https?:\/\//, "") ?? "";
+          return (
+            <section
+              className="mb-6 min-w-0 rounded-lg border border-primary/30 bg-surface p-4 shadow-sm ring-1 ring-primary/10 md:p-5"
+              aria-label="Tu tienda pública"
+            >
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex min-w-0 items-start gap-3">
+                  <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[var(--badge-active-bg)] text-primary">
+                    <Store className="size-5" aria-hidden />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-label-ui text-muted-ui">Tu tienda online ya está activa</p>
+                    <p className="mt-0.5 break-all font-mono text-body font-medium text-[var(--color-text)]">
+                      {display}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => void copyStoreUrl()}
+                    className="gap-1.5"
+                  >
+                    <Copy className="size-4" aria-hidden />
+                    {copiedStoreUrl ? "¡Copiado!" : "Copiar link"}
+                  </Button>
+                  {storeUrl ? (
+                    <a
+                      href={storeUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={cn(linkPrimaryClass, "gap-1.5")}
+                    >
+                      <ExternalLink className="size-4" aria-hidden />
+                      Ver mi tienda
+                    </a>
+                  ) : null}
+                </div>
+              </div>
+            </section>
+          );
+        })()
       ) : null}
 
       {!loading && status && !showAllDone ? (

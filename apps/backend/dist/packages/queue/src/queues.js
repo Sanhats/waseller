@@ -3,15 +3,21 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.stockReservationExpiryQueue = exports.stockSyncQueue = exports.outgoingQueue = exports.llmOrchestrationQueue = exports.leadProcessingQueue = exports.incomingQueue = exports.redisConnection = exports.QueueNames = void 0;
+exports.orderReservationExpiryQueue = exports.stockReservationExpiryQueue = exports.stockSyncQueue = exports.outgoingQueue = exports.syntheticConversationGenQueue = exports.conversationIndexingQueue = exports.styleProfileRecomputeQueue = exports.suggestionGenerationQueue = exports.llmOrchestrationQueue = exports.leadProcessingQueue = exports.incomingQueue = exports.redisConnection = exports.QueueNames = void 0;
 exports.bindTransientRedisSocketErrors = bindTransientRedisSocketErrors;
 const node_fs_1 = require("node:fs");
 const bullmq_1 = require("bullmq");
 const ioredis_1 = __importDefault(require("ioredis"));
-/** Cierres de TCP por idle, redeploy o balanceador; ioredis/BullMQ reconectan. */
+/**
+ * Errores de socket que ioredis/BullMQ suelen reintentar sin acción humana inmediata.
+ * Incluye `ECONNREFUSED` (p. ej. Redis apagado en local sin Docker) para no spamear stderr en cada cola.
+ */
 function isTransientRedisSocketError(err) {
     const code = err && typeof err === "object" && "code" in err ? err.code : undefined;
-    return code === "ECONNRESET" || code === "EPIPE" || code === "ETIMEDOUT";
+    return (code === "ECONNRESET" ||
+        code === "EPIPE" ||
+        code === "ETIMEDOUT" ||
+        code === "ECONNREFUSED");
 }
 /**
  * BullMQ reenvía errores de Redis al `Queue`/`Worker`. Sin ningún listener, Node trata `error` como no manejado y spamea stderr.
@@ -131,9 +137,15 @@ exports.QueueNames = {
     incomingMessages: "incoming_messages",
     llmOrchestration: "llm_orchestration",
     leadProcessing: "lead_processing",
+    suggestionGeneration: "suggestion_generation",
+    styleProfileRecompute: "style_profile_recompute",
+    conversationIndexing: "conversation_indexing",
+    syntheticConversationGen: "synthetic_conversation_gen",
     outgoingMessages: "outgoing_messages",
     stockSync: "stock_sync",
-    stockReservationExpiry: "stock_reservation_expiry"
+    stockReservationExpiry: "stock_reservation_expiry",
+    /** Expiración de carritos del storefront (TTL desde la creación de Order). */
+    orderReservationExpiry: "order_reservation_expiry"
 };
 const redisUrl = resolveRedisUrl();
 patchIoredisDuplicateForTransientSocketErrors();
@@ -168,6 +180,22 @@ exports.llmOrchestrationQueue = new bullmq_1.Queue(exports.QueueNames.llmOrchest
     connection: exports.redisConnection,
     defaultJobOptions
 });
+exports.suggestionGenerationQueue = new bullmq_1.Queue(exports.QueueNames.suggestionGeneration, {
+    connection: exports.redisConnection,
+    defaultJobOptions
+});
+exports.styleProfileRecomputeQueue = new bullmq_1.Queue(exports.QueueNames.styleProfileRecompute, {
+    connection: exports.redisConnection,
+    defaultJobOptions
+});
+exports.conversationIndexingQueue = new bullmq_1.Queue(exports.QueueNames.conversationIndexing, {
+    connection: exports.redisConnection,
+    defaultJobOptions
+});
+exports.syntheticConversationGenQueue = new bullmq_1.Queue(exports.QueueNames.syntheticConversationGen, {
+    connection: exports.redisConnection,
+    defaultJobOptions
+});
 exports.outgoingQueue = new bullmq_1.Queue(exports.QueueNames.outgoingMessages, {
     connection: exports.redisConnection,
     defaultJobOptions
@@ -180,13 +208,22 @@ exports.stockReservationExpiryQueue = new bullmq_1.Queue(exports.QueueNames.stoc
     connection: exports.redisConnection,
     defaultJobOptions
 });
+exports.orderReservationExpiryQueue = new bullmq_1.Queue(exports.QueueNames.orderReservationExpiry, {
+    connection: exports.redisConnection,
+    defaultJobOptions
+});
 const bullQueuesForErrorHandling = [
     exports.incomingQueue,
     exports.leadProcessingQueue,
     exports.llmOrchestrationQueue,
+    exports.suggestionGenerationQueue,
+    exports.styleProfileRecomputeQueue,
+    exports.conversationIndexingQueue,
+    exports.syntheticConversationGenQueue,
     exports.outgoingQueue,
     exports.stockSyncQueue,
-    exports.stockReservationExpiryQueue
+    exports.stockReservationExpiryQueue,
+    exports.orderReservationExpiryQueue
 ];
 for (const q of bullQueuesForErrorHandling) {
     bindTransientRedisSocketErrors(q, `BullMQ Queue:${q.name}`);

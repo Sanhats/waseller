@@ -224,6 +224,8 @@ export class OnboardingService {
   async getStatus(tenantId: string): Promise<{
     generatedAt: string;
     tenantName: string;
+    publicCatalogSlug: string | null;
+    storefrontBaseUrl: string | null;
     allCompleted: boolean;
     completionPercent: number;
     /** Hay fila en `tenant_knowledge` (puede faltar tono/entregas para el crew). */
@@ -234,13 +236,19 @@ export class OnboardingService {
     whatsapp: WhatsappConnectionState;
     mercadoPago: MercadoPagoConnectionState;
   }> {
-    const [productsCount, whatsapp, mercadoPago, tenantKnowledge] = await Promise.all([
+    const [productsCount, whatsapp, mercadoPago, tenantKnowledge, tenantRow] = await Promise.all([
       prisma.product.count({ where: { tenantId } }),
       this.getWhatsappState(tenantId),
       this.mercadoPagoService.getStatus(tenantId),
-      this.opsService.getTenantKnowledge(tenantId)
+      this.opsService.getTenantKnowledge(tenantId),
+      prisma.tenant.findUnique({ where: { id: tenantId }, select: { storefrontBaseUrl: true } })
     ]);
     const tenantName = tenantKnowledge.tenantName;
+    const publicCatalogSlug = tenantKnowledge.publicCatalogSlug;
+    const storefrontBaseUrl =
+      typeof tenantRow?.storefrontBaseUrl === "string" && tenantRow.storefrontBaseUrl.trim()
+        ? tenantRow.storefrontBaseUrl.trim().replace(/\/+$/, "")
+        : null;
     const whatsappConnected = whatsapp.sessionStatus === "connected";
     const mercadoPagoConnected = mercadoPago.status === "connected";
     const tenantKnowledgePersisted = tenantKnowledge.persisted;
@@ -282,6 +290,8 @@ export class OnboardingService {
     return {
       generatedAt: new Date().toISOString(),
       tenantName,
+      publicCatalogSlug,
+      storefrontBaseUrl,
       allCompleted,
       completionPercent,
       tenantKnowledgePersisted,

@@ -26,6 +26,7 @@
     "load:test": "node scripts/load-check.mjs",
     "seed:test-lead": "npm run seed:test-lead --workspace @waseller/backend",
     "seed:demo-scenarios": "npm run seed:demo-scenarios --workspace @waseller/backend",
+    "seed:fashion-demo": "npm run seed:fashion-demo --workspace @waseller/backend",
     "db:migrate": "npm run prisma:migrate --workspace @waseller/db",
     "db:migrate:deploy": "npm run prisma:migrate:deploy --workspace @waseller/db",
     "db:push": "npm run prisma:push --workspace @waseller/db",

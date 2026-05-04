@@ -18,6 +18,7 @@ const src_1 = require("../../../../../packages/db/src");
 const src_2 = require("../../../../../packages/queue/src");
 const src_3 = require("../../../../../packages/shared/src");
 const leads_service_1 = require("../leads/leads.service");
+const orders_service_1 = require("../orders/orders.service");
 const buildPaymentStatusMessage = (status, productName) => {
     if (status === "approved") {
         return `Recibimos el pago de ${productName}. Ya quedó confirmado y seguimos por este medio con la entrega.`;
@@ -32,9 +33,11 @@ const buildPaymentStatusMessage = (status, productName) => {
 };
 let MercadoPagoService = MercadoPagoService_1 = class MercadoPagoService {
     leadsService;
+    ordersService;
     logger = new common_1.Logger(MercadoPagoService_1.name);
-    constructor(leadsService) {
+    constructor(leadsService, ordersService) {
         this.leadsService = leadsService;
+        this.ordersService = ordersService;
     }
     get clientId() {
         return process.env.MERCADO_PAGO_CLIENT_ID ?? "";
@@ -460,7 +463,7 @@ let MercadoPagoService = MercadoPagoService_1 = class MercadoPagoService {
         return "error";
     }
     async fetchPayment(resourceId, accessToken) {
-        const response = await fetch(`${this.apiBaseUrl}/v1/payments/${resourceId}`, {
+        const response = await this.fetchWithTimeout(`${this.apiBaseUrl}/v1/payments/${resourceId}`, {
             headers: {
                 Authorization: `Bearer ${accessToken}`,
                 "Content-Type": "application/json"
@@ -470,6 +473,26 @@ let MercadoPagoService = MercadoPagoService_1 = class MercadoPagoService {
             throw new common_1.InternalServerErrorException(await response.text());
         }
         return (await response.json());
+    }
+    /** Wrapper de fetch con timeout duro. Sin esto, una request a MP que se cuelga
+     * deja al endpoint corriendo hasta que Vercel lo corte (10s/60s) y el cliente
+     * sigue mostrando spinner sin saber que ya no va a responder. Default 8s. */
+    async fetchWithTimeout(url, init = {}) {
+        const { timeoutMs = 8000, ...rest } = init;
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+            return await fetch(url, { ...rest, signal: controller.signal });
+        }
+        catch (err) {
+            if (err instanceof Error && err.name === "AbortError") {
+                throw new common_1.BadRequestException(`Mercado Pago no respondió a tiempo (${timeoutMs}ms). Reintentá en un momento.`);
+            }
+            throw err;
+        }
+        finally {
+            clearTimeout(timer);
+        }
     }
     async notifyPaymentStatus(input) {
         const message = buildPaymentStatusMessage(input.status, input.productName);
@@ -536,6 +559,7 @@ let MercadoPagoService = MercadoPagoService_1 = class MercadoPagoService {
       select
         id,
         lead_id as "leadId",
+        order_id as "orderId",
         status::text as "status",
         title,
         metadata
@@ -567,6 +591,24 @@ let MercadoPagoService = MercadoPagoService_1 = class MercadoPagoService {
     `;
         if (mappedStatus === "approved" && attempt.leadId && previousStatus !== "approved") {
             await this.leadsService.markAs(integration.tenantId, attempt.leadId, "vendido");
+        }
+        /** Si el attempt está vinculado a una Order del storefront, delegamos commit/release. */
+        if (attempt.orderId && previousStatus !== mappedStatus) {
+            try {
+                if (mappedStatus === "approved") {
+                    await this.ordersService.markOrderPaid(integration.tenantId, attempt.orderId);
+                }
+                else if (mappedStatus === "rejected") {
+                    await this.ordersService.markOrderUnpaid(integration.tenantId, attempt.orderId, "failed");
+                }
+                else if (mappedStatus === "cancelled") {
+                    await this.ordersService.markOrderUnpaid(integration.tenantId, attempt.orderId, "cancelled");
+                }
+                /** `pending` y `error` no cambian la Order — esperamos otro webhook. */
+            }
+            catch (e) {
+                this.logger.error(`handleWebhook: error actualizando order ${attempt.orderId} a ${mappedStatus}: ${e instanceof Error ? e.message : String(e)}`);
+            }
         }
         if (previousStatus !== mappedStatus) {
             const paymentMetadata = typeof payment.metadata === "object" && payment.metadata !== null
@@ -605,6 +647,11 @@ let MercadoPagoService = MercadoPagoService_1 = class MercadoPagoService {
             throw new common_1.BadRequestException("No hay una cuenta de Mercado Pago conectada para este tenant.");
         }
         const { accessToken } = await this.refreshIfNeeded(integrationRow);
+        /** Mismo guard que createOrderCheckoutPreference: sin webhook URL, MP no notifica y el lead nunca se marca vendido. */
+        const webhook = this.checkoutPreferenceWebhookUrl;
+        if (!webhook) {
+            throw new common_1.BadRequestException("Falta configurar PUBLIC_API_BASE_URL (o MERCADO_PAGO_WEBHOOK_URL) para que Mercado Pago pueda notificar el resultado de los pagos.");
+        }
         const externalReference = `ws-${input.tenantId}-${input.leadId}-${(0, node_crypto_1.randomUUID)()}`;
         const preferencePayload = {
             items: [
@@ -616,6 +663,7 @@ let MercadoPagoService = MercadoPagoService_1 = class MercadoPagoService {
                 }
             ],
             external_reference: externalReference,
+            notification_url: webhook,
             metadata: {
                 tenantId: input.tenantId,
                 leadId: input.leadId,
@@ -624,11 +672,7 @@ let MercadoPagoService = MercadoPagoService_1 = class MercadoPagoService {
                 ...(input.metadata ?? {})
             }
         };
-        const webhook = this.checkoutPreferenceWebhookUrl;
-        if (webhook) {
-            preferencePayload.notification_url = webhook;
-        }
-        const preferenceResponse = await fetch(`${this.apiBaseUrl}/checkout/preferences`, {
+        const preferenceResponse = await this.fetchWithTimeout(`${this.apiBaseUrl}/checkout/preferences`, {
             method: "POST",
             headers: {
                 Authorization: `Bearer ${accessToken}`,
@@ -666,9 +710,98 @@ let MercadoPagoService = MercadoPagoService_1 = class MercadoPagoService {
             paymentAttemptId
         };
     }
+    /**
+     * Crea preferencia de Mercado Pago para una Order multi-item del storefront.
+     * Persiste un PaymentAttempt vinculado a `orderId` para que el webhook pueda
+     * llamar a OrdersService.markOrderPaid()/markOrderUnpaid() al recibir el resultado.
+     */
+    async createOrderCheckoutPreference(input) {
+        const integrationRow = await this.loadIntegrationByTenant(input.tenantId);
+        if (!integrationRow || integrationRow.status !== "connected") {
+            throw new common_1.BadRequestException("No hay una cuenta de Mercado Pago conectada para este tenant.");
+        }
+        const { accessToken } = await this.refreshIfNeeded(integrationRow);
+        const totalAmount = input.items.reduce((acc, it) => acc + Number(it.unitPrice) * Number(it.quantity), 0);
+        const summaryTitle = input.items.length === 1
+            ? input.items[0].title
+            : `Compra de ${input.items.length} productos`;
+        /** Sin webhook URL pública, MP nunca notifica el resultado y la Order queda pending para siempre.
+         * Mejor fallar acá con mensaje claro que dejar al comprador pagando algo que no se confirma. */
+        const webhook = this.checkoutPreferenceWebhookUrl;
+        if (!webhook) {
+            throw new common_1.BadRequestException("Falta configurar PUBLIC_API_BASE_URL (o MERCADO_PAGO_WEBHOOK_URL) para que Mercado Pago pueda notificar el resultado de los pagos.");
+        }
+        /** auto_return: "approved" exige back_urls.success HTTPS público. Si no, MP rechaza la preferencia.
+         * Lo activamos solo si la URL es HTTPS — en dev/staging sin HTTPS se omite y el comprador vuelve manualmente. */
+        const successIsHttps = /^https:\/\//i.test(input.backUrls.success);
+        const includeAutoReturn = input.autoReturn !== false && successIsHttps;
+        const preferencePayload = {
+            items: input.items.map((it) => ({
+                title: it.title,
+                quantity: Number(it.quantity),
+                currency_id: it.currencyId ?? "ARS",
+                unit_price: Number(it.unitPrice)
+            })),
+            external_reference: input.externalReference,
+            payer: {
+                name: input.payer.name,
+                email: input.payer.email,
+                ...(input.payer.phone ? { phone: { number: input.payer.phone } } : {})
+            },
+            back_urls: {
+                success: input.backUrls.success,
+                failure: input.backUrls.failure,
+                pending: input.backUrls.pending
+            },
+            ...(includeAutoReturn ? { auto_return: "approved" } : {}),
+            notification_url: webhook,
+            metadata: {
+                tenantId: input.tenantId,
+                orderId: input.orderId,
+                ...(input.metadata ?? {})
+            }
+        };
+        const preferenceResponse = await this.fetchWithTimeout(`${this.apiBaseUrl}/checkout/preferences`, {
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${accessToken}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify(preferencePayload)
+        });
+        if (!preferenceResponse.ok) {
+            const errText = await preferenceResponse.text();
+            throw new common_1.BadRequestException(`Mercado Pago no pudo crear la preferencia: ${errText}`);
+        }
+        const preference = (await preferenceResponse.json());
+        const createdAttempt = await src_1.prisma.paymentAttempt.create({
+            data: {
+                tenantId: input.tenantId,
+                integrationId: integrationRow.id,
+                orderId: input.orderId,
+                provider: "mercadopago",
+                status: "link_generated",
+                amount: new library_1.Decimal(totalAmount),
+                currency: "ARS",
+                title: summaryTitle,
+                externalReference: input.externalReference,
+                externalPreferenceId: preference.id ?? null,
+                checkoutUrl: preference.init_point ?? null,
+                sandboxCheckoutUrl: preference.sandbox_init_point ?? null,
+                metadata: (input.metadata ?? {})
+            },
+            select: { id: true }
+        });
+        return {
+            checkoutUrl: preference.init_point ?? preference.sandbox_init_point ?? "",
+            paymentAttemptId: createdAttempt.id,
+            preferenceId: preference.id
+        };
+    }
 };
 exports.MercadoPagoService = MercadoPagoService;
 exports.MercadoPagoService = MercadoPagoService = MercadoPagoService_1 = __decorate([
     (0, common_1.Injectable)(),
-    __metadata("design:paramtypes", [leads_service_1.LeadsService])
+    __metadata("design:paramtypes", [leads_service_1.LeadsService,
+        orders_service_1.OrdersService])
 ], MercadoPagoService);

@@ -554,6 +554,27 @@ export default function StockPage() {
               {loading ? "Actualizando…" : "Actualizar"}
             </button>
 
+            <a
+              href="/stock/importar"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                borderRadius: 10,
+                padding: "10px 14px",
+                fontSize: 13,
+                fontWeight: 800,
+                textDecoration: "none",
+                border: "1px solid var(--color-border)",
+                background: "var(--color-surface)",
+                color: "var(--color-text)",
+                whiteSpace: "nowrap"
+              }}
+              title="Importar productos desde Excel o CSV"
+            >
+              ⤓ Importar
+            </a>
+
             <button
               type="button"
               onClick={() => setShowModal(true)}

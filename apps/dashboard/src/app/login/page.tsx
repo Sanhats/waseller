@@ -59,8 +59,18 @@ export default function LoginPage() {
       setFormError("Ingresá el nombre del negocio.");
       return;
     }
-    if (normalizedWhatsapp.length < 10) {
-      setFormError("Ingresá un WhatsApp válido con código de país.");
+    if (normalizedWhatsapp.length < 10 || normalizedWhatsapp.length > 15) {
+      setFormError("Ingresá un WhatsApp válido con código de país (10-15 dígitos).");
+      return;
+    }
+    if (normalizedWhatsapp.startsWith("54") && !normalizedWhatsapp.startsWith("549")) {
+      setFormError(
+        "Para Argentina, el número debe empezar con 549 (54 = país, 9 = celular). Ej: 549112345678."
+      );
+      return;
+    }
+    if (normalizedWhatsapp.startsWith("549") && normalizedWhatsapp.length < 12) {
+      setFormError("El número argentino debe tener al menos 12 dígitos: 549 + área + número.");
       return;
     }
     if (!emailRegex.test(email.trim())) {
@@ -166,13 +176,18 @@ export default function LoginPage() {
                 onChange={(e) => setTenantName(e.target.value)}
                 autoComplete="organization"
               />
-              <Input
-                label="WhatsApp del negocio"
-                placeholder="Ej: 549112345678"
-                value={whatsappNumber}
-                onChange={(e) => setWhatsappNumber(e.target.value)}
-                inputMode="numeric"
-              />
+              <div>
+                <Input
+                  label="WhatsApp del negocio"
+                  placeholder="Ej: 549112345678"
+                  value={whatsappNumber}
+                  onChange={(e) => setWhatsappNumber(e.target.value)}
+                  inputMode="numeric"
+                />
+                <p className="mt-1 text-[11px] leading-snug text-muted">
+                  Argentina: 54 + 9 + código de área + número. Ej: 549 11 2345-6789 → <code>549112345678</code>.
+                </p>
+              </div>
             </>
           ) : null}
 

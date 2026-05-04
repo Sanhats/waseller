@@ -259,6 +259,17 @@ export async function dispatchApi(
       }
       return NextResponse.json(await s.products.createProduct(tenantId, body as never));
     }
+    if (path === "/products/import" && method === "POST") {
+      requireRole(auth?.role, ["admin", "vendedor"]);
+      let body: unknown = {};
+      try {
+        body = await req.json();
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return jsonMessage(400, `No se pudo leer el archivo de importación: ${msg}`);
+      }
+      return NextResponse.json(await s.products.importBulk(tenantId, body as never));
+    }
     if (path === "/products/movements" && method === "GET") {
       requireRole(auth?.role, ["admin", "vendedor", "viewer"]);
       const limit = Number(url.searchParams.get("limit") ?? 100);

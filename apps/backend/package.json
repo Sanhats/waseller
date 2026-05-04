@@ -7,7 +7,8 @@
     "dev": "ts-node-dev --respawn --transpile-only -r tsconfig-paths/register src/main.ts",
     "start": "node dist/apps/backend/src/main.js",
     "seed:test-lead": "npx --package=tsx tsx scripts/seed-test-lead.ts",
-    "seed:demo-scenarios": "npx --package=tsx tsx scripts/seed-demo-scenarios.ts"
+    "seed:demo-scenarios": "npx --package=tsx tsx scripts/seed-demo-scenarios.ts",
+    "seed:fashion-demo": "npx --package=tsx tsx scripts/seed-fashion-demo.ts"
   },
   "dependencies": {
     "@waseller/api-core": "0.1.0",

@@ -29,7 +29,9 @@
       "Bash(Select-Object -First 20)",
       "Bash(findstr -i config)",
       "Bash(git diff *)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(npx --package=tsx tsx --version)",
+      "Bash(npm uninstall *)"
     ]
   }
 }

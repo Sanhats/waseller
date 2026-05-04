@@ -1253,4 +1253,227 @@ export class ProductsService {
     `) as unknown[];
     return rows;
   }
+
+  async importBulk(
+    tenantId: string,
+    body: { rows?: Array<Record<string, unknown>> }
+  ): Promise<{
+    productsCreated: number;
+    productsUpdated: number;
+    variantsCreated: number;
+    variantsUpdated: number;
+    errors: Array<{ rowIndex: number; message: string }>;
+  }> {
+    const rows = Array.isArray(body?.rows) ? body!.rows! : [];
+    if (rows.length === 0) {
+      throw new BadRequestException("No hay filas para importar.");
+    }
+    if (rows.length > 2000) {
+      throw new BadRequestException("Máximo 2000 filas por importación.");
+    }
+
+    const slug = (s: string) =>
+      s
+        .toString()
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[̀-ͯ]/g, "")
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "");
+    const trimStr = (v: unknown): string => (typeof v === "string" ? v.trim() : v == null ? "" : String(v).trim());
+    const toNumber = (v: unknown): number | null => {
+      if (v == null || v === "") return null;
+      const cleaned = String(v).replace(/[^\d.,-]/g, "").replace(/\./g, "").replace(",", ".");
+      const n = Number(cleaned);
+      return Number.isFinite(n) ? n : null;
+    };
+
+    type ParsedRow = {
+      rowIndex: number;
+      name: string;
+      price: number;
+      talle: string;
+      color: string;
+      marca: string;
+      stock: number;
+      sku: string;
+      categorySlug: string;
+      imageUrl: string;
+    };
+
+    const errors: Array<{ rowIndex: number; message: string }> = [];
+    const parsed: ParsedRow[] = [];
+
+    rows.forEach((raw, idx) => {
+      const rowIndex = idx + 1;
+      const name = trimStr(raw.name ?? raw.nombre ?? raw.producto);
+      const priceRaw = toNumber(raw.price ?? raw.precio);
+      const talle = trimStr(raw.talle ?? raw.size ?? raw.talla);
+      const color = trimStr(raw.color);
+      const marca = trimStr(raw.marca ?? raw.brand);
+      const stockRaw = toNumber(raw.stock ?? raw.cantidad);
+      const sku = trimStr(raw.sku);
+      const categorySlug = trimStr(raw.category ?? raw.categoria ?? raw.categoría);
+      const imageUrl = trimStr(raw.imageUrl ?? raw.image_url ?? raw.imagen ?? raw.foto);
+
+      if (!name) {
+        errors.push({ rowIndex, message: "Falta nombre del producto." });
+        return;
+      }
+      if (priceRaw == null || priceRaw <= 0) {
+        errors.push({ rowIndex, message: "Falta precio válido o es 0." });
+        return;
+      }
+      const stock = stockRaw == null || stockRaw < 0 ? 0 : Math.floor(stockRaw);
+
+      parsed.push({
+        rowIndex,
+        name,
+        price: priceRaw,
+        talle: talle || "Único",
+        color: color || "Único",
+        marca,
+        stock,
+        sku,
+        categorySlug: categorySlug ? slug(categorySlug) : "",
+        imageUrl
+      });
+    });
+
+    if (parsed.length === 0) {
+      return { productsCreated: 0, productsUpdated: 0, variantsCreated: 0, variantsUpdated: 0, errors };
+    }
+
+    const groups = new Map<string, ParsedRow[]>();
+    for (const r of parsed) {
+      const key = r.name.toLowerCase();
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(r);
+    }
+
+    const categorySlugs = new Set<string>();
+    for (const r of parsed) if (r.categorySlug) categorySlugs.add(r.categorySlug);
+    const categoryIdBySlug = new Map<string, string>();
+    if (categorySlugs.size > 0) {
+      const cats = await prisma.category.findMany({
+        where: { tenantId, slug: { in: [...categorySlugs] } },
+        select: { id: true, slug: true }
+      });
+      for (const c of cats) categoryIdBySlug.set(c.slug, c.id);
+    }
+
+    let productsCreated = 0;
+    let productsUpdated = 0;
+    let variantsCreated = 0;
+    let variantsUpdated = 0;
+
+    for (const [, groupRows] of groups) {
+      const head = groupRows[0];
+      try {
+        const existing = await prisma.product.findUnique({
+          where: { tenantId_name: { tenantId, name: head.name } },
+          select: { id: true }
+        });
+
+        let productId: string;
+        if (existing) {
+          await prisma.product.update({
+            where: { id: existing.id },
+            data: {
+              price: head.price,
+              ...(head.imageUrl ? { imageUrl: head.imageUrl, imageUrls: [head.imageUrl] } : {})
+            }
+          });
+          productId = existing.id;
+          productsUpdated += 1;
+        } else {
+          const created = await prisma.product.create({
+            data: {
+              tenantId,
+              name: head.name,
+              price: head.price,
+              imageUrl: head.imageUrl || null,
+              imageUrls: head.imageUrl ? [head.imageUrl] : [],
+              tags: ["import"]
+            },
+            select: { id: true }
+          });
+          productId = created.id;
+          productsCreated += 1;
+        }
+
+        const productCategoryId = head.categorySlug ? categoryIdBySlug.get(head.categorySlug) : undefined;
+        if (productCategoryId) {
+          await prisma.productCategory.upsert({
+            where: { productId_categoryId: { productId, categoryId: productCategoryId } },
+            create: { productId, categoryId: productCategoryId },
+            update: {}
+          });
+        }
+
+        for (const r of groupRows) {
+          try {
+            const sku = r.sku || `IMP-${slug(r.name)}-${slug(r.color)}-${slug(r.talle)}`.slice(0, 64);
+            const attrs = {
+              color: r.color,
+              talle: r.talle,
+              ...(r.marca ? { marca: r.marca } : {})
+            };
+
+            const existingVariant = await prisma.productVariant.findUnique({
+              where: { tenantId_sku: { tenantId, sku } },
+              select: { id: true }
+            });
+
+            if (existingVariant) {
+              await prisma.productVariant.update({
+                where: { id: existingVariant.id },
+                data: {
+                  productId,
+                  attributes: attrs,
+                  variantTalle: r.talle,
+                  variantColor: r.color,
+                  variantMarca: r.marca || null,
+                  stock: r.stock,
+                  isActive: true
+                }
+              });
+              variantsUpdated += 1;
+            } else {
+              await prisma.productVariant.create({
+                data: {
+                  tenantId,
+                  productId,
+                  sku,
+                  attributes: attrs,
+                  variantTalle: r.talle,
+                  variantColor: r.color,
+                  variantMarca: r.marca || null,
+                  stock: r.stock,
+                  reservedStock: 0,
+                  isActive: true,
+                  imageUrls: r.imageUrl ? [r.imageUrl] : []
+                }
+              });
+              variantsCreated += 1;
+            }
+          } catch (err) {
+            errors.push({
+              rowIndex: r.rowIndex,
+              message: `Variante: ${err instanceof Error ? err.message : "error desconocido"}`
+            });
+          }
+        }
+      } catch (err) {
+        for (const r of groupRows) {
+          errors.push({
+            rowIndex: r.rowIndex,
+            message: `Producto "${head.name}": ${err instanceof Error ? err.message : "error desconocido"}`
+          });
+        }
+      }
+    }
+
+    return { productsCreated, productsUpdated, variantsCreated, variantsUpdated, errors };
+  }
 }

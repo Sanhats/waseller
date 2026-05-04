@@ -166,53 +166,44 @@ let OnboardingService = class OnboardingService {
         return buffer;
     }
     async getStatus(tenantId) {
-        const [productsCount, whatsapp, mercadoPago, tenantKnowledge] = await Promise.all([
+        const [productsCount, whatsapp, mercadoPago, tenantKnowledge, tenantRow] = await Promise.all([
             src_1.prisma.product.count({ where: { tenantId } }),
             this.getWhatsappState(tenantId),
             this.mercadoPagoService.getStatus(tenantId),
-            this.opsService.getTenantKnowledge(tenantId)
+            this.opsService.getTenantKnowledge(tenantId),
+            src_1.prisma.tenant.findUnique({ where: { id: tenantId }, select: { storefrontBaseUrl: true } })
         ]);
         const tenantName = tenantKnowledge.tenantName;
+        const publicCatalogSlug = tenantKnowledge.publicCatalogSlug;
+        const storefrontBaseUrl = typeof tenantRow?.storefrontBaseUrl === "string" && tenantRow.storefrontBaseUrl.trim()
+            ? tenantRow.storefrontBaseUrl.trim().replace(/\/+$/, "")
+            : null;
         const whatsappConnected = whatsapp.sessionStatus === "connected";
         const mercadoPagoConnected = mercadoPago.status === "connected";
         const tenantKnowledgePersisted = tenantKnowledge.persisted;
         const crewCommercialContextComplete = (0, shared_1.isTenantCrewCommercialContextComplete)(tenantKnowledge.knowledge);
-        const businessProfileSaved = tenantKnowledgePersisted && crewCommercialContextComplete;
         const catalogReady = productsCount >= 3;
-        const businessStepMetric = !tenantKnowledgePersisted
-            ? "Pendiente"
-            : !crewCommercialContextComplete
-                ? "Incompleto: tono y entregas"
-                : "Guardado";
         const steps = [
             {
                 key: "connect_whatsapp",
                 title: "Vincular WhatsApp",
-                description: "Conectá la sesión del negocio para recibir y enviar mensajes.",
+                description: "Conectá el WhatsApp del negocio: los contactos interesados llegan a Chats / Conversaciones. Respondés vos; no hay agente ni bot automático en esta etapa.",
                 completed: whatsappConnected,
-                href: "/",
+                href: "/ops",
                 metric: whatsappConnected ? "Listo" : "Pendiente"
             },
             {
                 key: "connect_mercadopago",
                 title: "Conectar Mercado Pago",
-                description: "Vinculá la cuenta para generar links de pago por conversación.",
+                description: "Vinculá la cuenta para generar links de pago desde cada conversación.",
                 completed: mercadoPagoConnected,
-                href: "/",
+                href: "/ops",
                 metric: mercadoPagoConnected ? "Listo" : "Pendiente"
-            },
-            {
-                key: "configure_business",
-                title: "Contexto de la tienda",
-                description: "Rubro, pagos, variantes y datos para el asistente (tono + entregas): se envían a waseller-crew como contexto comercial.",
-                completed: businessProfileSaved,
-                href: "/",
-                metric: businessStepMetric
             },
             {
                 key: "create_catalog",
                 title: "Cargar productos",
-                description: "Creá al menos 3 productos en el catálogo para operar ventas.",
+                description: "Al menos 3 productos en el catálogo para cotizar y compartir con clientes.",
                 completed: catalogReady,
                 href: "/stock",
                 metric: `${productsCount}/3 productos`
@@ -224,6 +215,8 @@ let OnboardingService = class OnboardingService {
         return {
             generatedAt: new Date().toISOString(),
             tenantName,
+            publicCatalogSlug,
+            storefrontBaseUrl,
             allCompleted,
             completionPercent,
             tenantKnowledgePersisted,

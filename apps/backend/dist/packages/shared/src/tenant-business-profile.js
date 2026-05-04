@@ -2,7 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.normalizeTenantBusinessProfile = exports.BUSINESS_PRESETS = exports.DEFAULT_TENANT_BUSINESS_PROFILE = exports.TENANT_BUSINESS_PROFILE_VERSION = void 0;
 exports.isTenantCrewCommercialContextComplete = isTenantCrewCommercialContextComplete;
-exports.TENANT_BUSINESS_PROFILE_VERSION = 1;
+exports.TENANT_BUSINESS_PROFILE_VERSION = 2;
 const toArray = (value) => Array.isArray(value) ? value.map((item) => String(item).trim()).filter(Boolean) : [];
 const asBoolean = (value, fallback = false) => typeof value === "boolean" ? value : fallback;
 const asNumber = (value, fallback) => {
@@ -26,6 +26,30 @@ const SHIPPING_METHOD_SET = new Set([
     "correo",
     "pickup_point"
 ]);
+const OUT_OF_STOCK_POLICY_SET = new Set([
+    "offer_alternative",
+    "waitlist",
+    "decline",
+    "backorder"
+]);
+const asOutOfStockPolicy = (value) => {
+    const candidate = String(value ?? "").trim().toLowerCase();
+    return OUT_OF_STOCK_POLICY_SET.has(candidate)
+        ? candidate
+        : undefined;
+};
+const asPercent = (value) => {
+    const n = Number(value);
+    if (!Number.isFinite(n))
+        return undefined;
+    return Math.max(0, Math.min(100, n));
+};
+const asPositiveHours = (value) => {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 0)
+        return undefined;
+    return Math.min(24 * 30, n);
+};
 const VARIANT_AXIS_SET = new Set([
     "talle",
     "color",
@@ -167,6 +191,29 @@ const normalizeTenantBusinessProfile = (raw) => {
             allowExchange: asBoolean(policy.allowExchange, presetPolicy.allowExchange ?? exports.DEFAULT_TENANT_BUSINESS_PROFILE.policy.allowExchange),
             allowReturns: asBoolean(policy.allowReturns, presetPolicy.allowReturns ?? exports.DEFAULT_TENANT_BUSINESS_PROFILE.policy.allowReturns)
         },
+        commercialPolicies: (() => {
+            const src = input.commercialPolicies && typeof input.commercialPolicies === "object"
+                ? input.commercialPolicies
+                : {};
+            const escalationKeywords = toArray(src.escalationKeywords).slice(0, 20);
+            const result = {
+                maxDiscountPercent: asPercent(src.maxDiscountPercent),
+                discountRequiresApprovalAbovePercent: asPercent(src.discountRequiresApprovalAbovePercent),
+                outOfStockPolicy: asOutOfStockPolicy(src.outOfStockPolicy),
+                coldLeadFollowUpHours: asPositiveHours(src.coldLeadFollowUpHours),
+                warmLeadFollowUpHours: asPositiveHours(src.warmLeadFollowUpHours),
+                escalationKeywords: escalationKeywords.length > 0 ? escalationKeywords : undefined,
+                businessHours: String(src.businessHours ?? "").trim() || undefined,
+                notes: (() => {
+                    const t = String(src.notes ?? "").trim();
+                    if (!t)
+                        return undefined;
+                    return t.length > 1000 ? `${t.slice(0, 1000)}…` : t;
+                })()
+            };
+            const hasAny = Object.values(result).some((v) => v !== undefined);
+            return hasAny ? result : undefined;
+        })(),
         businessName: String(input.businessName ?? "").trim() || undefined,
         tone: String(input.tone ?? input.communicationTone ?? "").trim() || undefined,
         deliveryInfo: (() => {
