@@ -51,7 +51,22 @@ type TenantKnowledgeForm = {
   businessPublicName: string;
   tone: string;
   deliveryInfo: string;
+  /* ---- Políticas comerciales para el copiloto LLM ---- */
+  maxDiscountPercent: string;
+  outOfStockPolicy: "" | "offer_alternative" | "waitlist" | "decline" | "backorder";
+  coldLeadFollowUpHours: string;
+  warmLeadFollowUpHours: string;
+  escalationKeywordsCsv: string;
+  commercialNotes: string;
 };
+
+const OUT_OF_STOCK_POLICY_OPTIONS: Array<{ value: TenantKnowledgeForm["outOfStockPolicy"]; label: string }> = [
+  { value: "", label: "Sin política definida" },
+  { value: "offer_alternative", label: "Ofrecer variante alternativa" },
+  { value: "waitlist", label: "Anotar en lista de espera" },
+  { value: "decline", label: "Informar y no ofrecer alternativa" },
+  { value: "backorder", label: "Aceptar bajo encargue" }
+];
 
 type MercadoPagoStatus = {
   provider: "mercadopago";
@@ -113,7 +128,13 @@ const DEFAULT_FORM: TenantKnowledgeForm = {
   allowReturns: false,
   businessPublicName: "",
   tone: "",
-  deliveryInfo: ""
+  deliveryInfo: "",
+  maxDiscountPercent: "",
+  outOfStockPolicy: "",
+  coldLeadFollowUpHours: "",
+  warmLeadFollowUpHours: "",
+  escalationKeywordsCsv: "",
+  commercialNotes: ""
 };
 
 type WizardStep = 1 | 2 | 3;
@@ -197,7 +218,28 @@ const formFromKnowledge = (knowledge: Record<string, unknown>): TenantKnowledgeF
         (knowledge.deliverySummary as string | undefined) ??
         (knowledge.shippingNotes as string | undefined) ??
         ""
-    ).trim()
+    ).trim(),
+    ...(() => {
+      const cp =
+        (knowledge.commercialPolicies as Record<string, unknown> | undefined) ?? {};
+      const oos = String(cp.outOfStockPolicy ?? "").trim() as TenantKnowledgeForm["outOfStockPolicy"];
+      const validOos: TenantKnowledgeForm["outOfStockPolicy"] =
+        oos === "offer_alternative" || oos === "waitlist" || oos === "decline" || oos === "backorder"
+          ? oos
+          : "";
+      const num = (v: unknown): string => {
+        const n = Number(v);
+        return Number.isFinite(n) && n > 0 ? String(n) : "";
+      };
+      return {
+        maxDiscountPercent: num(cp.maxDiscountPercent),
+        outOfStockPolicy: validOos,
+        coldLeadFollowUpHours: num(cp.coldLeadFollowUpHours),
+        warmLeadFollowUpHours: num(cp.warmLeadFollowUpHours),
+        escalationKeywordsCsv: joinCsv(cp.escalationKeywords),
+        commercialNotes: String(cp.notes ?? "").trim()
+      };
+    })()
   };
 };
 
@@ -224,7 +266,25 @@ const knowledgeFromForm = (form: TenantKnowledgeForm): Record<string, unknown> =
     notes: form.policyNotes.trim() || undefined,
     allowExchange: form.allowExchange,
     allowReturns: form.allowReturns
-  }
+  },
+  commercialPolicies: (() => {
+    const numOrUndef = (s: string): number | undefined => {
+      const trimmed = s.trim();
+      if (!trimmed) return undefined;
+      const n = Number(trimmed);
+      return Number.isFinite(n) && n > 0 ? n : undefined;
+    };
+    const keywords = splitCsv(form.escalationKeywordsCsv);
+    const result = {
+      maxDiscountPercent: numOrUndef(form.maxDiscountPercent),
+      outOfStockPolicy: form.outOfStockPolicy || undefined,
+      coldLeadFollowUpHours: numOrUndef(form.coldLeadFollowUpHours),
+      warmLeadFollowUpHours: numOrUndef(form.warmLeadFollowUpHours),
+      escalationKeywords: keywords.length > 0 ? keywords : undefined,
+      notes: form.commercialNotes.trim() || undefined
+    };
+    return Object.values(result).some((v) => v !== undefined) ? result : undefined;
+  })()
 });
 
 export function BusinessContextWizard({
@@ -827,6 +887,139 @@ export function BusinessContextWizard({
                     )}
                     placeholder="Ej.: Cambios con ticket dentro de los 10 días; no aplica en productos sellados."
                   />
+                </div>
+              </div>
+
+              <div className="mt-6 border-t border-border pt-5">
+                <h3 className="flex items-center text-section">
+                  Reglas para el copiloto
+                  <InfoTip text="El asistente usa estas reglas para recomendarle al vendedor qué hacer con cada lead (cuándo escalar, cuándo hacer follow-up, descuentos permitidos, etc.). Todo es opcional." />
+                </h3>
+                <p className="mt-2 text-body text-muted-ui">
+                  Definí los límites operativos del copiloto. Cuanto más completo, mejores recomendaciones.
+                </p>
+
+                <div className="mt-4 grid min-w-0 gap-4 sm:grid-cols-2">
+                  <div className="min-w-0">
+                    <label className="text-label-ui font-semibold text-[var(--color-text)]" htmlFor="ws-max-discount">
+                      Descuento máximo sin aprobación (%)
+                    </label>
+                    <input
+                      id="ws-max-discount"
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={form.maxDiscountPercent}
+                      onChange={(e) => setForm((f) => ({ ...f, maxDiscountPercent: e.target.value }))}
+                      className={cn(
+                        "mt-1.5 w-full rounded-md border border-border bg-canvas px-3 py-2 text-body text-[var(--color-text)] shadow-sm",
+                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                      )}
+                      placeholder="Ej.: 10"
+                    />
+                  </div>
+
+                  <div className="min-w-0">
+                    <label className="text-label-ui font-semibold text-[var(--color-text)]" htmlFor="ws-oos-policy">
+                      Si un producto no tiene stock
+                    </label>
+                    <select
+                      id="ws-oos-policy"
+                      value={form.outOfStockPolicy}
+                      onChange={(e) =>
+                        setForm((f) => ({
+                          ...f,
+                          outOfStockPolicy: e.target.value as TenantKnowledgeForm["outOfStockPolicy"]
+                        }))
+                      }
+                      className={cn(
+                        "mt-1.5 w-full rounded-md border border-border bg-canvas px-3 py-2 text-body text-[var(--color-text)] shadow-sm",
+                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                      )}
+                    >
+                      {OUT_OF_STOCK_POLICY_OPTIONS.map((opt) => (
+                        <option key={opt.value || "none"} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="min-w-0">
+                    <label className="text-label-ui font-semibold text-[var(--color-text)]" htmlFor="ws-cold-followup">
+                      Follow-up lead frío (horas)
+                    </label>
+                    <input
+                      id="ws-cold-followup"
+                      type="number"
+                      min="0"
+                      value={form.coldLeadFollowUpHours}
+                      onChange={(e) => setForm((f) => ({ ...f, coldLeadFollowUpHours: e.target.value }))}
+                      className={cn(
+                        "mt-1.5 w-full rounded-md border border-border bg-canvas px-3 py-2 text-body text-[var(--color-text)] shadow-sm",
+                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                      )}
+                      placeholder="Ej.: 48"
+                    />
+                  </div>
+
+                  <div className="min-w-0">
+                    <label className="text-label-ui font-semibold text-[var(--color-text)]" htmlFor="ws-warm-followup">
+                      Follow-up lead caliente (horas)
+                    </label>
+                    <input
+                      id="ws-warm-followup"
+                      type="number"
+                      min="0"
+                      value={form.warmLeadFollowUpHours}
+                      onChange={(e) => setForm((f) => ({ ...f, warmLeadFollowUpHours: e.target.value }))}
+                      className={cn(
+                        "mt-1.5 w-full rounded-md border border-border bg-canvas px-3 py-2 text-body text-[var(--color-text)] shadow-sm",
+                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                      )}
+                      placeholder="Ej.: 4"
+                    />
+                  </div>
+
+                  <div className="min-w-0 sm:col-span-2">
+                    <label
+                      className="text-label-ui font-semibold text-[var(--color-text)]"
+                      htmlFor="ws-escalation-keywords"
+                    >
+                      Frases que escalan a humano (separadas por coma)
+                    </label>
+                    <input
+                      id="ws-escalation-keywords"
+                      type="text"
+                      value={form.escalationKeywordsCsv}
+                      onChange={(e) => setForm((f) => ({ ...f, escalationKeywordsCsv: e.target.value }))}
+                      className={cn(
+                        "mt-1.5 w-full rounded-md border border-border bg-canvas px-3 py-2 text-body text-[var(--color-text)] shadow-sm",
+                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                      )}
+                      placeholder="reclamo, devolución, factura, problema, gerente"
+                    />
+                  </div>
+
+                  <div className="min-w-0 sm:col-span-2">
+                    <label
+                      className="text-label-ui font-semibold text-[var(--color-text)]"
+                      htmlFor="ws-commercial-notes"
+                    >
+                      Notas comerciales para el copiloto (opcional)
+                    </label>
+                    <textarea
+                      id="ws-commercial-notes"
+                      value={form.commercialNotes}
+                      onChange={(e) => setForm((f) => ({ ...f, commercialNotes: e.target.value }))}
+                      rows={3}
+                      className={cn(
+                        "mt-1.5 w-full resize-y rounded-md border border-border bg-canvas px-3 py-2 text-body text-[var(--color-text)] shadow-sm",
+                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                      )}
+                      placeholder="Ej.: Envío gratis sobre $40.000. Combos 2x1 los viernes. No vendemos a menores."
+                    />
+                  </div>
                 </div>
               </div>
             </section>

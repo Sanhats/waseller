@@ -1,4 +1,6 @@
-export const TENANT_BUSINESS_PROFILE_VERSION = 1 as const;
+export const TENANT_BUSINESS_PROFILE_VERSION = 2 as const;
+
+export type OutOfStockPolicy = "offer_alternative" | "waitlist" | "decline" | "backorder";
 
 export type BusinessCategory =
   | "general"
@@ -48,6 +50,29 @@ export type TenantBusinessProfile = {
     allowExchange: boolean;
     allowReturns: boolean;
   };
+  /**
+   * Políticas comerciales adicionales que el copiloto LLM usa para recomendar
+   * acciones al vendedor (descuentos permitidos, qué hacer sin stock, cuándo
+   * hacer follow-up, cuándo escalar a humano). Todas opcionales.
+   */
+  commercialPolicies?: {
+    /** Tope de descuento que el vendedor puede ofrecer sin escalar (0-100). */
+    maxDiscountPercent?: number;
+    /** Sobre qué porcentaje requiere aprobación del admin (0-100). */
+    discountRequiresApprovalAbovePercent?: number;
+    /** Comportamiento por defecto cuando un producto pedido no tiene stock. */
+    outOfStockPolicy?: OutOfStockPolicy;
+    /** Horas tras las cuales un lead "frío"/"consulta" sin actividad debe recibir follow-up. */
+    coldLeadFollowUpHours?: number;
+    /** Horas tras las cuales un lead "interesado"/"caliente" sin actividad debe recibir follow-up. */
+    warmLeadFollowUpHours?: number;
+    /** Frases/keywords que disparan escalación inmediata a humano. */
+    escalationKeywords?: string[];
+    /** Texto libre con horario de atención (para sugerir seguimiento dentro de horario). */
+    businessHours?: string;
+    /** Notas libres sobre políticas comerciales (envío gratis sobre X, cuotas, combos, etc.). */
+    notes?: string;
+  };
 };
 
 const toArray = (value: unknown): string[] =>
@@ -81,6 +106,32 @@ const SHIPPING_METHOD_SET = new Set<ShippingMethod>([
   "correo",
   "pickup_point"
 ]);
+const OUT_OF_STOCK_POLICY_SET = new Set<OutOfStockPolicy>([
+  "offer_alternative",
+  "waitlist",
+  "decline",
+  "backorder"
+]);
+
+const asOutOfStockPolicy = (value: unknown): OutOfStockPolicy | undefined => {
+  const candidate = String(value ?? "").trim().toLowerCase();
+  return OUT_OF_STOCK_POLICY_SET.has(candidate as OutOfStockPolicy)
+    ? (candidate as OutOfStockPolicy)
+    : undefined;
+};
+
+const asPercent = (value: unknown): number | undefined => {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return undefined;
+  return Math.max(0, Math.min(100, n));
+};
+
+const asPositiveHours = (value: unknown): number | undefined => {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  return Math.min(24 * 30, n);
+};
+
 const VARIANT_AXIS_SET = new Set<VariantAxis>([
   "talle",
   "color",
@@ -254,6 +305,29 @@ export const normalizeTenantBusinessProfile = (raw: unknown): TenantBusinessProf
         presetPolicy.allowReturns ?? DEFAULT_TENANT_BUSINESS_PROFILE.policy.allowReturns
       )
     },
+    commercialPolicies: (() => {
+      const src =
+        input.commercialPolicies && typeof input.commercialPolicies === "object"
+          ? (input.commercialPolicies as Record<string, unknown>)
+          : {};
+      const escalationKeywords = toArray(src.escalationKeywords).slice(0, 20);
+      const result = {
+        maxDiscountPercent: asPercent(src.maxDiscountPercent),
+        discountRequiresApprovalAbovePercent: asPercent(src.discountRequiresApprovalAbovePercent),
+        outOfStockPolicy: asOutOfStockPolicy(src.outOfStockPolicy),
+        coldLeadFollowUpHours: asPositiveHours(src.coldLeadFollowUpHours),
+        warmLeadFollowUpHours: asPositiveHours(src.warmLeadFollowUpHours),
+        escalationKeywords: escalationKeywords.length > 0 ? escalationKeywords : undefined,
+        businessHours: String(src.businessHours ?? "").trim() || undefined,
+        notes: (() => {
+          const t = String(src.notes ?? "").trim();
+          if (!t) return undefined;
+          return t.length > 1000 ? `${t.slice(0, 1000)}…` : t;
+        })()
+      };
+      const hasAny = Object.values(result).some((v) => v !== undefined);
+      return hasAny ? result : undefined;
+    })(),
     businessName: String(input.businessName ?? "").trim() || undefined,
     tone: String(input.tone ?? input.communicationTone ?? "").trim() || undefined,
     deliveryInfo: (() => {

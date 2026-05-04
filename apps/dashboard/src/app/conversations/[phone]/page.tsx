@@ -83,9 +83,41 @@ type Suggestion = {
   summaryForSeller: string | null;
   recommendedVariants: SuggestionRecommendedVariant[] | null;
   reasoning: { leadStatusReasoning?: string; summaryForSeller?: string } | null;
+  nextSellerAction: string | null;
+  actionReason: string | null;
+  actionUrgency: string | null;
+  suggestedLeadStatus: string | null;
   status: string;
   generatedAt: string;
   llmModel: string | null;
+};
+
+const NEXT_ACTION_LABEL_ES: Record<string, string> = {
+  send_payment_link: "Mandar link de pago",
+  request_missing_info: "Pedir info faltante",
+  confirm_stock_and_reserve: "Confirmar y reservar stock",
+  offer_alternative: "Ofrecer alternativa",
+  share_catalog_link: "Mandar catálogo",
+  schedule_followup: "Agendar follow-up",
+  mark_cold: "Marcar como frío",
+  escalate_human: "Escalar a humano",
+  close_won: "Cerrar como vendido",
+  close_lost: "Cerrar como descartado",
+  no_action: "Esperar respuesta"
+};
+
+const URGENCY_LABEL_ES: Record<string, string> = {
+  now: "Ahora",
+  today: "Hoy",
+  this_week: "Esta semana",
+  low: "Baja"
+};
+
+const URGENCY_BADGE_CLASS: Record<string, string> = {
+  now: "bg-red-100 text-red-800 border-red-300",
+  today: "bg-orange-100 text-orange-800 border-orange-300",
+  this_week: "bg-yellow-100 text-yellow-800 border-yellow-300",
+  low: "bg-slate-100 text-slate-700 border-slate-300"
 };
 
 type SuggestionResponse = {
@@ -1007,6 +1039,38 @@ export default function ConversationPage({
             </p>
           ) : (
             <div className="mt-3 space-y-4">
+              {suggestion.nextSellerAction ? (
+                <div className="rounded border border-border bg-surface p-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <dt className="text-label-ui text-muted-ui">Próxima acción</dt>
+                    {suggestion.actionUrgency ? (
+                      <span
+                        className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                          URGENCY_BADGE_CLASS[suggestion.actionUrgency] ??
+                          "bg-slate-100 text-slate-700 border-slate-300"
+                        }`}
+                      >
+                        {URGENCY_LABEL_ES[suggestion.actionUrgency] ?? suggestion.actionUrgency}
+                      </span>
+                    ) : null}
+                  </div>
+                  <dd className="mt-1 text-body font-medium text-[var(--color-text)]">
+                    {NEXT_ACTION_LABEL_ES[suggestion.nextSellerAction] ?? suggestion.nextSellerAction}
+                  </dd>
+                  {suggestion.actionReason ? (
+                    <p className="mt-1 text-label-ui text-muted-ui">{suggestion.actionReason}</p>
+                  ) : null}
+                  {suggestion.suggestedLeadStatus ? (
+                    <p className="mt-1 text-label-ui text-muted-ui">
+                      Mover lead a:{" "}
+                      <span className="font-medium text-[var(--color-text)]">
+                        {leadStatusLabel(suggestion.suggestedLeadStatus)}
+                      </span>
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+
               {suggestion.reasoning?.leadStatusReasoning ? (
                 <div>
                   <dt className="text-label-ui text-muted-ui">Por qué está así</dt>

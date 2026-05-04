@@ -357,6 +357,16 @@ export async function dispatchApi(
       const body = (await req.json()) as { reason?: string };
       return NextResponse.json(await s.conversations.handoffAssistive(tenantId, convHand[1], body.reason ?? ""));
     }
+    if (path === "/suggestions/inbox" && method === "GET") {
+      requireRole(auth?.role, ["admin", "vendedor", "viewer"]);
+      const url = new URL(req.url);
+      return NextResponse.json(
+        await loadSuggestionsInbox(tenantId, {
+          urgency: url.searchParams.get("urgency"),
+          action: url.searchParams.get("action")
+        })
+      );
+    }
     const convSuggestion = /^\/conversations\/([^/]+)\/suggestion$/.exec(path);
     if (convSuggestion && method === "GET") {
       requireRole(auth?.role, ["admin", "vendedor", "viewer"]);
@@ -777,6 +787,70 @@ async function getOrEnqueueSuggestion(tenantId: string, phone: string) {
     suggestion: latest,
     status: isFresh ? ("fresh" as const) : ("regenerating" as const)
   };
+}
+
+async function loadSuggestionsInbox(
+  tenantId: string,
+  filters: { urgency?: string | null; action?: string | null }
+) {
+  const { prisma } = await import("@waseller/db");
+  const ALLOWED_URGENCIES = new Set(["now", "today", "this_week", "low"]);
+  const urgency = filters.urgency && ALLOWED_URGENCIES.has(filters.urgency) ? filters.urgency : null;
+  const action = filters.action && filters.action.length > 0 && filters.action.length < 80 ? filters.action : null;
+
+  const rows = await prisma.conversationSuggestion.findMany({
+    where: {
+      tenantId,
+      status: "fresh",
+      nextSellerAction: action ? action : { not: null },
+      ...(urgency ? { actionUrgency: urgency } : {})
+    },
+    orderBy: { generatedAt: "desc" },
+    take: 200,
+    select: {
+      id: true,
+      conversationId: true,
+      generatedAt: true,
+      intent: true,
+      leadStatus: true,
+      leadScore: true,
+      summaryForSeller: true,
+      nextSellerAction: true,
+      actionReason: true,
+      actionUrgency: true,
+      suggestedLeadStatus: true,
+      conversation: {
+        select: {
+          phone: true,
+          lead: { select: { customerName: true } }
+        }
+      }
+    }
+  });
+
+  const URGENCY_RANK: Record<string, number> = { now: 0, today: 1, this_week: 2, low: 3 };
+  const items = rows.map((r) => ({
+    suggestionId: r.id,
+    conversationId: r.conversationId,
+    phone: r.conversation?.phone ?? null,
+    customerName: r.conversation?.lead?.customerName ?? null,
+    intent: r.intent,
+    leadStatus: r.leadStatus,
+    leadScore: r.leadScore,
+    summaryForSeller: r.summaryForSeller,
+    nextSellerAction: r.nextSellerAction,
+    actionReason: r.actionReason,
+    actionUrgency: r.actionUrgency,
+    suggestedLeadStatus: r.suggestedLeadStatus,
+    generatedAt: r.generatedAt
+  }));
+  items.sort((a, b) => {
+    const ra = URGENCY_RANK[a.actionUrgency ?? "low"] ?? 9;
+    const rb = URGENCY_RANK[b.actionUrgency ?? "low"] ?? 9;
+    if (ra !== rb) return ra - rb;
+    return new Date(b.generatedAt).getTime() - new Date(a.generatedAt).getTime();
+  });
+  return { items, total: items.length };
 }
 
 async function regenerateSuggestion(tenantId: string, phone: string) {

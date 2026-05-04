@@ -1,13 +1,21 @@
 "use client";
 
 import Image from "next/image";
-import { Activity, Boxes, Building2, Home, LogOut, MessagesSquare, ShoppingBag, Store } from "lucide-react";
+import { Activity, Boxes, Building2, Home, Inbox, LogOut, MessagesSquare, ShoppingBag, Store } from "lucide-react";
 import { ComponentType } from "react";
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/cn";
 import { SidebarWhatsappControl } from "@/components/sidebar-whatsapp-control";
 
-type SectionKey = "home" | "leads" | "conversations" | "ops" | "stock" | "orders" | "tienda";
+type SectionKey =
+  | "home"
+  | "todo"
+  | "leads"
+  | "conversations"
+  | "ops"
+  | "stock"
+  | "orders"
+  | "tienda";
 
 type NavIcon = ComponentType<{ size?: number; className?: string }>;
 
@@ -18,6 +26,7 @@ const navItems: Array<{
   icon: NavIcon;
 }> = [
   { key: "home", href: "/", label: "Inicio", icon: Home },
+  { key: "todo", href: "/bandeja-acciones", label: "Para hacer", icon: Inbox },
   { key: "leads", href: "/leads", label: "Clientes", icon: Building2 },
   {
     key: "conversations",

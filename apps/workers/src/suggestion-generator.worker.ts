@@ -152,8 +152,15 @@ export const suggestionGeneratorWorker = new Worker<SuggestionGenerationJobV1>(
         return [];
       });
 
+    const profileRaw = (tenantKnowledge.profile ?? null) as Record<string, unknown> | null;
+    const commercialPolicies =
+      profileRaw && typeof profileRaw.commercialPolicies === "object" && profileRaw.commercialPolicies
+        ? (profileRaw.commercialPolicies as Record<string, unknown>)
+        : null;
+
     const llmResult = await suggestionLlm.generate({
-      tenantBusinessProfile: (tenantKnowledge.profile ?? null) as Record<string, unknown> | null,
+      tenantBusinessProfile: profileRaw,
+      commercialPolicies: commercialPolicies as any,
       incomingText,
       intent: data.intent ?? "desconocida",
       leadStatus: data.leadStatus ?? "frio",
@@ -181,6 +188,10 @@ export const suggestionGeneratorWorker = new Worker<SuggestionGenerationJobV1>(
         recommendedVariants: llmResult.recommendedVariants as any,
         draftReply: llmResult.draftReply,
         summaryForSeller: llmResult.summaryForSeller,
+        nextSellerAction: llmResult.nextSellerAction,
+        actionReason: llmResult.actionReason,
+        actionUrgency: llmResult.actionUrgency,
+        suggestedLeadStatus: llmResult.suggestedLeadStatus,
         status: "fresh",
         llmModel: llmResult.model,
         llmLatencyMs: llmResult.latencyMs,
