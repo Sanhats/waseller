@@ -37,7 +37,8 @@
       "Bash(curl -sS -o /dev/null -w \"WA bridge /health: %{http_code}\\\\n\" --max-time 10 \"https://satisfied-quietude-production-c5ab.up.railway.app/health\")",
       "Bash(curl -sS -o /dev/null -w \"Workers root: %{http_code}\\\\n\" --max-time 10 \"https://waseller-production.up.railway.app/\")",
       "Bash(curl -sS -o /dev/null -w \"Workers /health: %{http_code}\\\\n\" --max-time 10 \"https://waseller-production.up.railway.app/health\")",
-      "Bash(curl *)"
+      "Bash(curl *)",
+      "Bash(bash *)"
     ]
   }
 }
