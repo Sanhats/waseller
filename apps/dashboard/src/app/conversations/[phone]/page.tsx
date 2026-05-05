@@ -17,10 +17,11 @@ import {
   ConversationHeaderContactSkeleton,
   ConversationMessagesSkeleton,
 } from "@/components/page-skeletons";
-import { Badge, Button, Input, Spinner } from "@/components/ui";
+import { Badge, Button, Input, Spinner, Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { getClientApiBase } from "@/lib/api-base";
 import { digitsOnlyPhone } from "@waseller/shared";
+import { ProductsPanel } from "./products-panel";
 
 type ConversationMessage = {
   id: string;
@@ -122,6 +123,14 @@ export default function ConversationPage({
   const [archived, setArchived] = useState(false);
   const [archiving, setArchiving] = useState(false);
   const [unarchiving, setUnarchiving] = useState(false);
+  const [auth, setAuth] = useState<{ token: string; tenantId: string } | null>(null);
+  useEffect(() => {
+    setAuth(authContext());
+  }, []);
+  const appendToDraft = (text: string) => {
+    if (!text) return;
+    setDraft((prev) => (prev.trim() ? `${prev}${prev.endsWith("\n") ? "" : "\n"}${text}` : text));
+  };
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
 
@@ -820,71 +829,83 @@ export default function ConversationPage({
       </section>
 
       <aside
-        className="hidden w-[280px] shrink-0 flex-col gap-8 overflow-y-auto rounded-lg border border-border bg-surface p-6 shadow-sm lg:flex"
+        className="hidden w-[360px] shrink-0 flex-col overflow-hidden rounded-lg border border-border bg-surface p-4 shadow-sm lg:flex"
         aria-busy={loading}
       >
-        <div>
-          <h3 className="text-section">Información</h3>
-          {loading ? (
-            <div className="mt-2 flex flex-col items-center gap-3">
-              <Spinner size="sm" label="Cargando datos del contacto" />
-              <ConversationAsideContactSkeleton />
+        <Tabs defaultValue="productos" className="flex h-full min-h-0 flex-col gap-3">
+          <TabsList>
+            <TabsTrigger value="productos">Productos</TabsTrigger>
+            <TabsTrigger value="info">Info</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="productos" className="min-h-0 flex-1">
+            <ProductsPanel auth={auth} onAppendDraft={appendToDraft} />
+          </TabsContent>
+
+          <TabsContent value="info" className="min-h-0 flex-1 overflow-y-auto">
+            <div>
+              <h3 className="text-section">Información</h3>
+              {loading ? (
+                <div className="mt-2 flex flex-col items-center gap-3">
+                  <Spinner size="sm" label="Cargando datos del contacto" />
+                  <ConversationAsideContactSkeleton />
+                </div>
+              ) : (
+                <>
+                  <div className="mt-4 flex flex-col items-center gap-3 text-center">
+                    {currentLead?.profilePictureUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={currentLead.profilePictureUrl}
+                        alt=""
+                        className="size-[4.5rem] rounded-full object-cover"
+                      />
+                    ) : (
+                      <div className="grid size-[4.5rem] place-items-center rounded-full bg-disabled-bg text-xl font-semibold text-muted">
+                        {displayName.charAt(0).toUpperCase()}
+                      </div>
+                    )}
+                    <div>
+                      <p className="text-section">{displayName}</p>
+                      <p className="mt-0.5 text-label-ui text-muted-ui">+{phone}</p>
+                    </div>
+                  </div>
+
+                  <dl className="mt-6 space-y-4">
+                    {currentLead?.product ? (
+                      <div>
+                        <dt className="text-label-ui text-muted-ui">
+                          Producto de interés
+                        </dt>
+                        <dd className="mt-1 text-body font-medium text-[var(--color-text)]">
+                          {currentLead.product}
+                        </dd>
+                      </div>
+                    ) : null}
+                    <div>
+                      <dt className="text-label-ui text-muted-ui">
+                        Estado del lead
+                      </dt>
+                      <dd className="mt-1">
+                        <Badge variant="default">
+                          {leadStatusLabel(currentLead?.status)}
+                        </Badge>
+                      </dd>
+                    </div>
+                    {currentLead?.hasStockReservation ? (
+                      <div>
+                        <dt className="text-label-ui text-muted-ui">Reserva</dt>
+                        <dd className="mt-1 text-body font-medium text-primary">
+                          Activa
+                        </dd>
+                      </div>
+                    ) : null}
+                  </dl>
+                </>
+              )}
             </div>
-          ) : (
-            <>
-              <div className="mt-4 flex flex-col items-center gap-3 text-center">
-                {currentLead?.profilePictureUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={currentLead.profilePictureUrl}
-                    alt=""
-                    className="size-[4.5rem] rounded-full object-cover"
-                  />
-                ) : (
-                  <div className="grid size-[4.5rem] place-items-center rounded-full bg-disabled-bg text-xl font-semibold text-muted">
-                    {displayName.charAt(0).toUpperCase()}
-                  </div>
-                )}
-                <div>
-                  <p className="text-section">{displayName}</p>
-                  <p className="mt-0.5 text-label-ui text-muted-ui">+{phone}</p>
-                </div>
-              </div>
-
-              <dl className="mt-6 space-y-4">
-                {currentLead?.product ? (
-                  <div>
-                    <dt className="text-label-ui text-muted-ui">
-                      Producto de interés
-                    </dt>
-                    <dd className="mt-1 text-body font-medium text-[var(--color-text)]">
-                      {currentLead.product}
-                    </dd>
-                  </div>
-                ) : null}
-                <div>
-                  <dt className="text-label-ui text-muted-ui">
-                    Estado del lead
-                  </dt>
-                  <dd className="mt-1">
-                    <Badge variant="default">
-                      {leadStatusLabel(currentLead?.status)}
-                    </Badge>
-                  </dd>
-                </div>
-                {currentLead?.hasStockReservation ? (
-                  <div>
-                    <dt className="text-label-ui text-muted-ui">Reserva</dt>
-                    <dd className="mt-1 text-body font-medium text-primary">
-                      Activa
-                    </dd>
-                  </div>
-                ) : null}
-              </dl>
-            </>
-          )}
-        </div>
-
+          </TabsContent>
+        </Tabs>
       </aside>
     </div>
   );

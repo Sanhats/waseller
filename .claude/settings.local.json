@@ -31,7 +31,13 @@
       "Bash(git diff *)",
       "Bash(git add *)",
       "Bash(npx --package=tsx tsx --version)",
-      "Bash(npm uninstall *)"
+      "Bash(npm uninstall *)",
+      "Bash(curl -sS -o /dev/null -w \"WA bridge root: %{http_code}\\\\n\" --max-time 10 \"https://satisfied-quietude-production-c5ab.up.railway.app/\")",
+      "Bash(curl -sS -o /dev/null -w \"WA bridge /sessions: %{http_code}\\\\n\" --max-time 10 \"https://satisfied-quietude-production-c5ab.up.railway.app/sessions\")",
+      "Bash(curl -sS -o /dev/null -w \"WA bridge /health: %{http_code}\\\\n\" --max-time 10 \"https://satisfied-quietude-production-c5ab.up.railway.app/health\")",
+      "Bash(curl -sS -o /dev/null -w \"Workers root: %{http_code}\\\\n\" --max-time 10 \"https://waseller-production.up.railway.app/\")",
+      "Bash(curl -sS -o /dev/null -w \"Workers /health: %{http_code}\\\\n\" --max-time 10 \"https://waseller-production.up.railway.app/health\")",
+      "Bash(curl *)"
     ]
   }
 }
