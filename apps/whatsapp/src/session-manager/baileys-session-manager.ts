@@ -258,7 +258,11 @@ export class BaileysSessionManager {
         });
         if (!text) continue;
 
-        const jid = msg.key?.remoteJid ?? "";
+        const rawJid = msg.key?.remoteJid ?? "";
+        // WhatsApp ahora usa addressingMode "lid" para algunos chats: el remoteJid
+        // viene como "<id>@lid" (no es teléfono) y el número real está en remoteJidAlt.
+        const altJid = (msg.key as { remoteJidAlt?: string } | undefined)?.remoteJidAlt ?? "";
+        const jid = rawJid.endsWith("@s.whatsapp.net") ? rawJid : altJid;
         const phone = normalizePhone(jid);
         if (!phone) continue;
         const contactName = typeof msg.pushName === "string" ? msg.pushName.trim() : "";
