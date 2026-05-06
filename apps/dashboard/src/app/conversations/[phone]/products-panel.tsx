@@ -76,9 +76,46 @@ type Props = {
   auth: { token: string; tenantId: string } | null;
   /** Llamado al apretar "Insertar precio" / "Insertar ficha": el padre lo agrega al draft. */
   onAppendDraft: (text: string) => void;
+  /** Teléfono del lead actual (para crear/sumar a su pedido al reservar). */
+  phone?: string;
+  /** Avisa al padre que el pedido cambió (para refrescar la tab Pedido). */
+  onOrderChanged?: () => void;
 };
 
-export function ProductsPanel({ auth, onAppendDraft }: Props) {
+export function ProductsPanel({ auth, onAppendDraft, phone, onOrderChanged }: Props) {
+  const [reservingId, setReservingId] = useState<string | null>(null);
+  const [reserveError, setReserveError] = useState<string | null>(null);
+  const [reserveOk, setReserveOk] = useState<string | null>(null);
+
+  const reserveVariant = async (v: ProductVariantRow) => {
+    if (!auth || !phone) return;
+    setReservingId(v.variantId);
+    setReserveError(null);
+    setReserveOk(null);
+    try {
+      const res = await fetch(
+        `${getClientApiBase()}/chat-orders/by-phone/${encodeURIComponent(phone)}/items`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${auth.token}`,
+            "x-tenant-id": auth.tenantId,
+          },
+          body: JSON.stringify({ variantId: v.variantId, quantity: 1 }),
+        }
+      );
+      if (!res.ok) throw new Error(await res.text());
+      setReserveOk(`Reservada ${v.variantTalle ?? ""}${v.variantColor ? " · " + v.variantColor : ""}`.trim() || "Reservada");
+      onOrderChanged?.();
+      window.setTimeout(() => setReserveOk(null), 2500);
+    } catch (err) {
+      setReserveError(err instanceof Error ? err.message : "No se pudo reservar.");
+    } finally {
+      setReservingId(null);
+    }
+  };
+
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
   const [rows, setRows] = useState<ProductVariantRow[]>([]);
@@ -138,6 +175,16 @@ export function ProductsPanel({ auth, onAppendDraft }: Props) {
     onAppendDraft(text);
   };
 
+  const insertPhoto = (v: ProductVariantRow) => {
+    const img = pickImage(v);
+    if (!img) {
+      setReserveError("Esta variante no tiene foto.");
+      window.setTimeout(() => setReserveError(null), 2500);
+      return;
+    }
+    onAppendDraft(img);
+  };
+
   const insertSheet = (v: ProductVariantRow, productName: string) => {
     const lines: string[] = [productName];
     const variant = variantLabel(v);
@@ -165,6 +212,17 @@ export function ProductsPanel({ auth, onAppendDraft }: Props) {
           />
         </div>
       </div>
+
+      {reserveError ? (
+        <p className="mt-2 rounded-md border border-error bg-error-bg px-3 py-2 text-label-ui text-error" role="alert">
+          {reserveError}
+        </p>
+      ) : null}
+      {reserveOk ? (
+        <p className="mt-2 rounded-md border border-success bg-success-bg px-3 py-2 text-label-ui text-success">
+          {reserveOk}
+        </p>
+      ) : null}
 
       <div className="mt-4 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1">
         {!auth ? (
@@ -259,11 +317,29 @@ export function ProductsPanel({ auth, onAppendDraft }: Props) {
                             </Button>
                             <Button
                               type="button"
+                              variant="ghost"
+                              onClick={() => insertPhoto(v)}
+                              disabled={!pickImage(v)}
+                              className="h-8 px-2 text-label-ui"
+                            >
+                              Insertar foto
+                            </Button>
+                            <Button
+                              type="button"
                               variant="secondary"
                               onClick={() => insertSheet(v, group.name)}
                               className="h-8 px-2 text-label-ui"
                             >
                               Insertar ficha
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="primary"
+                              onClick={() => reserveVariant(v)}
+                              disabled={out || !phone || reservingId === v.variantId}
+                              className="h-8 px-2 text-label-ui"
+                            >
+                              {reservingId === v.variantId ? "Reservando…" : "Reservar"}
                             </Button>
                           </div>
                         </li>

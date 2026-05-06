@@ -119,4 +119,23 @@ const port = Number(process.env.PORT ?? process.env.WHATSAPP_PORT ?? 3100);
 app.listen(port, () => {
   // eslint-disable-next-line no-console
   console.log(`WhatsApp service listening on ${port} (WA_AUTH_DIR=${getResolvedWaAuthDir()})`);
+  // Auto-restore: si hay credenciales persistidas en disco (volumen montado),
+  // reconectamos cada sesión sin necesidad de re-escanear el QR.
+  if (process.env.WA_DISABLE_AUTO_RESTORE === "1") {
+    // eslint-disable-next-line no-console
+    console.log("WhatsApp auto-restore disabled by WA_DISABLE_AUTO_RESTORE=1");
+    return;
+  }
+  manager
+    .restoreAll()
+    .then((result) => {
+      // eslint-disable-next-line no-console
+      console.log(
+        `WhatsApp auto-restore: attempted=${result.attempted} restored=${result.restored} skipped=${result.skipped}`
+      );
+    })
+    .catch((error) => {
+      // eslint-disable-next-line no-console
+      console.error("WhatsApp auto-restore failed", error);
+    });
 });

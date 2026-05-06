@@ -113,6 +113,9 @@ export function ConversationListPanel() {
         "flex max-h-[42vh] w-full shrink-0 flex-col overflow-hidden border-b border-border bg-surface",
         "shadow-sm ring-1 ring-black/[0.03]",
         "lg:h-full lg:max-h-none lg:w-80 lg:max-w-[20rem] lg:border-b-0 lg:border-r",
+        // En móvil/tablet, cuando ya hay un chat abierto, ocultamos la lista
+        // para que el chat ocupe toda la pantalla. En desktop la lista siempre está.
+        selectedPhone ? "hidden lg:flex" : "flex",
       )}
       aria-busy={loading}
     >

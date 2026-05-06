@@ -237,25 +237,11 @@ export class BaileysSessionManager {
     });
 
     socket.ev.on("messages.upsert", async ({ messages, type }) => {
-      // eslint-disable-next-line no-console
-      console.log("[wa-debug] messages.upsert fired", {
-        type,
-        count: messages.length,
-        firstKey: messages[0]?.key,
-        firstMsgKeys: messages[0]?.message ? Object.keys(messages[0].message) : null
-      });
       if (type !== "notify") return;
 
       for (const msg of messages) {
         if (msg.key?.fromMe) continue;
         const text = normalizeIncomingText(msg.message as Record<string, any> | undefined);
-        // eslint-disable-next-line no-console
-        console.log("[wa-debug] processing msg", {
-          fromMe: msg.key?.fromMe,
-          remoteJid: msg.key?.remoteJid,
-          textLen: text?.length ?? 0,
-          msgKeys: msg.message ? Object.keys(msg.message) : null
-        });
         if (!text) continue;
 
         const rawJid = msg.key?.remoteJid ?? "";
@@ -411,6 +397,77 @@ export class BaileysSessionManager {
 
     await active.socket.sendMessage(`${phone}@s.whatsapp.net`, { text: message });
     return { ack: true };
+  }
+
+  /**
+   * Reconecta automáticamente todas las sesiones que tengan credenciales persistidas
+   * en `authRoot`. Pensado para correr una sola vez al iniciar el bridge: tras un
+   * redeploy o reinicio del container, las sesiones vuelven solas (sin necesidad de
+   * que la dueña reescanee el QR).
+   *
+   * Convención del nombre de directorio: `${tenantId}_${whatsappNumber}` (replace
+   * de `:` → `_` aplicado en `connect()`). Los UUID de tenantId usan guiones, no
+   * underscores, así que el primer `_` separa los dos componentes sin ambigüedad.
+   */
+  async restoreAll(): Promise<{ attempted: number; restored: number; skipped: number }> {
+    let entries: string[];
+    try {
+      entries = fs.readdirSync(this.authRoot);
+    } catch (error) {
+      this.logger.warn({ authRoot: this.authRoot, error }, "WA_AUTH_DIR no se pudo leer; sin auto-restore");
+      return { attempted: 0, restored: 0, skipped: 0 };
+    }
+
+    let attempted = 0;
+    let restored = 0;
+    let skipped = 0;
+
+    for (const dirName of entries) {
+      const fullPath = path.join(this.authRoot, dirName);
+      try {
+        if (!fs.statSync(fullPath).isDirectory()) {
+          skipped += 1;
+          continue;
+        }
+      } catch {
+        skipped += 1;
+        continue;
+      }
+
+      // Sin creds.json no hay nada que restaurar (sería un QR en blanco).
+      if (!fs.existsSync(path.join(fullPath, "creds.json"))) {
+        skipped += 1;
+        continue;
+      }
+
+      const idx = dirName.indexOf("_");
+      if (idx <= 0 || idx === dirName.length - 1) {
+        skipped += 1;
+        continue;
+      }
+      const tenantId = dirName.slice(0, idx);
+      const whatsappNumber = dirName.slice(idx + 1);
+
+      // Si ya existe en memoria (caso raro: doble llamada), no la pisamos.
+      if (this.sessions.has(buildSessionKey(tenantId, whatsappNumber))) {
+        skipped += 1;
+        continue;
+      }
+
+      attempted += 1;
+      try {
+        this.logger.info({ tenantId, whatsappNumber }, "Auto-restoring WhatsApp session at boot");
+        await this.connect({ tenantId, whatsappNumber });
+        restored += 1;
+      } catch (error) {
+        this.logger.error(
+          { tenantId, whatsappNumber, error },
+          "Auto-restore failed; QR manual será requerido"
+        );
+      }
+    }
+
+    return { attempted, restored, skipped };
   }
 
   list(): SessionSnapshot[] {

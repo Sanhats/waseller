@@ -9,7 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { Archive, Bot, PauseCircle, UserRoundX } from "lucide-react";
+import { Archive, ArrowLeft, Bot, PauseCircle, ShoppingBag, UserRoundX, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -22,6 +22,7 @@ import { cn } from "@/lib/cn";
 import { getClientApiBase } from "@/lib/api-base";
 import { digitsOnlyPhone } from "@waseller/shared";
 import { ProductsPanel } from "./products-panel";
+import { OrderPanel } from "./order-panel";
 
 type ConversationMessage = {
   id: string;
@@ -124,12 +125,51 @@ export default function ConversationPage({
   const [archiving, setArchiving] = useState(false);
   const [unarchiving, setUnarchiving] = useState(false);
   const [auth, setAuth] = useState<{ token: string; tenantId: string } | null>(null);
+  const [orderReloadKey, setOrderReloadKey] = useState(0);
+  const [openOrderItemsCount, setOpenOrderItemsCount] = useState(0);
+  const [asideOpen, setAsideOpen] = useState(false);
+
+  // Mantiene el badge del tab "Pedido" actualizado aunque la pestaña esté cerrada.
+  useEffect(() => {
+    if (!auth || !phone) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `${getClientApiBase()}/chat-orders/by-phone/${encodeURIComponent(phone)}`,
+          {
+            headers: {
+              Authorization: `Bearer ${auth.token}`,
+              "x-tenant-id": auth.tenantId,
+            },
+            cache: "no-store",
+          },
+        );
+        if (!res.ok || cancelled) return;
+        const snap = (await res.json()) as {
+          open: { items: Array<{ quantity: number }> } | null;
+        };
+        const count =
+          snap.open?.items.reduce((acc, it) => acc + Number(it.quantity), 0) ?? 0;
+        if (!cancelled) setOpenOrderItemsCount(count);
+      } catch {
+        // ignorable
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [auth, phone, orderReloadKey]);
   useEffect(() => {
     setAuth(authContext());
   }, []);
   const appendToDraft = (text: string) => {
     if (!text) return;
     setDraft((prev) => (prev.trim() ? `${prev}${prev.endsWith("\n") ? "" : "\n"}${text}` : text));
+    // En mobile/tablet cerramos el drawer así la dueña puede editar y enviar.
+    if (typeof window !== "undefined" && window.innerWidth < 1024) {
+      setAsideOpen(false);
+    }
   };
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
@@ -513,7 +553,14 @@ export default function ConversationPage({
               {loading ? (
                 <ConversationHeaderContactSkeleton />
               ) : (
-                <div className="flex min-w-0 items-center gap-3">
+                <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
+                  <Link
+                    href="/conversations"
+                    aria-label="Volver al listado"
+                    className="grid size-9 shrink-0 place-items-center rounded-full text-muted hover:bg-canvas hover:text-[var(--color-text)] lg:hidden"
+                  >
+                    <ArrowLeft className="size-5" aria-hidden />
+                  </Link>
                   {currentLead?.profilePictureUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
@@ -526,10 +573,23 @@ export default function ConversationPage({
                       {displayName.charAt(0).toUpperCase()}
                     </div>
                   )}
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <h2 className="truncate text-section">{displayName}</h2>
                     <p className="text-label-ui text-muted-ui">+{phone}</p>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => setAsideOpen(true)}
+                    aria-label="Abrir productos y pedido"
+                    className="relative grid size-10 shrink-0 place-items-center rounded-full border border-border bg-surface text-muted shadow-sm hover:bg-canvas hover:text-[var(--color-text)] lg:hidden"
+                  >
+                    <ShoppingBag className="size-5" aria-hidden />
+                    {openOrderItemsCount > 0 ? (
+                      <span className="absolute -right-1 -top-1 grid min-w-[1.1rem] place-items-center rounded-full bg-primary px-1 text-[10px] font-semibold text-white">
+                        {openOrderItemsCount}
+                      </span>
+                    ) : null}
+                  </button>
                 </div>
               )}
             </div>
@@ -828,18 +888,62 @@ export default function ConversationPage({
         </div>
       </section>
 
+      {asideOpen ? (
+        <button
+          type="button"
+          aria-label="Cerrar panel"
+          onClick={() => setAsideOpen(false)}
+          className="fixed inset-0 z-40 bg-black/40 lg:hidden"
+        />
+      ) : null}
       <aside
-        className="hidden w-[360px] shrink-0 flex-col overflow-hidden rounded-lg border border-border bg-surface p-4 shadow-sm lg:flex"
+        className={cn(
+          "fixed inset-y-0 right-0 z-50 flex w-[min(22rem,90vw)] shrink-0 flex-col overflow-hidden border-l border-border bg-surface p-4 shadow-xl transition-transform duration-200",
+          "lg:static lg:z-auto lg:w-[360px] lg:rounded-lg lg:border lg:shadow-sm lg:transition-none",
+          asideOpen ? "translate-x-0" : "translate-x-full lg:translate-x-0"
+        )}
         aria-busy={loading}
+        aria-hidden={!asideOpen ? undefined : false}
       >
+        <button
+          type="button"
+          onClick={() => setAsideOpen(false)}
+          aria-label="Cerrar panel"
+          className="absolute right-3 top-3 grid size-8 place-items-center rounded-full text-muted hover:bg-canvas hover:text-[var(--color-text)] lg:hidden"
+        >
+          <X className="size-4" aria-hidden />
+        </button>
         <Tabs defaultValue="productos" className="flex h-full min-h-0 flex-col gap-3">
           <TabsList>
             <TabsTrigger value="productos">Productos</TabsTrigger>
+            <TabsTrigger value="pedido">
+              Pedido
+              {openOrderItemsCount > 0 ? (
+                <span className="ml-1.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-primary px-1.5 text-[10px] font-semibold text-white">
+                  {openOrderItemsCount}
+                </span>
+              ) : null}
+            </TabsTrigger>
             <TabsTrigger value="info">Info</TabsTrigger>
           </TabsList>
 
           <TabsContent value="productos" className="min-h-0 flex-1">
-            <ProductsPanel auth={auth} onAppendDraft={appendToDraft} />
+            <ProductsPanel
+              auth={auth}
+              onAppendDraft={appendToDraft}
+              phone={phone}
+              onOrderChanged={() => setOrderReloadKey((k) => k + 1)}
+            />
+          </TabsContent>
+
+          <TabsContent value="pedido" className="min-h-0 flex-1 overflow-y-auto">
+            <OrderPanel
+              auth={auth}
+              phone={phone}
+              reloadKey={orderReloadKey}
+              onAppendDraft={appendToDraft}
+              onOpenItemsCount={setOpenOrderItemsCount}
+            />
           </TabsContent>
 
           <TabsContent value="info" className="min-h-0 flex-1 overflow-y-auto">

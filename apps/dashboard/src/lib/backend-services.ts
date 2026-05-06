@@ -9,6 +9,7 @@ import { CategoriesService } from "../../../backend/src/modules/categories/categ
 import { MessageReceiverService } from "../../../backend/src/modules/messages/receiver.service";
 import { TiendaConfigService } from "../../../backend/src/modules/tienda-config/tienda-config.service";
 import { OrdersService } from "../../../backend/src/modules/orders/orders.service";
+import { ChatOrdersService } from "../../../backend/src/modules/orders/chat-orders.service";
 
 export type BackendServices = {
   leads: LeadsService;
@@ -22,6 +23,7 @@ export type BackendServices = {
   messages: MessageReceiverService;
   tiendaConfig: TiendaConfigService;
   orders: OrdersService;
+  chatOrders: ChatOrdersService;
 };
 
 let cached: BackendServices | null = null;
@@ -39,7 +41,8 @@ export function getBackendServices(): BackendServices {
     const categories = new CategoriesService();
     const messages = new MessageReceiverService();
     const tiendaConfig = new TiendaConfigService();
-    cached = { leads, mercadoPago, ops, onboarding, conversations, dashboard, products, categories, messages, tiendaConfig, orders };
+    const chatOrders = new ChatOrdersService(orders, mercadoPago);
+    cached = { leads, mercadoPago, ops, onboarding, conversations, dashboard, products, categories, messages, tiendaConfig, orders, chatOrders };
   }
   return cached;
 }

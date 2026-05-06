@@ -665,6 +665,94 @@ export async function dispatchApi(
       return NextResponse.json({ ok });
     }
 
+    /* -------- Chat Orders (vendedor) -------- */
+    if (path === "/chat-orders/payment-info" && method === "GET") {
+      requireRole(auth?.role, ["admin", "vendedor", "viewer"]);
+      const transferAlias = await s.chatOrders.getTenantAlias(tenantId);
+      return NextResponse.json({ transferAlias });
+    }
+    if (path === "/chat-orders/payment-info" && method === "PUT") {
+      requireRole(auth?.role, ["admin", "vendedor"]);
+      const body = (await req.json().catch(() => ({}))) as { transferAlias?: string };
+      const updated = await s.chatOrders.setTenantAlias(tenantId, String(body.transferAlias ?? ""));
+      return NextResponse.json(updated);
+    }
+    const chatOrderByPhone = /^\/chat-orders\/by-phone\/([^/]+)$/.exec(path);
+    if (chatOrderByPhone && method === "GET") {
+      requireRole(auth?.role, ["admin", "vendedor", "viewer"]);
+      return NextResponse.json(await s.chatOrders.getForLead(tenantId, decodeURIComponent(chatOrderByPhone[1])));
+    }
+    const chatOrderAddItem = /^\/chat-orders\/by-phone\/([^/]+)\/items$/.exec(path);
+    if (chatOrderAddItem && method === "POST") {
+      requireRole(auth?.role, ["admin", "vendedor"]);
+      const body = (await req.json().catch(() => ({}))) as { variantId?: string; quantity?: number };
+      const created = await s.chatOrders.addItem({
+        tenantId,
+        phone: decodeURIComponent(chatOrderAddItem[1]),
+        variantId: String(body.variantId ?? ""),
+        quantity: body.quantity ?? 1
+      });
+      return NextResponse.json(created);
+    }
+    const chatOrderItem = /^\/chat-orders\/([^/]+)\/items\/([^/]+)$/.exec(path);
+    if (chatOrderItem && method === "PATCH") {
+      requireRole(auth?.role, ["admin", "vendedor"]);
+      const body = (await req.json().catch(() => ({}))) as { quantity?: number };
+      const updated = await s.chatOrders.updateItemQuantity({
+        tenantId,
+        orderId: chatOrderItem[1],
+        itemId: chatOrderItem[2],
+        quantity: Number(body.quantity ?? 0)
+      });
+      return NextResponse.json(updated);
+    }
+    if (chatOrderItem && method === "DELETE") {
+      requireRole(auth?.role, ["admin", "vendedor"]);
+      const updated = await s.chatOrders.removeItem({
+        tenantId,
+        orderId: chatOrderItem[1],
+        itemId: chatOrderItem[2]
+      });
+      return NextResponse.json(updated);
+    }
+    const chatOrderMethod = /^\/chat-orders\/([^/]+)\/payment-method$/.exec(path);
+    if (chatOrderMethod && method === "POST") {
+      requireRole(auth?.role, ["admin", "vendedor"]);
+      const body = (await req.json().catch(() => ({}))) as { method?: string };
+      const m = String(body.method ?? "");
+      if (m !== "alias" && m !== "link_mp" && m !== "efectivo") {
+        return jsonMessage(400, "method debe ser alias|link_mp|efectivo");
+      }
+      return NextResponse.json(await s.chatOrders.setPaymentMethod(tenantId, chatOrderMethod[1], m));
+    }
+    const chatOrderMpLink = /^\/chat-orders\/([^/]+)\/mp-link$/.exec(path);
+    if (chatOrderMpLink && method === "POST") {
+      requireRole(auth?.role, ["admin", "vendedor"]);
+      const orderId = chatOrderMpLink[1];
+      const origin = url.origin;
+      const backUrls = {
+        success: `${origin}/conversations?order_id=${orderId}&result=success`,
+        failure: `${origin}/conversations?order_id=${orderId}&result=failure`,
+        pending: `${origin}/conversations?order_id=${orderId}&result=pending`
+      };
+      return NextResponse.json(await s.chatOrders.createMpLink({ tenantId, orderId, backUrls }));
+    }
+    const chatOrderConfirm = /^\/chat-orders\/([^/]+)\/confirm-paid$/.exec(path);
+    if (chatOrderConfirm && method === "POST") {
+      requireRole(auth?.role, ["admin", "vendedor"]);
+      return NextResponse.json(await s.chatOrders.confirmPaid(tenantId, chatOrderConfirm[1]));
+    }
+    const chatOrderCancel = /^\/chat-orders\/([^/]+)\/cancel$/.exec(path);
+    if (chatOrderCancel && method === "POST") {
+      requireRole(auth?.role, ["admin", "vendedor"]);
+      return NextResponse.json(await s.chatOrders.cancel(tenantId, chatOrderCancel[1]));
+    }
+    const chatOrderFulfill = /^\/chat-orders\/([^/]+)\/fulfill$/.exec(path);
+    if (chatOrderFulfill && method === "POST") {
+      requireRole(auth?.role, ["admin", "vendedor"]);
+      return NextResponse.json(await s.chatOrders.fulfill(tenantId, chatOrderFulfill[1]));
+    }
+
     /* -------- Storefront público (sin JWT) -------- */
     if (path === "/public/store" && method === "GET") {
       return handlePublicStore(url);
