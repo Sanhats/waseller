@@ -237,11 +237,25 @@ export class BaileysSessionManager {
     });
 
     socket.ev.on("messages.upsert", async ({ messages, type }) => {
+      // eslint-disable-next-line no-console
+      console.log("[wa-debug] messages.upsert fired", {
+        type,
+        count: messages.length,
+        firstKey: messages[0]?.key,
+        firstMsgKeys: messages[0]?.message ? Object.keys(messages[0].message) : null
+      });
       if (type !== "notify") return;
 
       for (const msg of messages) {
         if (msg.key?.fromMe) continue;
         const text = normalizeIncomingText(msg.message as Record<string, any> | undefined);
+        // eslint-disable-next-line no-console
+        console.log("[wa-debug] processing msg", {
+          fromMe: msg.key?.fromMe,
+          remoteJid: msg.key?.remoteJid,
+          textLen: text?.length ?? 0,
+          msgKeys: msg.message ? Object.keys(msg.message) : null
+        });
         if (!text) continue;
 
         const jid = msg.key?.remoteJid ?? "";
